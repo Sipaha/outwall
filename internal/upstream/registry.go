@@ -18,13 +18,18 @@ import (
 var ErrNotFound = errors.New("upstream not found")
 
 // AuthConfig is the (encrypted-at-rest) credential material for an upstream.
-// OIDC fields are added in Plan 2.
 type AuthConfig struct {
-	Type     string `json:"type"` // none | static | basic
+	Type     string `json:"type"` // none | static | basic | oidc-client-credentials
 	Header   string `json:"header,omitempty"`
 	Token    string `json:"token,omitempty"`
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
+
+	// OIDC client-credentials:
+	TokenURL     string `json:"token_url,omitempty"`
+	ClientID     string `json:"client_id,omitempty"`
+	ClientSecret string `json:"client_secret,omitempty"`
+	Scope        string `json:"scope,omitempty"`
 }
 
 // Upstream is a named external API.

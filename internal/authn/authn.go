@@ -30,6 +30,10 @@ func For(cfg upstream.AuthConfig) (Authenticator, error) {
 		return staticAuth{header: cfg.Header, token: cfg.Token}, nil
 	case "basic":
 		return basicAuth{user: cfg.Username, pass: cfg.Password}, nil
+	case "oidc-client-credentials":
+		// A fresh, non-shared instance: caching across requests happens only via Manager.
+		return &oidcClientCreds{hc: http.DefaultClient, tokenURL: cfg.TokenURL,
+			clientID: cfg.ClientID, secret: cfg.ClientSecret, scope: cfg.Scope}, nil
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnsupported, cfg.Type)
 	}
