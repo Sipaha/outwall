@@ -3,7 +3,9 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
@@ -125,6 +127,25 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		pending = approval.Pending{AgentID: ag.ID, UpstreamID: up.ID, Method: r.Method, Path: relPath}
+	}
+
+	// For a k8s mutating request gated by approval, capture the agent-sent body once and put
+	// it on the Pending so the operator sees exactly what will change. The captured bytes
+	// replace r.Body so the proxy (and the audit tee) re-read the same payload — no
+	// double-read of the underlying stream. The cluster credential is injected later, in the
+	// proxy Rewrite step, and so is never part of this captured body.
+	if dec.Outcome == policy.RequireApproval && isK8s && isMutatingVerb(ri.Verb) && r.Body != nil {
+		body, err := io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "read request body")
+			return
+		}
+		// The forwarded body is the full payload; the approval preview is capped (matching
+		// audit) so a huge apply does not bloat the queue.
+		pending.RequestBody = capBytes(body, audit.BodyCap)
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		r.ContentLength = int64(len(body))
 	}
 
 	switch dec.Outcome {
@@ -322,6 +343,28 @@ func resourceKey(ri k8s.RequestInfo) string {
 		return ri.Resource + "/" + ri.Subresource
 	}
 	return ri.Resource
+}
+
+// isMutatingVerb reports whether a k8s RBAC verb changes cluster state and so should be
+// gated by approval with its body shown to the operator.
+func isMutatingVerb(verb string) bool {
+	switch verb {
+	case "create", "update", "patch", "delete", "deletecollection":
+		return true
+	default:
+		return false
+	}
+}
+
+// capBytes returns b truncated to at most cap bytes (a copy, so the preview never aliases
+// the larger forwarded buffer).
+func capBytes(b []byte, cap int) []byte {
+	if len(b) > cap {
+		b = b[:cap]
+	}
+	out := make([]byte, len(b))
+	copy(out, b)
+	return out
 }
 
 func ruleIDOf(rule *policy.Rule) string {

@@ -34,6 +34,12 @@ type Pending struct {
 	Namespace string
 	Resource  string // "resource" or "resource/subresource"
 	Verb      string
+
+	// RequestBody is the captured agent-sent request body (the patch/apply payload), capped at
+	// audit.BodyCap, surfaced on the approval card so the operator sees exactly what will
+	// change. It carries ONLY the agent's body — never the injected cluster credential. Empty
+	// for bodyless requests.
+	RequestBody []byte
 }
 
 type waiter struct {
