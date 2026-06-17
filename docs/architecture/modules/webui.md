@@ -24,7 +24,7 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
   body), `fetchWithTimeout`. One helper per endpoint (`getVaultStatus`, `vaultInit/Unlock`,
   `listAgents`, `listUpstreams`/`createUpstream`, `listRules`/`createRule`/`deleteRule`,
   `listApprovals`/`resolveApproval`, `listAccessRequests`/`resolveAccessRequest`,
-  `listAudit`/`getAudit`/`pruneAudit`).
+  `listAudit`/`getAudit`/`pruneAudit`, `vaultLock`).
 - `lib/types.ts` — TS interfaces mirroring the Go admin JSON field names (Agent, Upstream, Rule,
   Approval, AccessRequest, AuditEntry/AuditBody/AuditDetail, VaultStatus, OutwallEvent).
 - `lib/events.ts` — Zustand store wrapping one `EventSource('/api/events')`. Tracks `connected`
@@ -34,14 +34,33 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
 - `index.css` — `@import "tailwindcss"` + the Darcula/Lens `@theme` token block (dark-only in
   6A): `--color-background:#1e1f22`, the `--color-status-*` palette, JetBrains-Mono `--font-mono`.
 - `components/` — `Sidebar` (wordmark + nav + live SSE connection dot), `StatusBadge` (status →
-  color pill), `Modal`, `Toast` (`ToastContainer`), `DataTable` (compact dense table).
-- `pages/` — `Unlock` (init/unlock master-password card; calls `vaultInit`/`vaultUnlock`) and
-  `Dashboard` (Agents table + live Approval queue refetched on `agent.registered`,
-  `approval.enqueued`, `approval.resolved`, with Approve/Deny → `resolveApproval`).
+  color pill), `Modal`, `Toast` (`ToastContainer`), `DataTable` (compact dense table),
+  `FormField` (labelled control wrapper + shared themed `fieldControlClass`), `Select` (themed
+  native `<select>`), `JsonView` (pretty-prints captured JSON bodies; metadata for binary/absent).
+- `pages/` — the full screen set:
+  - `Unlock` — init/unlock master-password card (`vaultInit`/`vaultUnlock`).
+  - `Dashboard` — Agents table + live Approval queue (refetched on `agent.registered`,
+    `approval.enqueued`, `approval.resolved`; Approve/Deny → `resolveApproval`).
+  - `Upstreams` — `listUpstreams` table + "Add upstream" modal whose auth form switches
+    conditional fields by `<Select>` type (none/static/basic/oidc-client-credentials);
+    `createUpstream`. Refetch on `upstream.created`.
+  - `Agents` — `listAgents` table; row "Detail" modal shows the agent's rules (filtered
+    `listRules`) and access requests (filtered `listAccessRequests`), read-only. Refetch on
+    `agent.registered`.
+  - `Rules` — `listRules` joined with `listUpstreams`/`listAgents` to render names; columns
+    Subject/Upstream/Method/Path/Outcome/Rate + Delete (confirm modal → `deleteRule`); "Add rule"
+    modal → `createRule`. Refetch on `rule.created`.
+  - `Approvals` — pending approvals (Approve/Deny → `resolveApproval`) + access-request intents
+    (Grant/Deny/Dismiss → `resolveAccessRequest`). Refetch on `approval.enqueued`/`.resolved`
+    and `access.requested`.
+  - `Audit` — `listAudit(200)` table (status colored by class) refetched on `audit.recorded`;
+    row "View" → `getAudit(id)` detail modal with meta grid, masked-headers table, and request/
+    response body panels via `JsonView`.
+  - `Settings` — vault status + Lock vault (`vaultLock` then reload → Unlock screen); audit
+    prune control (`pruneAudit` older-than-N-days); a localhost-only daemon note.
 - `App.tsx` — on mount `getVaultStatus()`: not-initialized → Unlock(init); locked →
-  Unlock(unlock); else the shell (Sidebar + routed `<main>`), connecting the SSE store. Only
-  Dashboard is wired in 6A; Upstreams/Agents/Rules/Approvals/Audit/Settings are placeholder
-  routes filled by Plan 6B.
+  Unlock(unlock); else the shell (Sidebar + routed `<main>`), connecting the SSE store. All six
+  routes (Upstreams/Agents/Rules/Approvals/Audit/Settings) are wired.
 
 ## Tests
 
@@ -49,5 +68,14 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
   `ApiError` (status + daemon message) on a 401; GET helpers send the header and parse arrays.
 - `pages/Unlock.test.tsx` — typing + submit calls `vaultUnlock`/`vaultInit`; bad password shows
   the daemon error and skips `onDone`; init mode requires a matching confirmation.
+- `pages/Upstreams.test.tsx` — rows render from `listUpstreams`; switching the auth `<Select>`
+  reveals the conditional fields; submit calls `createUpstream` with the built auth config.
+- `pages/Rules.test.tsx` — rows resolve agent/upstream names; the add-rule modal submits
+  `createRule` with the default draft.
+- `pages/Approvals.test.tsx` — clicking Approve calls `resolveApproval(id, true)`.
+- `pages/Audit.test.tsx` — the journal loads; row "View" calls `getAudit(id)` and renders the
+  masked header + pretty-printed JSON body.
+- `test/setup.ts` polyfills `HTMLDialogElement.showModal/close` (jsdom lacks them) for the
+  modal-driven page tests.
 
 Run with `pnpm -C web test` / `lint` / `build`.

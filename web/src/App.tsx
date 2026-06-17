@@ -11,16 +11,8 @@ import { Upstreams } from './pages/Upstreams'
 import { Agents } from './pages/Agents'
 import { Rules } from './pages/Rules'
 import { Approvals } from './pages/Approvals'
-
-// Placeholder for routes Plan 6B fills in (Upstreams, Agents, Rules, Approvals, Audit, Settings).
-function ComingSoon({ name }: { name: string }) {
-  return (
-    <div className="p-6">
-      <h1 className="text-lg font-semibold">{name}</h1>
-      <p className="mt-2 text-sm text-muted-foreground">Coming soon.</p>
-    </div>
-  )
-}
+import { Audit } from './pages/Audit'
+import { Settings } from './pages/Settings'
 
 export default function App() {
   const [status, setStatus] = useState<VaultStatus | null>(null)
@@ -85,8 +77,8 @@ export default function App() {
           <Route path="/agents" element={<Agents />} />
           <Route path="/rules" element={<Rules />} />
           <Route path="/approvals" element={<Approvals />} />
-          <Route path="/audit" element={<ComingSoon name="Audit" />} />
-          <Route path="/settings" element={<ComingSoon name="Settings" />} />
+          <Route path="/audit" element={<Audit />} />
+          <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
       <ToastContainer />
