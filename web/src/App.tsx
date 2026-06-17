@@ -10,6 +10,7 @@ import { Dashboard } from './pages/Dashboard'
 import { Upstreams } from './pages/Upstreams'
 import { Agents } from './pages/Agents'
 import { Rules } from './pages/Rules'
+import { Approvals } from './pages/Approvals'
 
 // Placeholder for routes Plan 6B fills in (Upstreams, Agents, Rules, Approvals, Audit, Settings).
 function ComingSoon({ name }: { name: string }) {
@@ -83,7 +84,7 @@ export default function App() {
           <Route path="/upstreams" element={<Upstreams />} />
           <Route path="/agents" element={<Agents />} />
           <Route path="/rules" element={<Rules />} />
-          <Route path="/approvals" element={<ComingSoon name="Approvals" />} />
+          <Route path="/approvals" element={<Approvals />} />
           <Route path="/audit" element={<ComingSoon name="Audit" />} />
           <Route path="/settings" element={<ComingSoon name="Settings" />} />
         </Routes>
