@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS upstreams (
 	id          TEXT PRIMARY KEY,
 	name        TEXT NOT NULL UNIQUE,
 	base_url    TEXT NOT NULL,
+	kind        TEXT NOT NULL DEFAULT 'http',
 	auth_type   TEXT NOT NULL,
 	auth_config BLOB,
 	created_at  TEXT NOT NULL
