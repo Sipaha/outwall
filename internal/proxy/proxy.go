@@ -91,8 +91,13 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var ri k8s.RequestInfo
 	var pending approval.Pending
 	var dec policy.Decision
+	// isUpgrade marks an interactive k8s subresource (exec/attach/portforward): an HTTP
+	// connection upgrade carrying a duplex stream, not a request/response body. Such requests
+	// bypass body capture (it would corrupt the 101 stream) and audit metadata only.
+	isUpgrade := false
 	if isK8s {
 		ri = k8s.Parse(r.Method, relPath, r.URL.Query())
+		isUpgrade = ri.IsUpgrade()
 		if !ri.IsResource {
 			// Discovery / health (/version, /api, /apis, /openapi/...). kubectl needs these
 			// to function: allow GET discovery for any agent holding >=1 allow/approval rule
@@ -202,13 +207,17 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reqCapture     *audit.Capture
 		reqContentType string
 		auditRecording = h.Audit != nil
+		// captureBodies is true only for ordinary request/response audit. Interactive upgrades
+		// carry a duplex stream, so body capture is skipped (it would corrupt the 101) and audit
+		// records metadata only (see the upgrade branch below).
+		captureBodies = auditRecording && !isUpgrade
 	)
 	if auditRecording {
 		maskedHeaders = audit.MaskHeaders(r.Header)
-		if r.Body != nil {
-			reqContentType = r.Header.Get("Content-Type")
-			r.Body, reqCapture = audit.NewCaptureRef(r.Body, audit.BodyCap)
-		}
+	}
+	if captureBodies && r.Body != nil {
+		reqContentType = r.Header.Get("Content-Type")
+		r.Body, reqCapture = audit.NewCaptureRef(r.Body, audit.BodyCap)
 	}
 
 	rp := &httputil.ReverseProxy{
@@ -245,7 +254,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadGateway, "upstream error")
 		},
 	}
-	if auditRecording {
+	if captureBodies {
 		rp.ModifyResponse = func(resp *http.Response) error {
 			status := resp.StatusCode
 			ctype := resp.Header.Get("Content-Type")
