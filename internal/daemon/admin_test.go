@@ -80,3 +80,13 @@ func TestAdminRulesAndApprovals(t *testing.T) {
 	// resolving an unknown approval → 404.
 	require.Equal(t, http.StatusNotFound, req(t, h, "POST", "/approvals/nope/resolve", `{"approve":true}`).Code)
 }
+
+func TestAdminAccessRequests(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+	// resolving an unknown request → 404
+	require.Equal(t, http.StatusNotFound, req(t, h, "POST", "/access-requests/nope/resolve", `{"status":"granted"}`).Code)
+	// list is empty-but-OK initially
+	require.Equal(t, http.StatusOK, req(t, h, "GET", "/access-requests", "").Code)
+}

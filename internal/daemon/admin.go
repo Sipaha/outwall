@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Sipaha/outwall/internal/access"
 	"github.com/Sipaha/outwall/internal/approval"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/secret"
@@ -27,6 +28,8 @@ func (d *Daemon) AdminHandler() http.Handler {
 	mux.HandleFunc("DELETE /rules/{id}", d.hRuleDelete)
 	mux.HandleFunc("GET /approvals", d.hApprovalList)
 	mux.HandleFunc("POST /approvals/{id}/resolve", d.hApprovalResolve)
+	mux.HandleFunc("GET /access-requests", d.hAccessRequestList)
+	mux.HandleFunc("POST /access-requests/{id}/resolve", d.hAccessRequestResolve)
 	return mux
 }
 
@@ -223,5 +226,53 @@ func (d *Daemon) hApprovalResolve(w http.ResponseWriter, r *http.Request) {
 		adminErr(w, http.StatusNotFound, "approval not found")
 	default:
 		adminErr(w, http.StatusInternalServerError, err.Error())
+	}
+}
+
+func (d *Daemon) hAccessRequestList(w http.ResponseWriter, _ *http.Request) {
+	reqs, err := d.access.List()
+	if err != nil {
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	agentNames := map[string]string{}
+	if ags, err := d.agents.List(); err == nil {
+		for _, a := range ags {
+			agentNames[a.ID] = a.Name
+		}
+	}
+	upstreamNames := map[string]string{}
+	if ups, err := d.upstreams.List(); err == nil {
+		for _, u := range ups {
+			upstreamNames[u.ID] = u.Name
+		}
+	}
+	out := make([]map[string]string, 0, len(reqs))
+	for _, req := range reqs {
+		out = append(out, map[string]string{
+			"id": req.ID, "agent_id": req.AgentID, "agent_name": agentNames[req.AgentID],
+			"upstream_id": req.UpstreamID, "upstream_name": upstreamNames[req.UpstreamID],
+			"purpose": req.Purpose, "status": req.Status,
+			"created_at": req.CreatedAt.Format(time.RFC3339Nano), "resolved_at": req.ResolvedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (d *Daemon) hAccessRequestResolve(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := decode(r, &body); err != nil {
+		adminErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	switch err := d.access.Resolve(r.PathValue("id"), body.Status); {
+	case err == nil:
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	case errors.Is(err, access.ErrNotFound):
+		adminErr(w, http.StatusNotFound, "access request not found")
+	default:
+		adminErr(w, http.StatusBadRequest, err.Error())
 	}
 }

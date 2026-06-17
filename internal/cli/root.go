@@ -12,9 +12,10 @@ import (
 )
 
 type globalFlags struct {
-	socket string
-	db     string
-	listen string
+	socket    string
+	db        string
+	listen    string
+	mcpListen string
 }
 
 func defaultDir() string {
@@ -38,6 +39,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&gf.socket, "socket", filepath.Join(dir, "outwall.sock"), "admin unix socket path")
 	root.PersistentFlags().StringVar(&gf.db, "db", filepath.Join(dir, "outwall.db"), "database path")
 	root.PersistentFlags().StringVar(&gf.listen, "listen", "127.0.0.1:8080", "data-plane listen address")
+	root.PersistentFlags().StringVar(&gf.mcpListen, "mcp-listen", "127.0.0.1:8181", "MCP control-plane listen address")
 
 	root.AddCommand(
 		newServeCmd(gf),
@@ -46,6 +48,7 @@ func NewRootCmd() *cobra.Command {
 		newAgentCmd(gf),
 		newRuleCmd(gf),
 		newApprovalCmd(gf),
+		newAccessCmd(gf),
 	)
 	return root
 }
