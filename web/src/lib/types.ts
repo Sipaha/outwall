@@ -33,17 +33,24 @@ export interface Upstream {
   name: string
   base_url: string
   auth_type: string
+  kind?: string // "" / "http" = http upstream; "k8s" = a Kubernetes cluster
 }
 
-/** GET /api/rules — policy rules. */
+/**
+ * GET /api/rules — policy rules. For http upstreams the rule matches on method+path_glob;
+ * for k8s clusters it matches on the RBAC tuple namespace/resource/verb.
+ */
 export interface Rule {
   id: string
   subject_agent_id: string // "" = any agent
   upstream_id: string
-  method: string // "" or "*" = any method
-  path_glob: string
+  method: string // "" or "*" = any method (http)
+  path_glob: string // (http)
   outcome: string // allow | deny | require-approval
   rate_limit_per_min: number
+  namespace?: string // k8s: "", "prod", "prod-*", "*"
+  resource?: string // k8s: "pods", "pods/log", "deployments", "*"
+  verb?: string // k8s: get/list/watch/create/update/patch/delete/deletecollection/*
 }
 
 /** GET /api/approvals — in-flight require-approval requests blocking the data plane. */
@@ -55,6 +62,10 @@ export interface Approval {
   path: string
   purpose: string
   created_at: string // RFC3339Nano
+  namespace?: string // k8s tuple (empty for http approvals)
+  resource?: string
+  verb?: string
+  request_body?: string // agent-sent patch/apply body, credentials masked
 }
 
 /** GET /api/access-requests — logged access-request intents. */

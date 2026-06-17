@@ -80,8 +80,30 @@ export function Approvals() {
           columns={[
             { header: 'Agent', cell: (p) => shortId(p.agent_id), className: 'font-mono' },
             { header: 'Upstream', cell: (p) => shortId(p.upstream_id), className: 'font-mono' },
-            { header: 'Method', cell: (p) => p.method || '*', className: 'font-mono' },
-            { header: 'Path', cell: (p) => p.path, className: 'font-mono' },
+            {
+              header: 'Target',
+              // k8s mutating approvals render the parsed tuple + the patch body (the change);
+              // http approvals render method + path as before.
+              cell: (p) =>
+                p.namespace || p.resource || p.verb ? (
+                  <div className="space-y-1">
+                    <div className="font-mono">
+                      <span className="text-muted-foreground">{p.namespace || '*'}</span>
+                      <span className="text-muted-foreground">{' / '}</span>
+                      <span>{p.resource || '*'}</span> <StatusBadge status={p.verb || '*'} />
+                    </div>
+                    {p.request_body && (
+                      <pre className="max-h-40 max-w-md overflow-auto rounded border border-border bg-muted/40 p-2 text-[11px] whitespace-pre-wrap">
+                        {p.request_body}
+                      </pre>
+                    )}
+                  </div>
+                ) : (
+                  <span className="font-mono">
+                    {(p.method || '*') + ' ' + p.path}
+                  </span>
+                ),
+            },
             { header: 'Purpose', cell: (p) => p.purpose },
             { header: 'When', cell: (p) => fmtTime(p.created_at), className: 'text-muted-foreground' },
             {

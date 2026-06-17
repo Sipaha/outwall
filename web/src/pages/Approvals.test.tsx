@@ -30,4 +30,32 @@ describe('<Approvals>', () => {
 
     await waitFor(() => expect(resolveSpy).toHaveBeenCalledWith('p1', true))
   })
+
+  it('renders the k8s tuple and the patch body for a k8s approval', async () => {
+    vi.spyOn(api, 'listApprovals').mockResolvedValue([
+      {
+        id: 'p2',
+        agent_id: 'agent-9999',
+        upstream_id: 'up-9999',
+        method: 'PATCH',
+        path: '/api/v1/namespaces/prod/deployments/web',
+        purpose: 'bump image',
+        created_at: '2026-06-18T10:00:00Z',
+        namespace: 'prod',
+        resource: 'deployments',
+        verb: 'patch',
+        request_body: '{"spec":{"image":"web:v2"}}',
+      },
+    ])
+    vi.spyOn(api, 'listAccessRequests').mockResolvedValue([])
+
+    render(<Approvals />)
+
+    // The parsed tuple is shown.
+    expect(await screen.findByText('prod')).toBeInTheDocument()
+    expect(screen.getByText('deployments')).toBeInTheDocument()
+    expect(screen.getByText('patch')).toBeInTheDocument()
+    // The patch body (the change) is rendered.
+    expect(screen.getByText(/"image":"web:v2"/)).toBeInTheDocument()
+  })
 })
