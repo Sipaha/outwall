@@ -84,3 +84,7 @@ token auth on the TCP bind is deferred to a future multi-user/server mode.
   ADR), at which point the CSRF gate becomes one layer rather than the boundary.
 - Adding a new UI event is a one-line `Publish` at the state change plus a doc entry in the
   taxonomy; no SSE/transport change needed.
+- `GET /events` is **exempt from the CSRF gate** (ADR-0006): `EventSource` cannot set custom
+  request headers, so the stream could never carry `X-Outwall-CSRF`. Safe because SSE is
+  read-only (no state change), same-origin, and loopback-only — the exemption is path-specific
+  and must be revisited if the endpoint ever gains state-changing behavior.

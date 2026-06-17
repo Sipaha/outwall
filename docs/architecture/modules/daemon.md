@@ -16,11 +16,18 @@ SSE endpoint fans out. See ADR-0005 and `events.md`.
 
 ## Transports
 
-- **Unix socket** (`AdminHandler`) — CSRF-free, for the local CLI.
-- **UIListen TCP** (`UIHandler`) — the same admin route table plus `GET /events` (SSE), all
-  wrapped in `csrfMiddleware`: any request lacking a non-empty `X-Outwall-CSRF` header → 403.
-  The route table is registered once (`adminMux`) and shared by both transports. The CSRF gate
-  is a CSRF-not-auth boundary; loopback bind + single-tenant host is the trust model (ADR-0005).
+- **Unix socket** (`AdminHandler`) — CSRF-free, for the local CLI. Serves `apiMux()` at root.
+- **UIListen TCP** (`UIHandler`) — serves the embedded web UI plus the control API:
+  `/api/**` → `StripPrefix("/api")` → `csrfMiddleware` → `apiMux()` (the shared admin routes +
+  `GET /events`); `/**` → the embedded SPA (`staticUI`, see `webui.md` + ADR-0006). Any `/api`
+  request lacking a non-empty `X-Outwall-CSRF` header → 403, **except `GET /api/events`** (SSE),
+  which is exempt because `EventSource` cannot set headers (read-only, same-origin, loopback —
+  ADR-0006). Static assets are not CSRF-gated. The route table is registered once (`apiMux`) and
+  shared by both transports. The CSRF gate is a CSRF-not-auth boundary; loopback bind +
+  single-tenant host is the trust model (ADR-0005).
+
+The endpoint paths below are written without the `/api` prefix the UI transport adds; the unix
+socket serves them at root, the UI transport under `/api`.
 
 Admin endpoints: `POST /vault/init`, `POST /vault/unlock`, `GET /vault/status`,
 `POST /upstreams`, `GET /upstreams` (secrets omitted), `POST /agents/register`,
@@ -39,7 +46,8 @@ store and passes it to the proxy (see `audit.md`, ADR-0004).
 - `DefaultMCPListen = "127.0.0.1:8181"`; `DefaultUIListen = "127.0.0.1:8182"`.
 - `Config struct { DBPath, SocketPath, Listen, MCPListen, UIListen string }` (`MCPListen`/`UIListen` default to their `Default*` consts).
 - `New(cfg Config) (*Daemon, error)` — opens the store, builds vault + registries + proxy + MCP handler + event bus (no listeners).
-- `(*Daemon).AdminHandler() http.Handler` — the CSRF-free admin API mux (unix socket).
-- `(*Daemon).UIHandler() http.Handler` — the admin mux + `GET /events`, CSRF-gated (UIListen TCP).
+- `(*Daemon).AdminHandler() http.Handler` — the CSRF-free `apiMux` at root (unix socket).
+- `(*Daemon).UIHandler() http.Handler` — embedded SPA at `/` + `apiMux` under `/api` (CSRF-gated,
+  except `GET /api/events`), for the UIListen TCP bind. See `webui.md`, ADR-0006.
 - `(*Daemon).Serve(ctx context.Context) error` — runs all four listeners until ctx is canceled.
 - `(*Daemon).Close() error`.
