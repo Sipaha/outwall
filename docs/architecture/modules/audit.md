@@ -17,6 +17,13 @@ map with `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, and any
 The proxy records on response-body close (data plane only); see `proxy.md` and ADR-0004 for
 timing and early-outcome handling.
 
+**Interactive k8s sessions (exec/attach/port-forward, ADR-0010)** are a duplex stream, not a
+request/response. They are audited as a **metadata-only** `Entry` — cluster, namespace + pod
+(in `Path`), command + container (in `Query`), `101` status, duration, and the bytes streamed
+each way (`ReqBytes`/`RespBytes`) — with **no** `Body` rows. The `audit_log`/`audit_bodies`
+schema is unchanged; the session simply records zero bodies. The proxy counts the bytes and
+emits the record on session close (see `proxy.md`).
+
 ## Public API
 
 - `BodyCap = 256 * 1024`; `KindRequest = "request"`, `KindResponse = "response"`; `ErrNotFound`.
