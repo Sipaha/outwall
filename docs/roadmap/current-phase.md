@@ -4,16 +4,13 @@
 
 ## Active phase
 
-**Plan 6B — Remaining web UI screens.**
+**Plan 7 — Wails 3 desktop wrapper.**
 
-Goal: build the rest of the dark-console UI on the 6A foundation — Upstreams (CRUD + auth method
-+ secrets), Rules editor, Approvals page (with purpose, allow/deny), Audit (journal + body
-viewer), Agent detail, Settings. All wire to the existing `api.ts`/`types.ts`/events store and
-the dark theme. Not yet started — needs a plan written.
-
-UI direction chosen: **dark "developer console"** (Darcula/Lens palette reused from
-citeck-launcher; no citeck branding). Foundation + Unlock + Dashboard shipped in 6A; aesthetic
-verified via live browser smoke.
+Goal: the desktop app — a Wails v3 thin-wrapper (`cmd/outwall-desktop`, `internal/desktop`) that
+supervises the daemon as a child process and renders the embedded UI in a webview pointed at the
+`UIListen` bind, with the unlock screen at launch. Mirror citeck-launcher's `internal/desktop`
+supervisor pattern (CGO build, separate `cmd/`, `make build-desktop`). This is the only CGO
+target; the server binary stays CGO-free. Not yet started — needs a plan written.
 
 ## Done
 
@@ -47,8 +44,12 @@ verified via live browser smoke.
   app shell (sidebar), **Unlock** + **Dashboard** (agents + live approval queue). Live browser
   smoke verified. ADR-0006.
 
-## Queued candidates (Phase 1, later plans)
-- **Plan 7** — Wails 3 desktop wrapper (supervises the daemon, renders the embedded UI, unlock screen at launch).
+- **Plan 6B — Web UI screens.** Upstreams (CRUD + conditional auth form), Agents (+ detail), Rules
+  editor (name-resolved + delete), Approvals (pending + access-request intents), Audit (journal +
+  body viewer + masked headers), Settings (audit prune + vault lock; `POST /vault/lock` added). All
+  six routes live. Live browser smoke verified all screens. (Within ADR-0006.)
+
+## Queued candidates (Phase 1 — none remaining after Plan 7)
 
 ## Phase 2+ (deferred by design)
 
