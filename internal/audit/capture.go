@@ -3,13 +3,72 @@ package audit
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"mime"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 // BodyCap is the maximum number of body bytes retained per captured body.
 const BodyCap = 256 * 1024
+
+// cappedCapture is a streaming tee over a ReadCloser: reads pass through unchanged,
+// up to cap bytes are retained, total counts every byte read, and onClose fires once
+// (on the first Close) with the retained bytes, total, and truncated=(total>cap).
+type cappedCapture struct {
+	src       io.ReadCloser
+	cap       int
+	buf       []byte
+	total     int64
+	onClose   func([]byte, int64, bool)
+	closeOnce sync.Once
+}
+
+// NewCapture wraps src in a capped streaming tee. onClose may be nil.
+func NewCapture(src io.ReadCloser, capBytes int, onClose func([]byte, int64, bool)) io.ReadCloser {
+	return &cappedCapture{src: src, cap: capBytes, onClose: onClose}
+}
+
+// Capture is a capped streaming tee that also exposes its captured state, for callers
+// (like the proxy) that must read the retained bytes at a different point than Close.
+type Capture struct{ c *cappedCapture }
+
+// NewCaptureRef wraps src and returns the ReadCloser plus a handle to read the
+// captured bytes/total/truncated at any time (e.g. after the body has been fully read).
+func NewCaptureRef(src io.ReadCloser, capBytes int) (io.ReadCloser, *Capture) {
+	cc := &cappedCapture{src: src, cap: capBytes}
+	return cc, &Capture{c: cc}
+}
+
+// Captured returns the retained bytes, total observed size, and whether truncation occurred.
+func (c *Capture) Captured() (stored []byte, total int64, truncated bool) {
+	return c.c.buf, c.c.total, c.c.total > int64(c.c.cap)
+}
+
+func (c *cappedCapture) Read(p []byte) (int, error) {
+	n, err := c.src.Read(p)
+	if n > 0 {
+		c.total += int64(n)
+		if room := c.cap - len(c.buf); room > 0 {
+			take := n
+			if take > room {
+				take = room
+			}
+			c.buf = append(c.buf, p[:take]...)
+		}
+	}
+	return n, err
+}
+
+func (c *cappedCapture) Close() error {
+	c.closeOnce.Do(func() {
+		if c.onClose != nil {
+			c.onClose(c.buf, c.total, c.total > int64(c.cap))
+		}
+	})
+	return c.src.Close()
+}
 
 // maskedHeaderNames are header names whose values are always masked.
 var maskedHeaderNames = map[string]bool{

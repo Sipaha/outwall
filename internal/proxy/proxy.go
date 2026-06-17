@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sipaha/outwall/internal/agent"
 	"github.com/Sipaha/outwall/internal/approval"
+	"github.com/Sipaha/outwall/internal/audit"
 	"github.com/Sipaha/outwall/internal/authn"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/secret"
@@ -28,6 +29,7 @@ type Deps struct {
 	Approvals   *approval.Queue
 	AuthManager *authn.Manager
 	Vault       *secret.Vault
+	Audit       *audit.Recorder // optional; nil disables audit (Plans 1–3 behavior).
 	Logger      *slog.Logger
 }
 
@@ -80,30 +82,34 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dec, err := h.Policy.Decide(policy.Input{AgentID: ag.ID, UpstreamID: up.ID, Method: r.Method, Path: "/" + rest})
+	relPath := "/" + rest
+	dec, err := h.Policy.Decide(policy.Input{AgentID: ag.ID, UpstreamID: up.ID, Method: r.Method, Path: relPath})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "policy error")
 		return
 	}
 	switch dec.Outcome {
 	case policy.Deny:
+		h.recordOutcome(r, ag, up, relPath, http.StatusForbidden, "deny", dec.Rule, "access denied")
 		writeErr(w, http.StatusForbidden, "access denied")
 		return
 	case policy.RequireApproval:
 		ok, err := h.Approvals.Submit(r.Context(), approval.Pending{
-			AgentID: ag.ID, UpstreamID: up.ID, Method: r.Method, Path: "/" + rest,
+			AgentID: ag.ID, UpstreamID: up.ID, Method: r.Method, Path: relPath,
 		})
 		if err != nil {
 			writeErr(w, http.StatusGatewayTimeout, "approval wait canceled")
 			return
 		}
 		if !ok {
+			h.recordOutcome(r, ag, up, relPath, http.StatusForbidden, "require-approval", dec.Rule, "request not approved")
 			writeErr(w, http.StatusForbidden, "request not approved")
 			return
 		}
 	}
 	if dec.Rule != nil && dec.Rule.RateLimitPerMin > 0 {
 		if !h.Limiter.Allow(ag.ID+"|"+dec.Rule.ID, dec.Rule.RateLimitPerMin, time.Now()) {
+			h.recordOutcome(r, ag, up, relPath, http.StatusTooManyRequests, dec.Outcome, dec.Rule, "rate limited")
 			writeErr(w, http.StatusTooManyRequests, "rate limited")
 			return
 		}
@@ -120,6 +126,23 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Audit capture state for the proxied request.
+	var (
+		started        = time.Now()
+		ruleID         = ruleIDOf(dec.Rule)
+		maskedHeaders  map[string]string
+		reqCapture     *audit.Capture
+		reqContentType string
+		auditRecording = h.Audit != nil
+	)
+	if auditRecording {
+		maskedHeaders = audit.MaskHeaders(r.Header)
+		if r.Body != nil {
+			reqContentType = r.Header.Get("Content-Type")
+			r.Body, reqCapture = audit.NewCaptureRef(r.Body, audit.BodyCap)
+		}
+	}
+
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.Out.URL.Scheme = base.Scheme
@@ -134,10 +157,91 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			h.Logger.Error("proxy upstream", "upstream", up.Name, "err", err)
+			if auditRecording {
+				reqBody, reqSize := buildReqBody(reqCapture, reqContentType)
+				e := audit.Entry{
+					TS: time.Now().UTC(), AgentID: ag.ID, AgentName: ag.Name,
+					UpstreamID: up.ID, UpstreamName: up.Name, Method: r.Method,
+					Path: relPath, Query: r.URL.RawQuery, StatusCode: http.StatusBadGateway,
+					DurationMs: int(time.Since(started).Milliseconds()),
+					ReqBytes:   reqSize,
+					Decision:   dec.Outcome, RuleID: ruleID, Headers: maskedHeaders,
+					Error: err.Error(),
+				}
+				if reqBody != nil {
+					h.record(e, *reqBody)
+				} else {
+					h.record(e)
+				}
+			}
 			writeErr(w, http.StatusBadGateway, "upstream error")
 		},
 	}
+	if auditRecording {
+		rp.ModifyResponse = func(resp *http.Response) error {
+			status := resp.StatusCode
+			ctype := resp.Header.Get("Content-Type")
+			resp.Body = audit.NewCapture(resp.Body, audit.BodyCap, func(stored []byte, total int64, truncated bool) {
+				respBody := audit.ClassifyBody(audit.KindResponse, ctype, stored, total, truncated)
+				reqBody, reqSize := buildReqBody(reqCapture, reqContentType)
+				bodies := []audit.Body{}
+				if reqBody != nil {
+					bodies = append(bodies, *reqBody)
+				}
+				bodies = append(bodies, respBody)
+				h.record(audit.Entry{
+					TS: time.Now().UTC(), AgentID: ag.ID, AgentName: ag.Name,
+					UpstreamID: up.ID, UpstreamName: up.Name, Method: r.Method,
+					Path: relPath, Query: r.URL.RawQuery, StatusCode: status,
+					DurationMs: int(time.Since(started).Milliseconds()),
+					ReqBytes:   reqSize, RespBytes: total,
+					Decision: dec.Outcome, RuleID: ruleID, Headers: maskedHeaders,
+				}, bodies...)
+			})
+			return nil
+		}
+	}
 	rp.ServeHTTP(w, r)
+}
+
+// recordOutcome records a non-proxied early policy outcome (deny / approval-denied / rate-limited).
+func (h *handler) recordOutcome(r *http.Request, ag *agent.Agent, up *upstream.Upstream, relPath string, status int, decision string, rule *policy.Rule, errMsg string) {
+	if h.Audit == nil {
+		return
+	}
+	h.record(audit.Entry{
+		TS: time.Now().UTC(), AgentID: ag.ID, AgentName: ag.Name,
+		UpstreamID: up.ID, UpstreamName: up.Name, Method: r.Method,
+		Path: relPath, Query: r.URL.RawQuery, StatusCode: status,
+		Decision: decision, RuleID: ruleIDOf(rule),
+		Headers: audit.MaskHeaders(r.Header), Error: errMsg,
+	})
+}
+
+func (h *handler) record(e audit.Entry, bodies ...audit.Body) {
+	if err := h.Audit.Record(e, bodies...); err != nil {
+		h.Logger.Error("record audit entry", "err", err)
+	}
+}
+
+// buildReqBody classifies the captured request body, or returns nil when no body was sent.
+func buildReqBody(cap *audit.Capture, contentType string) (*audit.Body, int64) {
+	if cap == nil {
+		return nil, 0
+	}
+	stored, total, truncated := cap.Captured()
+	if total == 0 {
+		return nil, 0
+	}
+	b := audit.ClassifyBody(audit.KindRequest, contentType, stored, total, truncated)
+	return &b, total
+}
+
+func ruleIDOf(rule *policy.Rule) string {
+	if rule == nil {
+		return ""
+	}
+	return rule.ID
 }
 
 func singleJoin(a, b string) string {

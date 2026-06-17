@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Sipaha/outwall/internal/agent"
 	"github.com/Sipaha/outwall/internal/approval"
+	"github.com/Sipaha/outwall/internal/audit"
 	"github.com/Sipaha/outwall/internal/authn"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/secret"
@@ -33,6 +35,23 @@ func build(t *testing.T) (http.Handler, *agent.Registry, *upstream.Registry, *po
 	h := New(Deps{Agents: ag, Upstreams: up, Policy: pol, Limiter: policy.NewLimiter(),
 		Approvals: appr, AuthManager: authn.NewManager(nil), Vault: v})
 	return h, ag, up, pol, appr, v
+}
+
+func buildWithAudit(t *testing.T) (http.Handler, *agent.Registry, *upstream.Registry, *policy.Registry, *approval.Queue, *audit.Recorder) {
+	t.Helper()
+	s, err := store.Open(filepath.Join(t.TempDir(), "p.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	v := secret.NewVault(s)
+	require.NoError(t, v.Init("pw"))
+	ag := agent.NewRegistry(s)
+	up := upstream.NewRegistry(s, v)
+	pol := policy.NewRegistry(s)
+	appr := approval.NewQueueWithTimeout(2 * time.Second)
+	rec := audit.NewRecorder(s)
+	h := New(Deps{Agents: ag, Upstreams: up, Policy: pol, Limiter: policy.NewLimiter(),
+		Approvals: appr, AuthManager: authn.NewManager(nil), Vault: v, Audit: rec})
+	return h, ag, up, pol, appr, rec
 }
 
 func do(t *testing.T, h http.Handler, method, target, token string) *httptest.ResponseRecorder {
@@ -124,4 +143,46 @@ func TestProxyRateLimit(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, do(t, h, http.MethodGet, "/be/x", token).Code)
 	require.Equal(t, http.StatusTooManyRequests, do(t, h, http.MethodGet, "/be/x", token).Code)
+}
+
+func TestProxyRecordsAudit(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer backend.Close()
+	h, ag, up, pol, _, rec := buildWithAudit(t)
+	_, token, _ := ag.Register("claude")
+	u, _ := up.Create("be", backend.URL, upstream.AuthConfig{Type: "static", Header: "Authorization", Token: "Bearer up"})
+	_, _ = pol.Create(policy.Rule{UpstreamID: u.ID, Method: "*", PathGlob: "/**", Outcome: policy.Allow})
+
+	r := httptest.NewRequest(http.MethodPost, "/be/things?x=1", strings.NewReader(`{"hi":1}`))
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	require.Eventually(t, func() bool { l, _ := rec.List(10); return len(l) == 1 }, time.Second, 10*time.Millisecond)
+	list, _ := rec.List(10)
+	e := list[0]
+	require.Equal(t, "POST", e.Method)
+	require.Equal(t, "/things", e.Path)
+	require.Equal(t, "x=1", e.Query)
+	require.Equal(t, 200, e.StatusCode)
+	require.Equal(t, "***", e.Headers["Authorization"]) // agent token masked
+	_, bodies, _ := rec.Get(e.ID)
+	require.Len(t, bodies, 2)
+}
+
+func TestProxyRecordsDeny(t *testing.T) {
+	h, ag, up, _, _, rec := buildWithAudit(t)
+	_, token, _ := ag.Register("claude")
+	_, _ = up.Create("be", "http://127.0.0.1:1", upstream.AuthConfig{Type: "none"})
+
+	require.Equal(t, http.StatusForbidden, do(t, h, http.MethodGet, "/be/x", token).Code)
+	list, _ := rec.List(10)
+	require.Len(t, list, 1)
+	require.Equal(t, "deny", list[0].Decision)
+	require.Equal(t, 403, list[0].StatusCode)
 }
