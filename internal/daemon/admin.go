@@ -15,10 +15,11 @@ import (
 	"github.com/Sipaha/outwall/internal/upstream"
 )
 
-// adminMux registers the shared admin API routes onto a fresh mux. Both transports — the
-// CSRF-free unix socket (AdminHandler, for the local CLI) and the CSRF-gated TCP listener
-// (UIHandler, for the desktop UI) — build their handler from this same route table.
-func (d *Daemon) adminMux() *http.ServeMux {
+// apiMux registers the shared admin API routes plus the SSE event stream onto a fresh mux.
+// Both transports — the CSRF-free unix socket (AdminHandler, for the local CLI) and the
+// CSRF-gated TCP listener (UIHandler, for the desktop UI) — build their handler from this
+// same route table.
+func (d *Daemon) apiMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /vault/init", d.hVaultInit)
 	mux.HandleFunc("POST /vault/unlock", d.hVaultUnlock)
@@ -37,25 +38,36 @@ func (d *Daemon) adminMux() *http.ServeMux {
 	mux.HandleFunc("GET /audit", d.hAuditList)
 	mux.HandleFunc("GET /audit/{id}", d.hAuditGet)
 	mux.HandleFunc("POST /audit/prune", d.hAuditPrune)
+	mux.HandleFunc("GET /events", sseHandler(d.bus))
 	return mux
 }
 
 // AdminHandler builds the admin API mux served over the unix socket (CSRF-free, local CLI).
-func (d *Daemon) AdminHandler() http.Handler { return d.adminMux() }
+func (d *Daemon) AdminHandler() http.Handler { return d.apiMux() }
 
-// UIHandler builds the desktop-UI handler served over the UIListen TCP bind: the shared admin
-// mux plus GET /events (SSE), all behind the X-Outwall-CSRF gate. The CSRF header is a
-// CSRF-not-auth boundary — loopback bind + single-tenant host is the trust model (ADR-0005).
+// UIHandler builds the desktop-UI handler served over the UIListen TCP bind: the embedded
+// SPA at "/" and the shared admin/SSE mux under "/api" behind the X-Outwall-CSRF gate. The
+// CSRF header is a CSRF-not-auth boundary — loopback bind + single-tenant host is the trust
+// model (ADR-0005). Static assets are not CSRF-gated; only "/api/**" is.
 func (d *Daemon) UIHandler() http.Handler {
-	mux := d.adminMux()
-	mux.HandleFunc("GET /events", sseHandler(d.bus))
-	return csrfMiddleware(mux)
+	mux := http.NewServeMux()
+	mux.Handle("/api/", http.StripPrefix("/api", csrfMiddleware(d.apiMux())))
+	mux.Handle("/", staticUI())
+	return mux
 }
 
 // csrfMiddleware rejects any request lacking a non-empty X-Outwall-CSRF header with 403. It
 // defeats browser cross-origin form posts; it is NOT authentication (see ADR-0005).
+//
+// GET /events (SSE) is exempt: EventSource cannot set custom request headers, so the events
+// stream could never carry X-Outwall-CSRF. This is safe — SSE is read-only (it changes no
+// state), same-origin, and served only over the loopback UIListen bind (see ADR-0005).
 func csrfMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/events" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if r.Header.Get("X-Outwall-CSRF") == "" {
 			adminErr(w, http.StatusForbidden, "missing csrf header")
 			return
