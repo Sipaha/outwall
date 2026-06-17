@@ -44,6 +44,8 @@ Stage: alpha (pre-Plan-1).
 ## superpowers/ — specs & plans
 
 - `specs/` — brainstormed design specs.
+  - [`2026-06-17-outwall-design.md`](superpowers/specs/2026-06-17-outwall-design.md) — Phase 1 (HTTP egress gateway).
+  - [`2026-06-18-outwall-k8s-gateway-design.md`](superpowers/specs/2026-06-18-outwall-k8s-gateway-design.md) — Kubernetes gateway (cluster targets, namespace-scoped policy, exec auth, kubeconfig, streaming/exec).
 - `plans/` — bite-sized implementation plans.
 
 ## findings/ — non-obvious discoveries
