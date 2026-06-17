@@ -12,6 +12,7 @@ has already departed (timeout/cancel).
 - `DefaultTimeout = 5 * time.Minute`; error `ErrNotFound`.
 - `Pending struct { ID, AgentID, UpstreamID, Method, Path, Purpose string; CreatedAt time.Time }`
 - `NewQueue() *Queue` (default timeout) / `NewQueueWithTimeout(d time.Duration) *Queue`.
+- `(*Queue).SetPublisher(p events.Publisher)` — nil-safe; `Submit` then publishes `approval.enqueued` `{id, agent_id, upstream_id, method, path, purpose}` and `Resolve` publishes `approval.resolved` `{id, approved}` (see ADR-0005).
 - `(*Queue).Submit(ctx context.Context, p Pending) (approved bool, err error)` — generates the entry ID; `false,nil` on timeout, `false,ctx.Err()` on cancel.
 - `(*Queue).List() []Pending` — snapshot of waiting entries.
 - `(*Queue).Resolve(id string, approve bool) error` — `ErrNotFound` for an unknown id.

@@ -9,6 +9,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/Sipaha/outwall/internal/events"
 )
 
 // DefaultTimeout bounds how long a request blocks waiting for a decision.
@@ -38,6 +40,21 @@ type Queue struct {
 	timeout time.Duration
 	mu      sync.Mutex
 	waiters map[string]*waiter
+	pub     events.Publisher
+}
+
+// SetPublisher attaches a (nil-safe) event publisher. The queue publishes "approval.enqueued"
+// on Submit and "approval.resolved" on Resolve. Passing nil disables publishing.
+func (q *Queue) SetPublisher(p events.Publisher) {
+	q.mu.Lock()
+	q.pub = p
+	q.mu.Unlock()
+}
+
+func (q *Queue) publisher() events.Publisher {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.pub
 }
 
 // NewQueue constructs a Queue with the default timeout.
@@ -62,6 +79,13 @@ func (q *Queue) Submit(ctx context.Context, p Pending) (bool, error) {
 	q.mu.Lock()
 	q.waiters[p.ID] = w
 	q.mu.Unlock()
+
+	if pub := q.publisher(); pub != nil {
+		pub.Publish("approval.enqueued", map[string]any{
+			"id": p.ID, "agent_id": p.AgentID, "upstream_id": p.UpstreamID,
+			"method": p.Method, "path": p.Path, "purpose": p.Purpose,
+		})
+	}
 
 	defer func() {
 		q.mu.Lock()
@@ -101,5 +125,8 @@ func (q *Queue) Resolve(id string, approve bool) error {
 		return ErrNotFound
 	}
 	w.ch <- approve
+	if pub := q.publisher(); pub != nil {
+		pub.Publish("approval.resolved", map[string]any{"id": id, "approved": approve})
+	}
 	return nil
 }

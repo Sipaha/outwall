@@ -11,8 +11,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
+	"github.com/Sipaha/outwall/internal/events"
 	"github.com/Sipaha/outwall/internal/store"
 )
 
@@ -58,10 +60,28 @@ const (
 )
 
 // Recorder persists audit entries and their bodies.
-type Recorder struct{ store *store.Store }
+type Recorder struct {
+	store *store.Store
+	mu    sync.Mutex
+	pub   events.Publisher
+}
 
 // NewRecorder constructs an audit recorder over the given store.
 func NewRecorder(s *store.Store) *Recorder { return &Recorder{store: s} }
+
+// SetPublisher attaches a (nil-safe) event publisher. Record publishes "audit.recorded"
+// after a successful insert. Passing nil disables publishing.
+func (r *Recorder) SetPublisher(p events.Publisher) {
+	r.mu.Lock()
+	r.pub = p
+	r.mu.Unlock()
+}
+
+func (r *Recorder) publisher() events.Publisher {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pub
+}
 
 func newID() string {
 	b := make([]byte, 8)
@@ -109,6 +129,12 @@ func (r *Recorder) Record(e Entry, bodies ...Body) error {
 		); err != nil {
 			return fmt.Errorf("insert audit_bodies: %w", err)
 		}
+	}
+	if pub := r.publisher(); pub != nil {
+		pub.Publish("audit.recorded", map[string]any{
+			"id": e.ID, "agent_name": e.AgentName, "upstream_name": e.UpstreamName,
+			"method": e.Method, "path": e.Path, "status_code": e.StatusCode,
+		})
 	}
 	return nil
 }

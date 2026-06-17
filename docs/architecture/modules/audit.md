@@ -23,6 +23,7 @@ timing and early-outcome handling.
 - `Entry struct { ID; TS time.Time; AgentID, AgentName, UpstreamID, UpstreamName, Method, Path, Query string; StatusCode, DurationMs int; ReqBytes, RespBytes int64; Decision, RuleID, Error string; Headers map[string]string }`.
 - `Body struct { Kind, ContentType string; Size int64; Sha256 string; Truncated bool; Stored []byte }`.
 - `NewRecorder(s *store.Store) *Recorder`.
+- `(*Recorder).SetPublisher(p events.Publisher)` — nil-safe; `Record` then publishes `audit.recorded` `{id, agent_name, upstream_name, method, path, status_code}` after a successful insert (see ADR-0005).
 - `(*Recorder).Record(e Entry, bodies ...Body) error` — assigns `ID`/`TS` if empty.
 - `(*Recorder).List(limit int) ([]Entry, error)` — newest first, no bodies (`limit ≤ 0 → 50`).
 - `(*Recorder).Get(id string) (Entry, []Body, error)` — with bodies; `ErrNotFound` if absent.
