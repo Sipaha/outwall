@@ -30,8 +30,9 @@ Stage: alpha (pre-Plan-1).
   - [`0003-mcp-control-plane.md`](architecture/decisions/0003-mcp-control-plane.md) — MCP server, session=agent identity, SDK-free mcpsvc / thin adapter split, access-request intent log.
   - [`0004-audit.md`](architecture/decisions/0004-audit.md) — capped streaming body capture, text/binary classification, masking, record-on-close, data-plane-only scope.
   - [`0005-control-api-sse.md`](architecture/decisions/0005-control-api-sse.md) — non-blocking event bus, SSE, UIListen loopback bind + X-Outwall-CSRF gate.
+  - [`0006-web-ui-foundation.md`](architecture/decisions/0006-web-ui-foundation.md) — Vite→webdist go:embed, /api prefix + SPA serve, SSE CSRF exemption, dark theme tokens.
 - `modules/` — per-package API docs: `secret`, `store`, `upstream`, `agent`, `authn`,
-  `policy`, `approval`, `access`, `mcpsvc`, `mcp`, `audit`, `events`, `proxy`, `daemon`, `client`, `cli`, `version`.
+  `policy`, `approval`, `access`, `mcpsvc`, `mcp`, `audit`, `events`, `proxy`, `daemon`, `client`, `cli`, `version`, plus `webui` (the `web/` app).
 
 ## workflow/ — how we work
 

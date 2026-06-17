@@ -4,14 +4,16 @@
 
 ## Active phase
 
-**Plan 6 — Web UI (React).** ⏸ awaiting UI direction from the user before the plan is written.
+**Plan 6B — Remaining web UI screens.**
 
-Goal: the embedded React UI (React 19 + Vite + TS + Tailwind 4 + Zustand + lucide-react, served
-via `go:embed`) consuming the Plan 5 control API + SSE. Screens (from the spec): Unlock,
-Dashboard (agents + live approval queue), Upstreams (CRUD + auth + secrets), Agent detail,
-Policies/Rules editor, Approvals (with purpose, allow/deny), Audit (journal + body viewer),
-Settings. **Blocked on a design decision** — theme/vibe + reference feel — to be taken with the
-user (a frontend-design skill will then drive the build).
+Goal: build the rest of the dark-console UI on the 6A foundation — Upstreams (CRUD + auth method
++ secrets), Rules editor, Approvals page (with purpose, allow/deny), Audit (journal + body
+viewer), Agent detail, Settings. All wire to the existing `api.ts`/`types.ts`/events store and
+the dark theme. Not yet started — needs a plan written.
+
+UI direction chosen: **dark "developer console"** (Darcula/Lens palette reused from
+citeck-launcher; no citeck branding). Foundation + Unlock + Dashboard shipped in 6A; aesthetic
+verified via live browser smoke.
 
 ## Done
 
@@ -39,6 +41,11 @@ user (a frontend-design skill will then drive the build).
   `vault.unlocked`, `approval.enqueued/resolved`, `audit.recorded`, `access.requested`), `GET /events`
   SSE handler (heartbeat), and a `UIListen` loopback TCP bind serving the admin mux behind an
   `X-Outwall-CSRF` gate. e2e SSE verified. ADR-0005.
+- **Plan 6A — Web UI foundation.** Embedded React 19 / Vite 8 / Tailwind 4 / Zustand UI built
+  into `internal/daemon/webdist` (`go:embed`), served on `UIListen` with `/api` prefix + SPA
+  static + SSE CSRF-exempt. Dark Darcula/Lens theme, typed `api.ts` (`X-Outwall-CSRF`), SSE store,
+  app shell (sidebar), **Unlock** + **Dashboard** (agents + live approval queue). Live browser
+  smoke verified. ADR-0006.
 
 ## Queued candidates (Phase 1, later plans)
 - **Plan 7** — Wails 3 desktop wrapper (supervises the daemon, renders the embedded UI, unlock screen at launch).
