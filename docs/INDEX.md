@@ -27,8 +27,9 @@ Stage: alpha (pre-Plan-1).
 - `decisions/` — ADRs (one architectural decision each, `NNNN-slug.md`):
   - [`0001-stack-and-architecture.md`](architecture/decisions/0001-stack-and-architecture.md) — stack + two-plane gateway architecture.
   - [`0002-policy-and-approval.md`](architecture/decisions/0002-policy-and-approval.md) — rule precedence, blocking approval, rate limiter, OIDC-CC token cache.
+  - [`0003-mcp-control-plane.md`](architecture/decisions/0003-mcp-control-plane.md) — MCP server, session=agent identity, SDK-free mcpsvc / thin adapter split, access-request intent log.
 - `modules/` — per-package API docs: `secret`, `store`, `upstream`, `agent`, `authn`,
-  `policy`, `approval`, `proxy`, `daemon`, `client`, `cli`, `version` (added as packages land).
+  `policy`, `approval`, `access`, `mcpsvc`, `mcp`, `proxy`, `daemon`, `client`, `cli`, `version`.
 
 ## workflow/ — how we work
 

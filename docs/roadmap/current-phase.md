@@ -4,14 +4,15 @@
 
 ## Active phase
 
-**Plan 3 — MCP control plane (streamable HTTP).**
+**Plan 4 — Audit (request journal + body store).**
 
-Goal: the single MCP server agents talk to for discovery + dynamic self-registration + token
-issuance. Tools: `list_upstreams` (what exists + my per-upstream status), `request_access(host_or_upstream, purpose)` (→ granted+base-path / pending-approval / denied),
-`get_access(upstream)` (base path + memo), `whoami`. First MCP contact auto-registers the
-agent (status `new`) and issues its bearer token. Wires to the agent registry + policy engine
-+ approval queue from Plans 1–2. Not yet started — needs a plan written (decide the Go MCP
-transport/SDK first).
+Goal: record every data-plane request/response — timestamp, agent, upstream, method, path+query,
+status, duration, sizes, policy decision (+ who/when approved) — with request and response
+**bodies up to 256 KB** (truncate larger; non-text by Content-Type → metadata only: type, size,
+sha256), credentials injected by outwall **masked** in the log, stored in SQLite (bodies in a
+separate table so the journal stays light to list), keep-all + manual purge. Wire as data-plane
+middleware around the proxy. Admin API + CLI to list/inspect entries. Not yet started — needs a
+plan written.
 
 ## Done
 
@@ -25,11 +26,13 @@ transport/SDK first).
   `oidc-client-credentials` authenticator + per-upstream token-cache Manager. `grant`
   package/table deleted (alpha, no legacy path). rules/approvals admin API + `rule`/`approval`
   CLI. e2e (approval + 429) verified. ADR-0002.
+- **Plan 3 — MCP control plane.** Single streamable-HTTP MCP server (go-sdk v1.6.1) on its own
+  localhost listener: tools `list_upstreams`/`request_access(host,purpose)`/`get_access`/`whoami`;
+  session=agent auto-registration + bearer-token mint on first contact; access-request intent
+  log (captures purpose); SDK-free `mcpsvc` + thin `mcp` adapter. e2e via live SDK client. ADR-0003.
 
 ## Queued candidates (Phase 1, later plans)
-- **Plan 4** — audit (request journal + body store ≤256 KB, masking, retention).
-- **Plan 4** — audit (request journal + body store ≤256 KB, masking, retention).
-- **Plan 5** — daemon control API + SSE for the UI.
+- **Plan 5** — daemon control API + SSE for the UI (stream agents / approvals / access requests / audit tail).
 - **Plan 6** — web UI (React 19 + Vite + Tailwind 4 + Zustand screens).
 - **Plan 7** — Wails 3 desktop wrapper.
 
