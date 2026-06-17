@@ -11,7 +11,9 @@ import (
 	"os"
 
 	"github.com/Sipaha/outwall/internal/agent"
-	"github.com/Sipaha/outwall/internal/grant"
+	"github.com/Sipaha/outwall/internal/approval"
+	"github.com/Sipaha/outwall/internal/authn"
+	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/proxy"
 	"github.com/Sipaha/outwall/internal/secret"
 	"github.com/Sipaha/outwall/internal/store"
@@ -32,7 +34,8 @@ type Daemon struct {
 	vault     *secret.Vault
 	agents    *agent.Registry
 	upstreams *upstream.Registry
-	grants    *grant.Registry
+	policy    *policy.Registry
+	approvals *approval.Queue
 	dataPlane http.Handler
 }
 
@@ -45,10 +48,14 @@ func New(cfg Config) (*Daemon, error) {
 	v := secret.NewVault(s)
 	ag := agent.NewRegistry(s)
 	up := upstream.NewRegistry(s, v)
-	gr := grant.NewRegistry(s)
+	pol := policy.NewRegistry(s)
+	appr := approval.NewQueue()
 	d := &Daemon{
-		cfg: cfg, store: s, vault: v, agents: ag, upstreams: up, grants: gr,
-		dataPlane: proxy.New(proxy.Deps{Agents: ag, Upstreams: up, Grants: gr, Vault: v}),
+		cfg: cfg, store: s, vault: v, agents: ag, upstreams: up, policy: pol, approvals: appr,
+		dataPlane: proxy.New(proxy.Deps{
+			Agents: ag, Upstreams: up, Policy: pol, Limiter: policy.NewLimiter(),
+			Approvals: appr, AuthManager: authn.NewManager(nil), Vault: v,
+		}),
 	}
 	return d, nil
 }

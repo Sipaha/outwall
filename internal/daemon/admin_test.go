@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -56,4 +57,26 @@ func TestAdminVaultAndUpstreamFlow(t *testing.T) {
 	wa := req(t, h, "POST", "/agents/register", `{"name":"claude"}`)
 	require.Equal(t, http.StatusOK, wa.Code)
 	require.Contains(t, wa.Body.String(), "owa_")
+}
+
+func TestAdminRulesAndApprovals(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	// create an upstream + a rule.
+	wu := req(t, h, "POST", "/upstreams", `{"name":"gh","base_url":"https://api.github.com","auth":{"type":"none"}}`)
+	require.Equal(t, http.StatusOK, wu.Code)
+	var up map[string]string
+	require.NoError(t, json.Unmarshal(wu.Body.Bytes(), &up))
+
+	wr := req(t, h, "POST", "/rules", `{"upstream_id":"`+up["id"]+`","method":"*","path_glob":"/**","outcome":"allow"}`)
+	require.Equal(t, http.StatusOK, wr.Code, wr.Body.String())
+
+	wl := req(t, h, "GET", "/rules", "")
+	require.Equal(t, http.StatusOK, wl.Code)
+	require.Contains(t, wl.Body.String(), up["id"])
+
+	// resolving an unknown approval → 404.
+	require.Equal(t, http.StatusNotFound, req(t, h, "POST", "/approvals/nope/resolve", `{"approve":true}`).Code)
 }

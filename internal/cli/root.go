@@ -44,7 +44,8 @@ func NewRootCmd() *cobra.Command {
 		newVaultCmd(gf),
 		newUpstreamCmd(gf),
 		newAgentCmd(gf),
-		newGrantCmd(gf),
+		newRuleCmd(gf),
+		newApprovalCmd(gf),
 	)
 	return root
 }
