@@ -31,8 +31,10 @@ Stage: alpha (pre-Plan-1).
   - [`0004-audit.md`](architecture/decisions/0004-audit.md) — capped streaming body capture, text/binary classification, masking, record-on-close, data-plane-only scope.
   - [`0005-control-api-sse.md`](architecture/decisions/0005-control-api-sse.md) — non-blocking event bus, SSE, UIListen loopback bind + X-Outwall-CSRF gate.
   - [`0006-web-ui-foundation.md`](architecture/decisions/0006-web-ui-foundation.md) — Vite→webdist go:embed, /api prefix + SPA serve, SSE CSRF exemption, dark theme tokens.
+  - [`0007-desktop-wrapper.md`](architecture/decisions/0007-desktop-wrapper.md) — Wails 3 desktop wrapper runs the daemon in-process; server stays CGO-free via build tag.
+  - [`0008-k8s-gateway-read.md`](architecture/decisions/0008-k8s-gateway-read.md) — k8s reverse-proxy; cluster=k8s-kind upstream; transport seam; (namespace,resource,verb) policy + namespace safety; token/client-cert/exec auth; local CA + kubeconfig.
 - `modules/` — per-package API docs: `secret`, `store`, `upstream`, `agent`, `authn`,
-  `policy`, `approval`, `access`, `mcpsvc`, `mcp`, `audit`, `events`, `proxy`, `daemon`, `client`, `cli`, `version`, plus `webui` (the `web/` app).
+  `policy`, `approval`, `access`, `mcpsvc`, `mcp`, `audit`, `events`, `proxy`, `daemon`, `client`, `cli`, `version`, `k8s`, `tlsca`, plus `webui` (the `web/` app).
 
 ## workflow/ — how we work
 

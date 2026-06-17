@@ -11,20 +11,24 @@ request-rights + approval + audit flow — cluster credentials never reach the a
 
 Delivery (full product, no feature cut — three sequential milestone plans):
 
-- **K1 — cluster targets + read + streaming** (ACTIVE). Plan:
-  `docs/superpowers/plans/2026-06-18-outwall-k8s-k1-read.md`. Cluster = `Kind="k8s"` upstream;
-  k8s path→(namespace,resource,verb) parser; policy extended to the RBAC tuple with namespace
-  safety; cluster auth token/client-cert/**exec-plugin**; per-cluster TLS transport seam; local
-  CA + agent kubeconfig; log/watch streaming; MCP cluster discovery. ADR-0008. Delivers "all logs
-  in a namespace".
-- **K2 — mutating verbs + approval.** Plan: `…-k8s-k2-mutate.md`. create/update/patch/delete via
-  the blocking approval queue + patch-diff approval card. ADR-0009. Delivers "change deployments".
+- **K2 — mutating verbs + approval** (ACTIVE). Plan: `…-k8s-k2-mutate.md`.
+  create/update/patch/delete via the blocking approval queue + patch-diff approval card.
+  ADR-0009. Delivers "change deployments".
 - **K3 — exec / attach / cp / port-forward.** Plan: `…-k8s-k3-exec.md`. WebSocket/SPDY upgrade
   proxying + metadata audit + approval-on-upgrade. ADR-0010.
 
 Phase-1 follow-ups still open (pick with the user): see "Phase 2+ (deferred by design)".
 
 ## Done
+
+- **Plan K1 — Kubernetes read gateway.** `internal/k8s` RBAC path parser + agent kubeconfig;
+  `internal/tlsca` local CA + TLS data plane (data plane is now HTTPS; clients trust the local
+  CA); `Kind="k8s"` cluster targets with token/client-cert/**exec-plugin** auth + per-cluster TLS
+  transport seam (`authn.Manager.Transport`); `policy` extended to `(namespace,resource,verb)`
+  with the namespace-safety property (empty ns matches only `*`); proxy k8s routing + cluster
+  token injection + log/watch **streaming**; `outwall cluster`/`kubeconfig` CLI; MCP cluster
+  discovery + `get_kubeconfig`. All green under `-race`, CGO-free build. ADR-0008.
+  (Note: `outwall kubeconfig` takes `--token` — agent tokens are write-once/SHA-only stored.)
 
 - **Plan 1 — Foundation & data-plane skeleton.** Vault (Argon2id+AES-GCM), SQLite store,
   upstream/agent registries, none/static/basic authenticators, data-plane reverse proxy
