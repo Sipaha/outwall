@@ -16,12 +16,20 @@ keep rules whose subject is the agent or `""` (any); an agent-tier `deny` ⇒ `d
 host match (a leading scheme on the input is stripped). An unknown upstream is `denied` and not
 logged. `request_access` logs the intent (`access.Create`); `get_access` does not.
 
+**K1 (k8s clusters).** `ListUpstreams` reports each target's `Kind` (`http`/`k8s`). `Kubeconfig`
+assembles an agent kubeconfig for a k8s cluster using the calling agent's own token (via
+`k8s.Kubeconfig`, the data-plane URL + local CA injected by `SetKubeconfigParams`); the cluster's
+real credentials are never included. The `internal/mcp` adapter exposes it as the
+`get_kubeconfig` tool.
+
 ## Public API
 
-- `UpstreamInfo struct { Name, BaseURL, Status string }` (Status: `open|needs-request|denied`).
+- `UpstreamInfo struct { Name, BaseURL, Kind, Status string }` (Status: `open|needs-request|denied`).
 - `AccessResult struct { Status, BasePath, Memo string }` (Status: `granted|pending-approval|denied`).
 - `Identity struct { AgentID, Name, Status string; Accesses []string }`.
 - `New(a *agent.Registry, u *upstream.Registry, p *policy.Registry, ac *access.Registry) *Service`.
+- `(*Service).SetKubeconfigParams(dataPlaneURL, caPEM string)`.
+- `(*Service).Kubeconfig(cluster, agentToken string) ([]byte, error)` — k8s cluster only.
 - `(*Service).ListUpstreams(agentID string) ([]UpstreamInfo, error)`.
 - `(*Service).RequestAccess(agentID, hostOrUpstream, purpose string) (AccessResult, error)` — logs intent; unknown upstream not logged.
 - `(*Service).GetAccess(agentID, upstreamName string) (AccessResult, error)` — no intent logged.
