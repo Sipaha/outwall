@@ -77,9 +77,34 @@ func Parse(method, path string, query url.Values) RequestInfo {
 	return ri
 }
 
+// upgradeSubresources are the pod subresources that use an HTTP connection upgrade
+// (WebSocket on modern clusters, SPDY on older ones) for a bidirectional stream:
+// exec, attach, and port-forward. `kubectl cp` rides on exec (exec + tar), so it needs
+// no separate entry.
+var upgradeSubresources = map[string]bool{
+	"exec":        true,
+	"attach":      true,
+	"portforward": true,
+}
+
+// IsUpgrade reports whether this request targets an interactive upgrade subresource
+// (exec / attach / portforward). Such requests negotiate an HTTP connection upgrade and
+// carry a duplex stream rather than a request/response body; the proxy streams them
+// verbatim and the audit records metadata only.
+func (ri RequestInfo) IsUpgrade() bool {
+	return upgradeSubresources[ri.Subresource]
+}
+
 // verbFor derives the RBAC verb from method, whether a name is present, the subresource,
 // and the query (watch/follow).
 func verbFor(method string, named bool, subresource string, query url.Values) string {
+	// The upgrade subresources (exec/attach/portforward) are negotiated as GET on modern
+	// clusters (WebSocket) and POST on older ones (SPDY), but kube-apiserver authorizes them
+	// uniformly as the `create` verb. Map them so a rule (ns, pods/exec, create) grants them
+	// regardless of the wire method.
+	if upgradeSubresources[subresource] {
+		return "create"
+	}
 	switch strings.ToUpper(method) {
 	case "POST":
 		return "create"
