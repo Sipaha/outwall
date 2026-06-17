@@ -4,10 +4,25 @@
 
 ## Active phase
 
-**Phase 1 COMPLETE.** All 7 milestone plans shipped. outwall is a working authenticating egress
-gateway with a CLI/daemon (`outwall`) and a Wails 3 desktop app (`outwall-desktop`).
+**Phase 2 — Kubernetes egress gateway.** Extend the gateway to give agents controlled access to
+Kubernetes clusters (read logs/resources, change workloads, exec) through the same
+request-rights + approval + audit flow — cluster credentials never reach the agent. Design spec:
+`docs/superpowers/specs/2026-06-18-outwall-k8s-gateway-design.md`.
 
-Next: Phase 2 candidates (none active — pick with the user). See "Phase 2+ (deferred by design)".
+Delivery (full product, no feature cut — three sequential milestone plans):
+
+- **K1 — cluster targets + read + streaming** (ACTIVE). Plan:
+  `docs/superpowers/plans/2026-06-18-outwall-k8s-k1-read.md`. Cluster = `Kind="k8s"` upstream;
+  k8s path→(namespace,resource,verb) parser; policy extended to the RBAC tuple with namespace
+  safety; cluster auth token/client-cert/**exec-plugin**; per-cluster TLS transport seam; local
+  CA + agent kubeconfig; log/watch streaming; MCP cluster discovery. ADR-0008. Delivers "all logs
+  in a namespace".
+- **K2 — mutating verbs + approval.** Plan: `…-k8s-k2-mutate.md`. create/update/patch/delete via
+  the blocking approval queue + patch-diff approval card. ADR-0009. Delivers "change deployments".
+- **K3 — exec / attach / cp / port-forward.** Plan: `…-k8s-k3-exec.md`. WebSocket/SPDY upgrade
+  proxying + metadata audit + approval-on-upgrade. ADR-0010.
+
+Phase-1 follow-ups still open (pick with the user): see "Phase 2+ (deferred by design)".
 
 ## Done
 
