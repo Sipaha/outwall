@@ -7,7 +7,30 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
+
+// Outcomes.
+const (
+	Allow           = "allow"
+	Deny            = "deny"
+	RequireApproval = "require-approval"
+)
+
+// Rule binds a subject+upstream+method+path to an outcome.
+type Rule struct {
+	ID              string
+	SubjectAgentID  string // "" = any agent
+	UpstreamID      string
+	Method          string // "" or "*" = any method
+	PathGlob        string
+	Outcome         string
+	RateLimitPerMin int
+	CreatedAt       time.Time
+}
+
+// ValidOutcome reports whether o is a known outcome.
+func ValidOutcome(o string) bool { return o == Allow || o == Deny || o == RequireApproval }
 
 var (
 	globMu    sync.Mutex

@@ -14,7 +14,7 @@ func TestOpenAppliesSchemaIdempotently(t *testing.T) {
 	require.NoError(t, err)
 
 	// Tables exist.
-	for _, table := range []string{"vault_meta", "upstreams", "agents", "grants"} {
+	for _, table := range []string{"vault_meta", "upstreams", "agents", "rules"} {
 		var name string
 		err := s.DB().QueryRow(
 			`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table,

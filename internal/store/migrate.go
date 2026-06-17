@@ -26,12 +26,17 @@ CREATE TABLE IF NOT EXISTS agents (
 	status       TEXT NOT NULL,
 	created_at   TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS grants (
-	agent_id    TEXT NOT NULL,
-	upstream_id TEXT NOT NULL,
-	created_at  TEXT NOT NULL,
-	PRIMARY KEY (agent_id, upstream_id)
+CREATE TABLE IF NOT EXISTS rules (
+	id                 TEXT PRIMARY KEY,
+	subject_agent_id   TEXT NOT NULL DEFAULT '',
+	upstream_id        TEXT NOT NULL,
+	method             TEXT NOT NULL DEFAULT '',
+	path_glob          TEXT NOT NULL DEFAULT '/**',
+	outcome            TEXT NOT NULL,
+	rate_limit_per_min INTEGER NOT NULL DEFAULT 0,
+	created_at         TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS rules_by_upstream ON rules(upstream_id);
 `
 
 func migrate(db *sql.DB) error {
