@@ -69,3 +69,40 @@ func TestRequestAccessFlow(t *testing.T) {
 	res, _ = svc.GetAccess(a.ID, "github")
 	require.Equal(t, "denied", res.Status)
 }
+
+func TestK8sClusterDiscoveryAndKubeconfig(t *testing.T) {
+	svc, ag, up, pol := build(t)
+	a, token, _ := ag.Register("claude")
+
+	cl, err := up.CreateKind("prod-cluster", "https://api.k8s:6443", upstream.KindK8s,
+		upstream.AuthConfig{Type: "none", K8sAuth: "token", Token: "cluster-secret"})
+	require.NoError(t, err)
+	_, err = pol.Create(policy.Rule{UpstreamID: cl.ID, Namespace: "prod", Resource: "pods", Verb: "list", Outcome: policy.Allow})
+	require.NoError(t, err)
+
+	// list_upstreams surfaces the cluster with kind=k8s.
+	svc.SetKubeconfigParams("https://127.0.0.1:8080", "CA-PEM-BYTES")
+	list, err := svc.ListUpstreams(a.ID)
+	require.NoError(t, err)
+	var found *UpstreamInfo
+	for i := range list {
+		if list[i].Name == "prod-cluster" {
+			found = &list[i]
+		}
+	}
+	require.NotNil(t, found)
+	require.Equal(t, "k8s", found.Kind)
+	require.Equal(t, "open", found.Status)
+
+	// get_kubeconfig returns YAML carrying the calling agent's token.
+	yamlBytes, err := svc.Kubeconfig("prod-cluster", token)
+	require.NoError(t, err)
+	require.Contains(t, string(yamlBytes), "token: "+token)
+	require.Contains(t, string(yamlBytes), "https://127.0.0.1:8080/prod-cluster")
+
+	// A non-k8s upstream cannot produce a kubeconfig.
+	_, err = up.Create("plain", "https://api.example", upstream.AuthConfig{Type: "none"})
+	require.NoError(t, err)
+	_, err = svc.Kubeconfig("plain", token)
+	require.Error(t, err)
+}

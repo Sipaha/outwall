@@ -4,11 +4,13 @@ package daemon
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/Sipaha/outwall/internal/access"
 	"github.com/Sipaha/outwall/internal/agent"
@@ -22,8 +24,12 @@ import (
 	"github.com/Sipaha/outwall/internal/proxy"
 	"github.com/Sipaha/outwall/internal/secret"
 	"github.com/Sipaha/outwall/internal/store"
+	"github.com/Sipaha/outwall/internal/tlsca"
 	"github.com/Sipaha/outwall/internal/upstream"
 )
+
+// DefaultListen is the default localhost address for the data-plane listener.
+const DefaultListen = "127.0.0.1:8080"
 
 // DefaultMCPListen is the default localhost address for the MCP control-plane listener.
 const DefaultMCPListen = "127.0.0.1:8181"
@@ -38,6 +44,7 @@ type Config struct {
 	Listen     string // data-plane TCP listen address, e.g. 127.0.0.1:8080
 	MCPListen  string // MCP control-plane TCP listen address, e.g. 127.0.0.1:8181
 	UIListen   string // desktop-UI control API + SSE TCP listen address, e.g. 127.0.0.1:8182
+	CADir      string // local-CA dir; defaults to the DB's directory when empty
 }
 
 // Daemon owns the running gateway.
@@ -52,6 +59,7 @@ type Daemon struct {
 	approvals *approval.Queue
 	audit     *audit.Recorder
 	bus       *events.Bus
+	ca        *tlsca.CA
 	dataPlane http.Handler
 	mcp       http.Handler
 }
@@ -71,6 +79,16 @@ func New(cfg Config) (*Daemon, error) {
 	if cfg.UIListen == "" {
 		cfg.UIListen = DefaultUIListen
 	}
+	if cfg.Listen == "" {
+		cfg.Listen = DefaultListen
+	}
+	if cfg.CADir == "" {
+		cfg.CADir = filepath.Dir(cfg.DBPath)
+	}
+	ca, err := tlsca.LoadOrCreateCA(cfg.CADir)
+	if err != nil {
+		return nil, fmt.Errorf("load local CA: %w", err)
+	}
 	s, err := store.Open(cfg.DBPath)
 	if err != nil {
 		return nil, err
@@ -87,6 +105,7 @@ func New(cfg Config) (*Daemon, error) {
 	aud.SetPublisher(bus)
 	svc := mcpsvc.New(ag, up, pol, acc)
 	svc.SetPublisher(bus)
+	svc.SetKubeconfigParams("https://"+cfg.Listen, string(ca.CAPEM()))
 	mcpHandler, err := owmcp.NewHandler(owmcp.Deps{
 		Svc: svc, Agents: ag, Locked: v.Locked,
 	})
@@ -96,7 +115,7 @@ func New(cfg Config) (*Daemon, error) {
 	}
 	d := &Daemon{
 		cfg: cfg, store: s, vault: v, agents: ag, upstreams: up, policy: pol, access: acc,
-		approvals: appr, audit: aud, bus: bus,
+		approvals: appr, audit: aud, bus: bus, ca: ca,
 		dataPlane: proxy.New(proxy.Deps{
 			Agents: ag, Upstreams: up, Policy: pol, Limiter: policy.NewLimiter(),
 			Approvals: appr, AuthManager: authn.NewManager(nil), Vault: v, Audit: aud,
@@ -109,6 +128,12 @@ func New(cfg Config) (*Daemon, error) {
 // Close releases resources.
 func (d *Daemon) Close() error { return d.store.Close() }
 
+// CAPEM returns the local CA certificate (PEM) the data plane is served with.
+func (d *Daemon) CAPEM() []byte { return d.ca.CAPEM() }
+
+// DataPlaneURL returns the https base URL of the data plane (no trailing slash).
+func (d *Daemon) DataPlaneURL() string { return "https://" + d.cfg.Listen }
+
 // Serve starts the data-plane and admin listeners until ctx is canceled.
 func (d *Daemon) Serve(ctx context.Context) error {
 	_ = os.Remove(d.cfg.SocketPath)
@@ -119,14 +144,26 @@ func (d *Daemon) Serve(ctx context.Context) error {
 	if err := os.Chmod(d.cfg.SocketPath, 0o600); err != nil {
 		return fmt.Errorf("chmod socket: %w", err)
 	}
+	// The data plane is served over TLS using the local-CA-issued server cert so kubectl
+	// validates the proxy honestly (the agent kubeconfig embeds the same CA). HTTP upstreams
+	// reach the same TLS endpoint at https://127.0.0.1:PORT/<upstream>/...
+	serverCert, err := d.ca.ServerCert("127.0.0.1", "localhost", "::1")
+	if err != nil {
+		return fmt.Errorf("issue data-plane server cert: %w", err)
+	}
+	dataTLS := &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		MinVersion:   tls.VersionTLS12,
+	}
+
 	adminSrv := &http.Server{Handler: d.AdminHandler()}
-	dataSrv := &http.Server{Addr: d.cfg.Listen, Handler: d.dataPlane}
+	dataSrv := &http.Server{Addr: d.cfg.Listen, Handler: d.dataPlane, TLSConfig: dataTLS}
 	mcpSrv := &http.Server{Addr: d.cfg.MCPListen, Handler: d.mcp}
 	uiSrv := &http.Server{Addr: d.cfg.UIListen, Handler: d.UIHandler()}
 
 	errc := make(chan error, 4)
 	go func() { errc <- adminSrv.Serve(ln) }()
-	go func() { errc <- dataSrv.ListenAndServe() }()
+	go func() { errc <- dataSrv.ListenAndServeTLS("", "") }()
 	go func() { errc <- mcpSrv.ListenAndServe() }()
 	go func() { errc <- uiSrv.ListenAndServe() }()
 

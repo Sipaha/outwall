@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -93,6 +94,7 @@ type Manager struct {
 type managed struct {
 	fingerprint string
 	auth        Authenticator
+	transport   http.RoundTripper // nil for http upstreams
 }
 
 // NewManager constructs a Manager; nil hc uses http.DefaultClient.
@@ -103,35 +105,90 @@ func NewManager(hc *http.Client) *Manager {
 	return &Manager{hc: hc, m: map[string]managed{}}
 }
 
-func fingerprint(c upstream.AuthConfig) string {
-	return strings.Join([]string{c.Type, c.Header, c.Token, c.Username, c.Password,
-		c.TokenURL, c.ClientID, c.ClientSecret, c.Scope}, "\x00")
+func fingerprint(kind string, c upstream.AuthConfig) string {
+	return strings.Join([]string{kind, c.Type, c.Header, c.Token, c.Username, c.Password,
+		c.TokenURL, c.ClientID, c.ClientSecret, c.Scope,
+		c.CABundle, c.K8sAuth, c.ClientCert, c.ClientKey, c.ExecCommand,
+		strings.Join(c.ExecArgs, "\x01"), execEnvFingerprint(c.ExecEnv)}, "\x00")
+}
+
+func execEnvFingerprint(env map[string]string) string {
+	if len(env) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteString("=")
+		b.WriteString(env[k])
+		b.WriteString("\x01")
+	}
+	return b.String()
+}
+
+// managedFor returns (rebuilding if needed) the cached entry for the upstream.
+func (mgr *Manager) managedFor(up *upstream.Upstream) (managed, error) {
+	fp := fingerprint(up.Kind, up.Auth)
+	mgr.mu.Lock()
+	defer mgr.mu.Unlock()
+	if cur, ok := mgr.m[up.ID]; ok && cur.fingerprint == fp {
+		return cur, nil
+	}
+	a, tr, err := mgr.build(up.Kind, up.Auth)
+	if err != nil {
+		return managed{}, err
+	}
+	entry := managed{fingerprint: fp, auth: a, transport: tr}
+	mgr.m[up.ID] = entry
+	return entry, nil
 }
 
 // Authenticator returns a cached authenticator for the upstream, rebuilding it if the auth
 // config changed since last time.
 func (mgr *Manager) Authenticator(up *upstream.Upstream) (Authenticator, error) {
-	fp := fingerprint(up.Auth)
-	mgr.mu.Lock()
-	defer mgr.mu.Unlock()
-	if cur, ok := mgr.m[up.ID]; ok && cur.fingerprint == fp {
-		return cur.auth, nil
-	}
-	a, err := mgr.build(up.Auth)
+	entry, err := mgr.managedFor(up)
 	if err != nil {
 		return nil, err
 	}
-	mgr.m[up.ID] = managed{fingerprint: fp, auth: a}
-	return a, nil
+	return entry.auth, nil
 }
 
-func (mgr *Manager) build(cfg upstream.AuthConfig) (Authenticator, error) {
+// Transport returns the RoundTripper to reach this target's real backend. For Kind=="k8s"
+// it is a transport whose tls.Config trusts AuthConfig.CABundle and (for client-cert auth)
+// presents the client cert. For http upstreams it returns nil (the proxy uses the default
+// transport). Cached per target alongside the Authenticator, keyed on the config fingerprint.
+func (mgr *Manager) Transport(up *upstream.Upstream) (http.RoundTripper, error) {
+	entry, err := mgr.managedFor(up)
+	if err != nil {
+		return nil, err
+	}
+	return entry.transport, nil
+}
+
+func (mgr *Manager) build(kind string, cfg upstream.AuthConfig) (Authenticator, http.RoundTripper, error) {
+	if kind == upstream.KindK8s {
+		a, err := buildK8sAuth(cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		tr, err := k8sTransport(cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		return a, tr, nil
+	}
 	if cfg.Type == "oidc-client-credentials" {
 		if cfg.TokenURL == "" || cfg.ClientID == "" {
-			return nil, fmt.Errorf("oidc-client-credentials: token_url and client_id required")
+			return nil, nil, fmt.Errorf("oidc-client-credentials: token_url and client_id required")
 		}
 		return &oidcClientCreds{hc: mgr.hc, tokenURL: cfg.TokenURL, clientID: cfg.ClientID,
-			secret: cfg.ClientSecret, scope: cfg.Scope}, nil
+			secret: cfg.ClientSecret, scope: cfg.Scope}, nil, nil
 	}
-	return For(cfg) // stateless types
+	a, err := For(cfg) // stateless types
+	return a, nil, err
 }

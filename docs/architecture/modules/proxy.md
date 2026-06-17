@@ -14,6 +14,15 @@ If the matched rule sets a rate limit, the in-memory `policy.Limiter` is consult
 upstream authenticator obtained from `authn.Manager` (so OIDC tokens are cached across requests),
 and forwards via `httputil.ReverseProxy` (`Host` rewritten to the upstream, query preserved).
 
+**K1 (k8s clusters).** When the resolved target is `Kind=="k8s"`, the proxy parses the request
+into the RBAC tuple (`k8s.Parse`) and evaluates `policy.Decide` with `Kind:"k8s"` +
+namespace/resource/subresource/verb instead of method+path. Discovery/health paths
+(`IsResource==false`, e.g. `/version`, `/api`, `/openapi/...`) are allowed for any agent that
+holds ≥1 grant on the cluster (kubectl needs them), else denied. The per-cluster TLS transport
+from `authn.Manager.Transport` is attached, and `FlushInterval=-1` is set so `logs -f` / `-w`
+stream incrementally. The `approval.Pending` carries the k8s tuple (Namespace/Resource/Verb)
+for the UI (K2 makes mutating verbs park on it).
+
 ## Audit (optional)
 
 When `Deps.Audit != nil` the handler records each request to the audit journal (see `audit.md`

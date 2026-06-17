@@ -17,16 +17,22 @@ const (
 	RequireApproval = "require-approval"
 )
 
-// Rule binds a subject+upstream+method+path to an outcome.
+// Rule binds a subject+upstream to an outcome. For http upstreams it matches on
+// Method+PathGlob; for k8s clusters it matches on Namespace+Resource+Verb.
 type Rule struct {
 	ID              string
 	SubjectAgentID  string // "" = any agent
 	UpstreamID      string
-	Method          string // "" or "*" = any method
-	PathGlob        string
+	Method          string // "" or "*" = any method (http)
+	PathGlob        string // (http)
 	Outcome         string
 	RateLimitPerMin int
 	CreatedAt       time.Time
+
+	// k8s rule dimensions (empty on http rules):
+	Namespace string // glob: "", "prod", "prod-*", "*"
+	Resource  string // glob over "resource" or "resource/subresource", e.g. "pods", "pods/log", "*"
+	Verb      string // "", "*", or one verb: get/list/watch/create/update/patch/delete/deletecollection
 }
 
 // ValidOutcome reports whether o is a known outcome.

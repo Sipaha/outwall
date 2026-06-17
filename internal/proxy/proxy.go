@@ -15,6 +15,7 @@ import (
 	"github.com/Sipaha/outwall/internal/approval"
 	"github.com/Sipaha/outwall/internal/audit"
 	"github.com/Sipaha/outwall/internal/authn"
+	"github.com/Sipaha/outwall/internal/k8s"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/secret"
 	"github.com/Sipaha/outwall/internal/upstream"
@@ -83,20 +84,56 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	relPath := "/" + rest
-	dec, err := h.Policy.Decide(policy.Input{AgentID: ag.ID, UpstreamID: up.ID, Method: r.Method, Path: relPath})
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "policy error")
-		return
+
+	isK8s := up.Kind == upstream.KindK8s
+	var ri k8s.RequestInfo
+	var pending approval.Pending
+	var dec policy.Decision
+	if isK8s {
+		ri = k8s.Parse(r.Method, relPath, r.URL.Query())
+		if !ri.IsResource {
+			// Discovery / health (/version, /api, /apis, /openapi/...). kubectl needs these
+			// to function: allow GET discovery for any agent holding >=1 allow/approval rule
+			// on this cluster, else deny.
+			ok, derr := h.agentHasAnyGrant(ag.ID, up.ID)
+			if derr != nil {
+				writeErr(w, http.StatusInternalServerError, "policy error")
+				return
+			}
+			if !ok {
+				h.recordOutcome(r, ag, up, relPath, http.StatusForbidden, "deny", nil, "discovery denied (no grant on cluster)")
+				writeErr(w, http.StatusForbidden, "access denied")
+				return
+			}
+			dec = policy.Decision{Outcome: policy.Allow}
+		} else {
+			dec, err = h.Policy.Decide(policy.Input{AgentID: ag.ID, UpstreamID: up.ID, Kind: "k8s",
+				Namespace: ri.Namespace, Resource: ri.Resource, Subresource: ri.Subresource, Verb: ri.Verb})
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, "policy error")
+				return
+			}
+		}
+		pending = approval.Pending{
+			AgentID: ag.ID, UpstreamID: up.ID, Method: r.Method, Path: relPath,
+			Namespace: ri.Namespace, Resource: resourceKey(ri), Verb: ri.Verb,
+		}
+	} else {
+		dec, err = h.Policy.Decide(policy.Input{AgentID: ag.ID, UpstreamID: up.ID, Method: r.Method, Path: relPath})
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "policy error")
+			return
+		}
+		pending = approval.Pending{AgentID: ag.ID, UpstreamID: up.ID, Method: r.Method, Path: relPath}
 	}
+
 	switch dec.Outcome {
 	case policy.Deny:
 		h.recordOutcome(r, ag, up, relPath, http.StatusForbidden, "deny", dec.Rule, "access denied")
 		writeErr(w, http.StatusForbidden, "access denied")
 		return
 	case policy.RequireApproval:
-		ok, err := h.Approvals.Submit(r.Context(), approval.Pending{
-			AgentID: ag.ID, UpstreamID: up.ID, Method: r.Method, Path: relPath,
-		})
+		ok, err := h.Approvals.Submit(r.Context(), pending)
 		if err != nil {
 			writeErr(w, http.StatusGatewayTimeout, "approval wait canceled")
 			return
@@ -124,6 +161,16 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "auth config error")
 		return
+	}
+	transport, err := h.AuthManager.Transport(up)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "transport config error")
+		return
+	}
+
+	if isK8s {
+		h.Logger.Info("k8s request", "cluster", up.Name, "namespace", ri.Namespace,
+			"resource", resourceKey(ri), "verb", ri.Verb, "decision", dec.Outcome)
 	}
 
 	// Audit capture state for the proxied request.
@@ -201,6 +248,14 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 	}
+	if transport != nil {
+		rp.Transport = transport
+	}
+	if isK8s {
+		// Stream watch/log responses live: flush each chunk immediately so `logs -f` / `-w`
+		// reach the agent incrementally rather than being buffered.
+		rp.FlushInterval = -1
+	}
 	rp.ServeHTTP(w, r)
 }
 
@@ -235,6 +290,38 @@ func buildReqBody(cap *audit.Capture, contentType string) (*audit.Body, int64) {
 	}
 	b := audit.ClassifyBody(audit.KindRequest, contentType, stored, total, truncated)
 	return &b, total
+}
+
+// agentHasAnyGrant reports whether the agent holds at least one allow/require-approval rule
+// on the given cluster (its own rules or any-subject rules), and no agent-specific deny that
+// would shut it out. Used to gate k8s discovery/health endpoints kubectl needs to function.
+func (h *handler) agentHasAnyGrant(agentID, upstreamID string) (bool, error) {
+	rules, err := h.Policy.ForUpstream(upstreamID)
+	if err != nil {
+		return false, err
+	}
+	hasGrant := false
+	for _, rule := range rules {
+		if rule.SubjectAgentID != "" && rule.SubjectAgentID != agentID {
+			continue
+		}
+		if rule.SubjectAgentID == agentID && rule.Outcome == policy.Deny {
+			return false, nil
+		}
+		if rule.Outcome == policy.Allow || rule.Outcome == policy.RequireApproval {
+			hasGrant = true
+		}
+	}
+	return hasGrant, nil
+}
+
+// resourceKey renders the resource (with subresource, if any) for display/audit, e.g.
+// "pods" or "pods/log".
+func resourceKey(ri k8s.RequestInfo) string {
+	if ri.Subresource != "" {
+		return ri.Resource + "/" + ri.Subresource
+	}
+	return ri.Resource
 }
 
 func ruleIDOf(rule *policy.Rule) string {

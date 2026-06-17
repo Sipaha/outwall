@@ -14,22 +14,34 @@ import (
 	"github.com/Sipaha/outwall/internal/access"
 	"github.com/Sipaha/outwall/internal/agent"
 	"github.com/Sipaha/outwall/internal/events"
+	"github.com/Sipaha/outwall/internal/k8s"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/upstream"
 )
 
-// Service holds the registries the four MCP tools operate over.
+// Service holds the registries the MCP tools operate over.
 type Service struct {
 	agents    *agent.Registry
 	upstreams *upstream.Registry
 	policy    *policy.Registry
 	access    *access.Registry
 	pub       events.Publisher
+
+	// kubeconfig assembly inputs (set by the daemon via SetKubeconfigParams):
+	dataPlaneURL string // e.g. https://127.0.0.1:8080 (no trailing slash)
+	caPEM        string
 }
 
 // New constructs the domain service.
 func New(a *agent.Registry, u *upstream.Registry, p *policy.Registry, ac *access.Registry) *Service {
 	return &Service{agents: a, upstreams: u, policy: p, access: ac}
+}
+
+// SetKubeconfigParams provides the data-plane base URL and local-CA PEM used to assemble
+// agent kubeconfigs in Kubeconfig / get_kubeconfig.
+func (s *Service) SetKubeconfigParams(dataPlaneURL, caPEM string) {
+	s.dataPlaneURL = dataPlaneURL
+	s.caPEM = caPEM
 }
 
 // SetPublisher attaches a (nil-safe) event publisher. RequestAccess publishes "access.requested"
@@ -43,6 +55,7 @@ func (s *Service) SetPublisher(p events.Publisher) { s.pub = p }
 type UpstreamInfo struct {
 	Name    string `json:"name"`
 	BaseURL string `json:"base_url"`
+	Kind    string `json:"kind"`
 	Status  string `json:"status"`
 }
 
@@ -179,9 +192,31 @@ func (s *Service) ListUpstreams(agentID string) ([]UpstreamInfo, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, UpstreamInfo{Name: u.Name, BaseURL: u.BaseURL, Status: st})
+		kind := u.Kind
+		if kind == "" {
+			kind = upstream.KindHTTP
+		}
+		out = append(out, UpstreamInfo{Name: u.Name, BaseURL: u.BaseURL, Kind: kind, Status: st})
 	}
 	return out, nil
+}
+
+// Kubeconfig assembles an agent kubeconfig for a k8s cluster, using the calling agent's own
+// outwall token. The cluster's real credentials are never included. Errors if the named
+// upstream is not a k8s cluster or kubeconfig params were not set.
+func (s *Service) Kubeconfig(cluster, agentToken string) ([]byte, error) {
+	up, err := s.upstreams.GetByName(cluster)
+	if err != nil {
+		return nil, fmt.Errorf("resolve cluster: %w", err)
+	}
+	if up.Kind != upstream.KindK8s {
+		return nil, fmt.Errorf("%q is not a k8s cluster", cluster)
+	}
+	if s.dataPlaneURL == "" {
+		return nil, fmt.Errorf("kubeconfig params not configured")
+	}
+	serverURL := s.dataPlaneURL + "/" + up.Name
+	return k8s.Kubeconfig(serverURL, up.Name, s.caPEM, agentToken)
 }
 
 // RequestAccess resolves the upstream, logs the agent's intent (with purpose), and returns the

@@ -1,1 +1,19 @@
-<!doctype html><meta charset=utf-8><title>outwall</title><body>outwall UI not built — run <code>make build</code>.</body>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>outwall</title>
+    <!-- Anti-FOUC: paint the dark window background before the bundle loads, so
+         the first frame is the app's charcoal surface rather than the webview's
+         default white. outwall is dark-only in 6A (no theme toggle yet). -->
+    <script>
+      document.documentElement.style.backgroundColor = '#1e1f22'
+    </script>
+    <script type="module" crossorigin src="/assets/index-BLZ-d2nB.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DvisnTKS.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

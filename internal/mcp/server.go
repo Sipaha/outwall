@@ -67,6 +67,14 @@ type whoamiOut struct {
 	Token string `json:"token"`
 }
 
+type getKubeconfigIn struct {
+	Cluster string `json:"cluster" jsonschema:"the k8s cluster name to emit a kubeconfig for"`
+}
+
+type getKubeconfigOut struct {
+	Kubeconfig string `json:"kubeconfig"`
+}
+
 // NewHandler builds the streamable-HTTP MCP handler exposing the four control-plane tools.
 func NewHandler(deps Deps) (http.Handler, error) {
 	if deps.Svc == nil || deps.Agents == nil {
@@ -94,6 +102,9 @@ func NewHandler(deps Deps) (http.Handler, error) {
 	sdkmcp.AddTool(sdkServer,
 		&sdkmcp.Tool{Name: "whoami", Description: "Return your agent identity, data-plane bearer token, and current accesses."},
 		srv.handleWhoAmI)
+	sdkmcp.AddTool(sdkServer,
+		&sdkmcp.Tool{Name: "get_kubeconfig", Description: "Return a kubeconfig (YAML) for a registered k8s cluster, using your own outwall token. The cluster's real credentials are never included."},
+		srv.handleGetKubeconfig)
 
 	return sdkmcp.NewStreamableHTTPHandler(
 		func(*http.Request) *sdkmcp.Server { return sdkServer },
@@ -219,4 +230,22 @@ func (s *server) handleWhoAmI(ctx context.Context, req *sdkmcp.CallToolRequest, 
 		return nil, whoamiOut{}, err
 	}
 	return nil, whoamiOut{Identity: ident, Token: id.token}, nil
+}
+
+func (s *server) handleGetKubeconfig(ctx context.Context, req *sdkmcp.CallToolRequest, in getKubeconfigIn) (*sdkmcp.CallToolResult, getKubeconfigOut, error) {
+	id, err := s.agentFor(req)
+	if err != nil {
+		return nil, getKubeconfigOut{}, err
+	}
+	if s.locked() {
+		return toolError(lockedMsg), getKubeconfigOut{}, nil
+	}
+	if strings.TrimSpace(in.Cluster) == "" {
+		return toolError("cluster is required"), getKubeconfigOut{}, nil
+	}
+	yamlBytes, err := s.deps.Svc.Kubeconfig(in.Cluster, id.token)
+	if err != nil {
+		return toolError(err.Error()), getKubeconfigOut{}, nil
+	}
+	return nil, getKubeconfigOut{Kubeconfig: string(yamlBytes)}, nil
 }

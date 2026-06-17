@@ -44,6 +44,8 @@ func NewRootCmd() *cobra.Command {
 		newServeCmd(gf),
 		newVaultCmd(gf),
 		newUpstreamCmd(gf),
+		newClusterCmd(gf),
+		newKubeconfigCmd(gf),
 		newAgentCmd(gf),
 		newRuleCmd(gf),
 		newApprovalCmd(gf),
