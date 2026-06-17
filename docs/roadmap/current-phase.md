@@ -4,20 +4,24 @@
 
 ## Active phase
 
-**Phase 2 — Kubernetes egress gateway.** Extend the gateway to give agents controlled access to
-Kubernetes clusters (read logs/resources, change workloads, exec) through the same
-request-rights + approval + audit flow — cluster credentials never reach the agent. Design spec:
-`docs/superpowers/specs/2026-06-18-outwall-k8s-gateway-design.md`.
+**Phase 2 — Kubernetes egress gateway: COMPLETE.** All three milestones (K1 read+streaming, K2
+mutate+approval, K3 exec/attach/cp/port-forward) shipped, merged, and pushed. Agents now get
+controlled access to Kubernetes clusters (read logs/resources, change workloads, exec) through the
+same request-rights + approval + audit flow — cluster credentials never reach the agent. Design
+spec: `docs/superpowers/specs/2026-06-18-outwall-k8s-gateway-design.md`; ADR-0008/0009/0010.
 
-Delivery (full product, no feature cut — three sequential milestone plans):
-
-- **K3 — exec / attach / cp / port-forward** (ACTIVE). Plan: `…-k8s-k3-exec.md`. WebSocket/SPDY
-  upgrade proxying + metadata audit + approval-on-upgrade. ADR-0010. Last K-milestone — after it,
-  Phase 2 (k8s) is complete.
-
-Phase-1 follow-ups still open (pick with the user): see "Phase 2+ (deferred by design)".
+Next: no active phase — pick with the user. Candidates below.
 
 ## Done
+
+- **Plan K3 — k8s exec / attach / cp / port-forward.** `RequestInfo.IsUpgrade()` +
+  exec/attach/portforward → RBAC verb `create`; the proxy's upgrade branch reuses
+  `httputil.ReverseProxy`'s native `Upgrade` handling + the per-cluster TLS transport, gates the
+  upgrade through policy + the blocking approval queue **before** the `101`, and skips the
+  `ModifyResponse` body-capture on a `101` (which would otherwise `502` a duplex stream);
+  metadata-only audit (cluster/ns/pod/command/duration/bytes-in-out, no body blob) via a counting
+  hijacked-conn wrapper. Stdlib-only — no websocket/client-go dependency. All green under `-race`,
+  CGO-free + desktop builds. ADR-0010.
 
 - **Plan K2 — k8s mutating verbs + approval.** Mutating k8s verbs (patch/update/create/delete/
   deletecollection) gated by the existing blocking approval queue; the proxy captures the request
