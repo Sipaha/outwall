@@ -4,13 +4,10 @@
 
 ## Active phase
 
-**Plan 7 — Wails 3 desktop wrapper.**
+**Phase 1 COMPLETE.** All 7 milestone plans shipped. outwall is a working authenticating egress
+gateway with a CLI/daemon (`outwall`) and a Wails 3 desktop app (`outwall-desktop`).
 
-Goal: the desktop app — a Wails v3 thin-wrapper (`cmd/outwall-desktop`, `internal/desktop`) that
-supervises the daemon as a child process and renders the embedded UI in a webview pointed at the
-`UIListen` bind, with the unlock screen at launch. Mirror citeck-launcher's `internal/desktop`
-supervisor pattern (CGO build, separate `cmd/`, `make build-desktop`). This is the only CGO
-target; the server binary stays CGO-free. Not yet started — needs a plan written.
+Next: Phase 2 candidates (none active — pick with the user). See "Phase 2+ (deferred by design)".
 
 ## Done
 
@@ -49,7 +46,11 @@ target; the server binary stays CGO-free. Not yet started — needs a plan writt
   body viewer + masked headers), Settings (audit prune + vault lock; `POST /vault/lock` added). All
   six routes live. Live browser smoke verified all screens. (Within ADR-0006.)
 
-## Queued candidates (Phase 1 — none remaining after Plan 7)
+- **Plan 7 — Wails 3 desktop wrapper.** `cmd/outwall-desktop` (`//go:build desktop`, CGO+GTK4)
+  runs the daemon **in-process** (CGO-free `internal/desktop.Run` helper + readiness wait, unit
+  tested) and renders the embedded UI in a Wails v3 (`v3.0.0-alpha2.103`) webview pointed at
+  `UIListen`. Server binary stays CGO-free via the `desktop` build tag. `make build-desktop`
+  (rebuilds the web bundle first so the real UI is embedded). xvfb launch healthy. ADR-0007.
 
 ## Phase 2+ (deferred by design)
 

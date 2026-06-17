@@ -9,7 +9,7 @@ GO_LDFLAGS := -X github.com/Sipaha/outwall/internal/version.version=$(shell git 
 # binary stays CGO-free.
 DESKTOP_TAGS ?= desktop
 
-.PHONY: build build-fast build-web build-desktop test fmt vet tidy
+.PHONY: build build-fast build-web build-desktop build-desktop-fast test fmt vet tidy
 
 # Full build: rebuild the web UI first (its output lands in internal/daemon/webdist,
 # which the Go binary embeds via //go:embed), then compile the binary.
@@ -27,12 +27,14 @@ build-web:
 	pnpm -C web install --frozen-lockfile=false
 	pnpm -C web build
 
-# build-desktop compiles the Wails v3 GUI shell (CGO + GTK3 + WebKit2GTK 4.1).
-# It does NOT force a web rebuild — like build-fast it embeds whatever webdist
-# currently holds (the committed bundle, or a prior `make build-web`) — so the
-# desktop build stays self-contained and doesn't require pnpm. Run `make
-# build-web` first if you need a fresh UI bundle.
-build-desktop:
+# build-desktop compiles the Wails v3 GUI shell (CGO + GTK/WebKit). It rebuilds
+# the web UI first (build-web) so the embedded webdist is the REAL bundle, not
+# the committed "UI not built" placeholder — a shipped desktop app must contain a
+# working UI. Use build-desktop-fast to skip the web rebuild against an existing
+# webdist (e.g. CI that built the web in a prior step / has no pnpm).
+build-desktop: build-web build-desktop-fast
+
+build-desktop-fast:
 	@mkdir -p $(BINDIR)
 	CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS)" -ldflags "$(GO_LDFLAGS)" -o $(DESKTOP) ./cmd/outwall-desktop
 
