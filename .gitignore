@@ -6,3 +6,10 @@
 .outwall/
 /coverage.out
 /coverage.html
+
+# Web UI: node deps + Vite build outputs. The committed webdist/index.html is a
+# placeholder so `go build`/`go test` compile before any `pnpm build`; the real
+# bundle (index.html + assets/) is produced by `make build-web` and not tracked.
+/web/node_modules/
+/web/dist/
+/internal/daemon/webdist/assets/

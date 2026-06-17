@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+@theme {
+  /* Darcula / Lens inspired palette (dark — the only theme in 6A). */
+  --color-background: #1e1f22;
+  --color-foreground: #dfe1e5;
+  --color-muted: #2b2d30;
+  --color-muted-foreground: #9da0a8;
+  --color-card: #2b2d30;
+  --color-card-foreground: #dfe1e5;
+  --color-border: #43454a;
+  --color-primary: #4d9cf6;
+  --color-primary-foreground: #ffffff;
+  --color-destructive: #f75464;
+  --color-success: #5fad65;
+  --color-warning: #e8c44d;
+  --color-accent: #393b40;
+
+  /* Status colors — pill text/dot tuned to read on the dark surface. */
+  --color-status-running: #4eb45e;   /* active / allowed / granted */
+  --color-status-transient: #e0b53a; /* new / pending */
+  --color-status-stalled: #e08740;   /* require-approval / stalled */
+  --color-status-stopped: #7c7f87;   /* inactive / dismissed */
+
+  /* IDE-grade monospace stack — prefers real developer fonts when present on
+     the host, falling back through OS defaults. No bundled/CDN assets. */
+  --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Code", "Fira Code",
+    "Roboto Mono", ui-monospace, "Menlo", "Consolas", monospace;
+
+  /* Tinted elevation — shadows carry the dark background's blue-charcoal hue
+     instead of pure black, so popovers/modals read as lifted off the surface. */
+  --shadow-sm: 0 1px 2px rgba(10, 11, 14, 0.45);
+  --shadow-md: 0 2px 6px rgba(10, 11, 14, 0.5), 0 1px 2px rgba(10, 11, 14, 0.4);
+  --shadow-lg: 0 8px 24px rgba(8, 9, 12, 0.55), 0 2px 6px rgba(8, 9, 12, 0.45);
+  --shadow-xl: 0 16px 40px rgba(8, 9, 12, 0.6), 0 4px 10px rgba(8, 9, 12, 0.5);
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Tabular figures everywhere — live monitoring columns stay rock-steady. */
+  font-variant-numeric: tabular-nums;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+button, a, [role="button"] {
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease, transform 0.08s ease;
+}
+
+button:not(:disabled):active,
+[role="button"]:not([aria-disabled="true"]):active {
+  transform: translateY(0.5px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  button:not(:disabled):active,
+  [role="button"]:active { transform: none; }
+}
+
+:focus-visible {
+  outline: 1.5px solid var(--color-primary);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-primary) 35%, transparent);
+}
+
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted-foreground);
+}
+
+dialog::backdrop {
+  background: rgba(12, 14, 20, 0.6);
+  backdrop-filter: blur(2px);
+}
