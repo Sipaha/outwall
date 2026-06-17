@@ -28,6 +28,9 @@ import (
 	"github.com/Sipaha/outwall/internal/upstream"
 )
 
+// DefaultListen is the default localhost address for the data-plane listener.
+const DefaultListen = "127.0.0.1:8080"
+
 // DefaultMCPListen is the default localhost address for the MCP control-plane listener.
 const DefaultMCPListen = "127.0.0.1:8181"
 
@@ -76,6 +79,9 @@ func New(cfg Config) (*Daemon, error) {
 	if cfg.UIListen == "" {
 		cfg.UIListen = DefaultUIListen
 	}
+	if cfg.Listen == "" {
+		cfg.Listen = DefaultListen
+	}
 	if cfg.CADir == "" {
 		cfg.CADir = filepath.Dir(cfg.DBPath)
 	}
@@ -99,6 +105,7 @@ func New(cfg Config) (*Daemon, error) {
 	aud.SetPublisher(bus)
 	svc := mcpsvc.New(ag, up, pol, acc)
 	svc.SetPublisher(bus)
+	svc.SetKubeconfigParams("https://"+cfg.Listen, string(ca.CAPEM()))
 	mcpHandler, err := owmcp.NewHandler(owmcp.Deps{
 		Svc: svc, Agents: ag, Locked: v.Locked,
 	})
