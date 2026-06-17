@@ -206,3 +206,43 @@ func TestK8sExecUpgradeApprovalBlocksUntilApproved(t *testing.T) {
 	require.Equal(t, "hi\n", got)
 	require.Equal(t, "Bearer cluster-tok", *gotAuth)
 }
+
+func TestK8sExecSessionWritesMetadataAuditNoBody(t *testing.T) {
+	h, _, token, _, rec := execUpstreamSetupAudit(t, policy.Allow, true)
+
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	conn, br, resp := dialUpgrade(t, srv.URL, execPath, token)
+	require.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+
+	_, err := conn.Write([]byte("whoami\n"))
+	require.NoError(t, err)
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
+	_, err = br.ReadString('\n')
+	require.NoError(t, err)
+	// Closing the client conn ends the session; the proxy must then write a metadata record.
+	require.NoError(t, conn.Close())
+
+	var entries []audit.Entry
+	require.Eventually(t, func() bool {
+		entries, err = rec.List(50)
+		return err == nil && len(entries) == 1
+	}, 5*time.Second, 20*time.Millisecond, "a metadata audit record must appear after the session closes")
+
+	e := entries[0]
+	require.Equal(t, "prod-cluster", e.UpstreamName, "cluster recorded")
+	require.Contains(t, e.Path, "/namespaces/prod/pods/web-1/exec", "namespace + pod recorded in path")
+	require.Contains(t, e.Query, "command=sh", "command query recorded")
+	require.Contains(t, e.Query, "container=app", "container query recorded")
+	require.Equal(t, "allow", e.Decision)
+	require.Positive(t, e.DurationMs, "session duration must be recorded")
+	require.Positive(t, e.ReqBytes, "bytes the agent sent must be counted")
+	require.Positive(t, e.RespBytes, "bytes echoed back must be counted")
+
+	// The record must carry NO request/response body blob.
+	got, bodies, err := rec.Get(e.ID)
+	require.NoError(t, err)
+	require.Empty(t, bodies, "an interactive session must store metadata only — no body blob")
+	require.Equal(t, e.ID, got.ID)
+}

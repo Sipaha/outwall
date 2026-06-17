@@ -286,6 +286,23 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// reach the agent incrementally rather than being buffered.
 		rp.FlushInterval = -1
 	}
+
+	// For an interactive upgrade with audit on, wrap the ResponseWriter so the hijacked client
+	// connection counts the bytes streamed each way and emits a metadata audit record when the
+	// session closes. Body capture is already bypassed above (the duplex stream has no
+	// request/response bodies); this is the only audit for an exec/attach/portforward session.
+	if isUpgrade && auditRecording {
+		w = &hijackAuditWriter{ResponseWriter: w, onClose: func(in, out int64, status int) {
+			h.record(audit.Entry{
+				TS: time.Now().UTC(), AgentID: ag.ID, AgentName: ag.Name,
+				UpstreamID: up.ID, UpstreamName: up.Name, Method: r.Method,
+				Path: relPath, Query: r.URL.RawQuery, StatusCode: status,
+				DurationMs: int(time.Since(started).Milliseconds()),
+				ReqBytes:   in, RespBytes: out,
+				Decision: dec.Outcome, RuleID: ruleID, Headers: maskedHeaders,
+			})
+		}}
+	}
 	rp.ServeHTTP(w, r)
 }
 
