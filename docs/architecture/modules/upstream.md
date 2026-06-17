@@ -6,7 +6,7 @@ decrypted on read (so the vault must be unlocked to read upstreams).
 
 ## Public API
 
-- `AuthConfig struct { Type, Header, Token, Username, Password string }` — superset covering none/static/basic.
+- `AuthConfig struct { Type, Header, Token, Username, Password, TokenURL, ClientID, ClientSecret, Scope string }` — superset covering none/static/basic/oidc-client-credentials.
 - `Upstream struct { ID, Name, BaseURL, AuthType string; Auth AuthConfig; CreatedAt time.Time }`
 - `NewRegistry(s *store.Store, v *secret.Vault) *Registry`
 - `(*Registry).Create(name, baseURL string, auth AuthConfig) (*Upstream, error)` — encrypts auth before storing.

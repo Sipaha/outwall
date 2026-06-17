@@ -6,7 +6,8 @@ that composes the others.
 
 Admin endpoints: `POST /vault/init`, `POST /vault/unlock`, `GET /vault/status`,
 `POST /upstreams`, `GET /upstreams` (secrets omitted), `POST /agents/register`,
-`GET /agents`, `POST /grants`.
+`GET /agents`, `POST /rules`, `GET /rules`, `DELETE /rules/{id}`, `GET /approvals`,
+`POST /approvals/{id}/resolve`.
 
 ## Public API
 
