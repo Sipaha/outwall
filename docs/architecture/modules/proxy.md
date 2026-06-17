@@ -33,6 +33,18 @@ exactly once. On approve the request proceeds and the agent gets the real API re
 deny it returns 403 and the upstream is **not** called. The injected cluster credential is
 added later (the `Rewrite` step), so it is never part of the captured/previewed body.
 
+**K3 (exec / attach / cp / port-forward — connection upgrades).** When `ri.IsUpgrade()` (pod
+subresources `exec`/`attach`/`portforward`; `cp` rides on `exec`), the request is an HTTP
+connection upgrade carrying a duplex stream. Policy is evaluated with verb `create` +
+`resource/subresource` (so `(ns, pods/exec, create)` grants it); `deny` ⇒ `403` **before** any
+upgrade and `require-approval` blocks on `approval.Submit` **before** the `101`, same queue as
+K2. On allow/approve the K1 transport is attached and `httputil.ReverseProxy`'s built-in
+`Upgrade` handling performs the handshake and copies bytes both ways — outwall does **not**
+interpret the WebSocket/SPDY stream. Body capture is **bypassed** for upgrades (a
+`captureBodies = auditRecording && !isUpgrade` gate): installing `ModifyResponse` on a `101`
+corrupts the duplex stream (`ReverseProxy` errors with a non-writable body ⇒ `502`). See
+ADR-0010.
+
 ## Audit (optional)
 
 When `Deps.Audit != nil` the handler records each request to the audit journal (see `audit.md`
@@ -45,6 +57,14 @@ transport failures are recorded via the `ErrorHandler` as a `502`. The early pol
 recorded inline before returning: `deny → 403`, approval-denied `→ 403`, rate-limited `→ 429`. The
 pre-policy guards (`401`/`404`/`503`) are not recorded. When `Audit == nil` the proxy behaves
 exactly as in Plans 1–3 (no capture, no recording).
+
+**Interactive session metadata (K3).** For an audited upgrade the proxy wraps the
+`ResponseWriter` in a `hijackAuditWriter` (`upgrade.go`); when `ReverseProxy` hijacks the
+client connection it returns a `countingConn` that tallies bytes each way and fires once on
+`Close`. That writes a single metadata `audit.Entry` — cluster (`UpstreamName`), namespace +
+pod (in `Path`), command + container (in `Query`), `101` status, duration, `ReqBytes`/
+`RespBytes`, decision, masked headers — and **no** body blob. If the upgrade never completes
+(no `101`, no hijack) no session record is written. See ADR-0010.
 
 ## Public API
 
