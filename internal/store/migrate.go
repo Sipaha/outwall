@@ -37,6 +37,16 @@ CREATE TABLE IF NOT EXISTS rules (
 	created_at         TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS rules_by_upstream ON rules(upstream_id);
+CREATE TABLE IF NOT EXISTS access_requests (
+	id          TEXT PRIMARY KEY,
+	agent_id    TEXT NOT NULL,
+	upstream_id TEXT NOT NULL,
+	purpose     TEXT NOT NULL DEFAULT '',
+	status      TEXT NOT NULL DEFAULT 'pending',   -- pending | granted | denied | dismissed
+	created_at  TEXT NOT NULL,
+	resolved_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS access_requests_by_status ON access_requests(status);
 `
 
 func migrate(db *sql.DB) error {
