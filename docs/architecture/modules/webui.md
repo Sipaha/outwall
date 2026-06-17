@@ -48,10 +48,15 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
     `listRules`) and access requests (filtered `listAccessRequests`), read-only. Refetch on
     `agent.registered`.
   - `Rules` — `listRules` joined with `listUpstreams`/`listAgents` to render names; columns
-    Subject/Upstream/Method/Path/Outcome/Rate + Delete (confirm modal → `deleteRule`); "Add rule"
-    modal → `createRule`. Refetch on `rule.created`.
+    Subject/Upstream/**Match**/Outcome/Rate + Delete (confirm modal → `deleteRule`). The "Add
+    rule" modal adapts to the selected upstream's `kind`: an **http** upstream shows
+    Method + Path-glob; a **k8s** cluster shows Namespace + Resource + Verb (`<select>` over the
+    RBAC verbs) and sends the tuple instead. The Match column likewise renders `ns/resource verb`
+    for k8s rules and `method path` for http rules. `createRule`; refetch on `rule.created` (K2).
   - `Approvals` — pending approvals (Approve/Deny → `resolveApproval`) + access-request intents
-    (Grant/Deny/Dismiss → `resolveAccessRequest`). Refetch on `approval.enqueued`/`.resolved`
+    (Grant/Deny/Dismiss → `resolveAccessRequest`). The pending **Target** column renders the k8s
+    tuple (`namespace / resource` + verb badge) and the masked patch body (`<pre>`) for k8s
+    mutating approvals (K2), else `method path`. Refetch on `approval.enqueued`/`.resolved`
     and `access.requested`.
   - `Audit` — `listAudit(200)` table (status colored by class) refetched on `audit.recorded`;
     row "View" → `getAudit(id)` detail modal with meta grid, masked-headers table, and request/
@@ -71,8 +76,10 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
 - `pages/Upstreams.test.tsx` — rows render from `listUpstreams`; switching the auth `<Select>`
   reveals the conditional fields; submit calls `createUpstream` with the built auth config.
 - `pages/Rules.test.tsx` — rows resolve agent/upstream names; the add-rule modal submits
-  `createRule` with the default draft.
-- `pages/Approvals.test.tsx` — clicking Approve calls `resolveApproval(id, true)`.
+  `createRule` with the default draft; for a `kind:"k8s"` upstream the modal shows
+  Namespace/Resource/Verb (and hides Path glob) and submits the tuple.
+- `pages/Approvals.test.tsx` — clicking Approve calls `resolveApproval(id, true)`; a k8s
+  approval fixture renders the `ns/resource/verb` tuple and the patch body.
 - `pages/Audit.test.tsx` — the journal loads; row "View" calls `getAudit(id)` and renders the
   masked header + pretty-printed JSON body.
 - `test/setup.ts` polyfills `HTMLDialogElement.showModal/close` (jsdom lacks them) for the
