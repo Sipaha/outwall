@@ -29,15 +29,18 @@ func (r *Registry) Create(in Rule) (*Rule, error) {
 	if in.RateLimitPerMin < 0 {
 		return nil, fmt.Errorf("rate limit must be >= 0")
 	}
-	if in.PathGlob == "" {
+	// Default the path glob only for http rules; k8s rules match on namespace/resource/verb.
+	isK8sRule := in.Namespace != "" || in.Resource != "" || in.Verb != ""
+	if in.PathGlob == "" && !isK8sRule {
 		in.PathGlob = "/**"
 	}
 	in.ID = newID()
 	in.CreatedAt = time.Now().UTC()
 	_, err := r.store.DB().Exec(
-		`INSERT INTO rules (id, subject_agent_id, upstream_id, method, path_glob, outcome, rate_limit_per_min, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO rules (id, subject_agent_id, upstream_id, method, path_glob, outcome, rate_limit_per_min, k8s_namespace, k8s_resource, k8s_verb, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.ID, in.SubjectAgentID, in.UpstreamID, in.Method, in.PathGlob, in.Outcome, in.RateLimitPerMin,
+		in.Namespace, in.Resource, in.Verb,
 		in.CreatedAt.Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -68,7 +71,8 @@ func (r *Registry) scanRows(query string, args ...any) ([]*Rule, error) {
 			created string
 		)
 		if err := rows.Scan(&rule.ID, &rule.SubjectAgentID, &rule.UpstreamID, &rule.Method,
-			&rule.PathGlob, &rule.Outcome, &rule.RateLimitPerMin, &created); err != nil {
+			&rule.PathGlob, &rule.Outcome, &rule.RateLimitPerMin,
+			&rule.Namespace, &rule.Resource, &rule.Verb, &created); err != nil {
 			return nil, err
 		}
 		rule.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
@@ -77,7 +81,7 @@ func (r *Registry) scanRows(query string, args ...any) ([]*Rule, error) {
 	return out, rows.Err()
 }
 
-const ruleCols = `id, subject_agent_id, upstream_id, method, path_glob, outcome, rate_limit_per_min, created_at`
+const ruleCols = `id, subject_agent_id, upstream_id, method, path_glob, outcome, rate_limit_per_min, k8s_namespace, k8s_resource, k8s_verb, created_at`
 
 // List returns all rules ordered by creation time.
 func (r *Registry) List() ([]*Rule, error) {

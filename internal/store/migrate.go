@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS rules (
 	path_glob          TEXT NOT NULL DEFAULT '/**',
 	outcome            TEXT NOT NULL,
 	rate_limit_per_min INTEGER NOT NULL DEFAULT 0,
+	k8s_namespace      TEXT NOT NULL DEFAULT '',
+	k8s_resource       TEXT NOT NULL DEFAULT '',
+	k8s_verb           TEXT NOT NULL DEFAULT '',
 	created_at         TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS rules_by_upstream ON rules(upstream_id);
