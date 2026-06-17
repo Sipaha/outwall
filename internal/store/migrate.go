@@ -47,6 +47,36 @@ CREATE TABLE IF NOT EXISTS access_requests (
 	resolved_at TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS access_requests_by_status ON access_requests(status);
+CREATE TABLE IF NOT EXISTS audit_log (
+	id            TEXT PRIMARY KEY,
+	ts            TEXT NOT NULL,
+	agent_id      TEXT NOT NULL DEFAULT '',
+	agent_name    TEXT NOT NULL DEFAULT '',
+	upstream_id   TEXT NOT NULL DEFAULT '',
+	upstream_name TEXT NOT NULL DEFAULT '',
+	method        TEXT NOT NULL DEFAULT '',
+	path          TEXT NOT NULL DEFAULT '',
+	query         TEXT NOT NULL DEFAULT '',
+	status_code   INTEGER NOT NULL DEFAULT 0,
+	duration_ms   INTEGER NOT NULL DEFAULT 0,
+	req_bytes     INTEGER NOT NULL DEFAULT 0,
+	resp_bytes    INTEGER NOT NULL DEFAULT 0,
+	decision      TEXT NOT NULL DEFAULT '',
+	rule_id       TEXT NOT NULL DEFAULT '',
+	headers_json  TEXT NOT NULL DEFAULT '',
+	error         TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS audit_log_by_ts ON audit_log(ts);
+CREATE TABLE IF NOT EXISTS audit_bodies (
+	log_id       TEXT NOT NULL,
+	kind         TEXT NOT NULL,                 -- 'request' | 'response'
+	content_type TEXT NOT NULL DEFAULT '',
+	size         INTEGER NOT NULL DEFAULT 0,    -- total declared/observed size
+	sha256       TEXT NOT NULL DEFAULT '',
+	truncated    INTEGER NOT NULL DEFAULT 0,
+	stored       BLOB,                          -- NULL when non-text / not stored
+	PRIMARY KEY (log_id, kind)
+);
 `
 
 func migrate(db *sql.DB) error {
