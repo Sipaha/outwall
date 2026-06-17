@@ -11,6 +11,7 @@ func newRuleCmd(gf *globalFlags) *cobra.Command {
 
 	var (
 		upstreamID, agentID, method, pathGlob, outcome string
+		namespace, resource, verb                      string
 		rate                                           int
 	)
 	add := &cobra.Command{
@@ -24,6 +25,9 @@ func newRuleCmd(gf *globalFlags) *cobra.Command {
 				"path_glob":          pathGlob,
 				"outcome":            outcome,
 				"rate_limit_per_min": rate,
+				"namespace":          namespace,
+				"resource":           resource,
+				"verb":               verb,
 			}
 			var out map[string]string
 			if err := newClient(gf).Do("POST", "/rules", req, &out); err != nil {
@@ -39,6 +43,9 @@ func newRuleCmd(gf *globalFlags) *cobra.Command {
 	add.Flags().StringVar(&pathGlob, "path", "/**", "path glob (* within segment, ** across)")
 	add.Flags().StringVar(&outcome, "outcome", "", "allow|deny|require-approval (required)")
 	add.Flags().IntVar(&rate, "rate", 0, "rate limit per minute (0 = unlimited)")
+	add.Flags().StringVar(&namespace, "namespace", "", "k8s namespace glob (k8s rules; use * for all)")
+	add.Flags().StringVar(&resource, "resource", "", "k8s resource glob, e.g. pods or pods/log (k8s rules)")
+	add.Flags().StringVar(&verb, "verb", "", "k8s verb, e.g. get|list|watch or * (k8s rules)")
 	_ = add.MarkFlagRequired("upstream")
 	_ = add.MarkFlagRequired("outcome")
 

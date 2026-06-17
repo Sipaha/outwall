@@ -129,6 +129,19 @@ func (r *Registry) scan(row interface{ Scan(...any) error }) (*Upstream, error) 
 	return &up, nil
 }
 
+// DeleteByName removes the upstream with the given name.
+func (r *Registry) DeleteByName(name string) error {
+	res, err := r.store.DB().Exec(`DELETE FROM upstreams WHERE name=?`, name)
+	if err != nil {
+		return fmt.Errorf("delete upstream: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // GetByName returns the upstream with the given name.
 func (r *Registry) GetByName(name string) (*Upstream, error) {
 	row := r.store.DB().QueryRow(

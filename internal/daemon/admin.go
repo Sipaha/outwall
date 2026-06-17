@@ -10,6 +10,7 @@ import (
 	"github.com/Sipaha/outwall/internal/access"
 	"github.com/Sipaha/outwall/internal/approval"
 	"github.com/Sipaha/outwall/internal/audit"
+	"github.com/Sipaha/outwall/internal/k8s"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/secret"
 	"github.com/Sipaha/outwall/internal/upstream"
@@ -27,8 +28,10 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	mux.HandleFunc("GET /vault/status", d.hVaultStatus)
 	mux.HandleFunc("POST /upstreams", d.hUpstreamCreate)
 	mux.HandleFunc("GET /upstreams", d.hUpstreamList)
+	mux.HandleFunc("DELETE /upstreams/{name}", d.hUpstreamDelete)
 	mux.HandleFunc("POST /agents/register", d.hAgentRegister)
 	mux.HandleFunc("GET /agents", d.hAgentList)
+	mux.HandleFunc("POST /kubeconfig", d.hKubeconfig)
 	mux.HandleFunc("POST /rules", d.hRuleCreate)
 	mux.HandleFunc("GET /rules", d.hRuleList)
 	mux.HandleFunc("DELETE /rules/{id}", d.hRuleDelete)
@@ -142,19 +145,66 @@ func (d *Daemon) hUpstreamCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name    string              `json:"name"`
 		BaseURL string              `json:"base_url"`
+		Kind    string              `json:"kind"`
 		Auth    upstream.AuthConfig `json:"auth"`
 	}
 	if err := decode(r, &body); err != nil {
 		adminErr(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	up, err := d.upstreams.Create(body.Name, body.BaseURL, body.Auth)
+	up, err := d.upstreams.CreateKind(body.Name, body.BaseURL, body.Kind, body.Auth)
 	if err != nil {
 		adminErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	d.publish("upstream.created", map[string]any{"id": up.ID, "name": up.Name})
+	d.publish("upstream.created", map[string]any{"id": up.ID, "name": up.Name, "kind": up.Kind})
 	writeJSON(w, http.StatusOK, map[string]string{"id": up.ID})
+}
+
+func (d *Daemon) hUpstreamDelete(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := d.upstreams.DeleteByName(name); err != nil {
+		if errors.Is(err, upstream.ErrNotFound) {
+			adminErr(w, http.StatusNotFound, "unknown upstream")
+			return
+		}
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	d.publish("upstream.deleted", map[string]any{"name": name})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// hKubeconfig assembles an agent kubeconfig for a cluster from an agent token + the local CA.
+func (d *Daemon) hKubeconfig(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Cluster string `json:"cluster"`
+		Token   string `json:"token"`
+	}
+	if err := decode(r, &body); err != nil {
+		adminErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if _, err := d.agents.Authenticate(body.Token); err != nil {
+		adminErr(w, http.StatusBadRequest, "unknown agent token")
+		return
+	}
+	cl, err := d.upstreams.GetByName(body.Cluster)
+	if err != nil {
+		adminErr(w, http.StatusNotFound, "unknown cluster")
+		return
+	}
+	if cl.Kind != upstream.KindK8s {
+		adminErr(w, http.StatusBadRequest, "not a k8s cluster")
+		return
+	}
+	serverURL := d.DataPlaneURL() + "/" + cl.Name
+	yamlBytes, err := k8s.Kubeconfig(serverURL, cl.Name, string(d.CAPEM()), body.Token)
+	if err != nil {
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"kubeconfig": string(yamlBytes)})
 }
 
 func (d *Daemon) hUpstreamList(w http.ResponseWriter, _ *http.Request) {
@@ -166,7 +216,7 @@ func (d *Daemon) hUpstreamList(w http.ResponseWriter, _ *http.Request) {
 	out := make([]map[string]string, 0, len(ups))
 	for _, u := range ups {
 		out = append(out, map[string]string{
-			"id": u.ID, "name": u.Name, "base_url": u.BaseURL, "auth_type": u.AuthType,
+			"id": u.ID, "name": u.Name, "base_url": u.BaseURL, "auth_type": u.AuthType, "kind": u.Kind,
 		}) // secrets intentionally omitted
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -210,6 +260,9 @@ func (d *Daemon) hRuleCreate(w http.ResponseWriter, r *http.Request) {
 		PathGlob        string `json:"path_glob"`
 		Outcome         string `json:"outcome"`
 		RateLimitPerMin int    `json:"rate_limit_per_min"`
+		Namespace       string `json:"namespace"`
+		Resource        string `json:"resource"`
+		Verb            string `json:"verb"`
 	}
 	if err := decode(r, &body); err != nil {
 		adminErr(w, http.StatusBadRequest, "bad json")
@@ -218,6 +271,7 @@ func (d *Daemon) hRuleCreate(w http.ResponseWriter, r *http.Request) {
 	rule, err := d.policy.Create(policy.Rule{
 		SubjectAgentID: body.SubjectAgentID, UpstreamID: body.UpstreamID, Method: body.Method,
 		PathGlob: body.PathGlob, Outcome: body.Outcome, RateLimitPerMin: body.RateLimitPerMin,
+		Namespace: body.Namespace, Resource: body.Resource, Verb: body.Verb,
 	})
 	if err != nil {
 		adminErr(w, http.StatusBadRequest, err.Error())
@@ -239,6 +293,7 @@ func (d *Daemon) hRuleList(w http.ResponseWriter, _ *http.Request) {
 			"id": rule.ID, "subject_agent_id": rule.SubjectAgentID, "upstream_id": rule.UpstreamID,
 			"method": rule.Method, "path_glob": rule.PathGlob, "outcome": rule.Outcome,
 			"rate_limit_per_min": rule.RateLimitPerMin,
+			"namespace":          rule.Namespace, "resource": rule.Resource, "verb": rule.Verb,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
