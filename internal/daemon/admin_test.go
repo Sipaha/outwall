@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -141,21 +140,22 @@ func TestUIServesStaticIndex(t *testing.T) {
 
 func TestUISSEExemptFromCSRF(t *testing.T) {
 	d := newDaemon(t)
-	h := d.UIHandler()
-	// GET /api/events streams without a CSRF header (EventSource cannot set one).
-	// httptest.ResponseRecorder implements http.Flusher, so the handler streams and
-	// blocks until the request context is canceled — cancel it once it has started.
+	// Use a real server + client: the SSE handler streams on its own goroutine, so reading
+	// a shared httptest.ResponseRecorder from the test goroutine would race. The HTTP client
+	// returns once response headers arrive (read-synchronized), and canceling the request
+	// context unblocks the streaming handler.
+	srv := httptest.NewServer(d.UIHandler())
+	defer srv.Close()
 	ctx, cancel := context.WithCancel(context.Background())
-	r := httptest.NewRequest("GET", "/api/events", nil).WithContext(ctx)
-	w := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() { h.ServeHTTP(w, r); close(done) }()
-	// Give the handler a moment to write its headers, then disconnect.
-	require.Eventually(t, func() bool { return w.Code == http.StatusOK }, time.Second, time.Millisecond)
-	cancel()
-	<-done
-	require.Equal(t, http.StatusOK, w.Code)
-	require.Equal(t, "text/event-stream", w.Header().Get("Content-Type"))
+	defer cancel()
+	// No X-Outwall-CSRF header — EventSource cannot set one, so the gate must exempt /api/events.
+	r, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/events", nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(r)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode) // 200, not 403 from the CSRF gate
+	require.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
 }
 
 func TestAdminAccessRequests(t *testing.T) {
