@@ -4,15 +4,15 @@
 
 ## Active phase
 
-**Plan 4 — Audit (request journal + body store).**
+**Plan 5 — Daemon control API + SSE for the UI.**
 
-Goal: record every data-plane request/response — timestamp, agent, upstream, method, path+query,
-status, duration, sizes, policy decision (+ who/when approved) — with request and response
-**bodies up to 256 KB** (truncate larger; non-text by Content-Type → metadata only: type, size,
-sha256), credentials injected by outwall **masked** in the log, stored in SQLite (bodies in a
-separate table so the journal stays light to list), keep-all + manual purge. Wire as data-plane
-middleware around the proxy. Admin API + CLI to list/inspect entries. Not yet started — needs a
-plan written.
+Goal: consolidate the UI-facing surface and add a live event stream. A read/control HTTP API
+(over the same admin transport, plus a localhost TCP bind for the desktop webview) exposing
+agents / upstreams / rules / approvals / access-requests / audit, and an **SSE** endpoint that
+pushes live events: new agent registered, approval enqueued/resolved, access-request logged,
+audit entry recorded, vault lock/unlock. This is the seam the web UI (Plan 6) and Wails wrapper
+(Plan 7) consume. Not yet started — needs a plan written; decide the API shape + event taxonomy
++ how the approval queue / audit recorder publish events (an in-process event bus).
 
 ## Done
 
@@ -30,9 +30,13 @@ plan written.
   localhost listener: tools `list_upstreams`/`request_access(host,purpose)`/`get_access`/`whoami`;
   session=agent auto-registration + bearer-token mint on first contact; access-request intent
   log (captures purpose); SDK-free `mcpsvc` + thin `mcp` adapter. e2e via live SDK client. ADR-0003.
+- **Plan 4 — Audit.** Data-plane request journal (`audit_log` + separate `audit_bodies` tables)
+  with capped streaming body capture (≤256 KB, truncation + total size; non-text → metadata-only
+  + sha256), masked request headers, decision/rule recorded; entry written on response-body
+  close; deny/429/approval-denied/502 early outcomes recorded. Admin API + `audit list|show|prune`
+  CLI. Nil-safe (prior behavior unchanged when absent). e2e verified. ADR-0004.
 
 ## Queued candidates (Phase 1, later plans)
-- **Plan 5** — daemon control API + SSE for the UI (stream agents / approvals / access requests / audit tail).
 - **Plan 6** — web UI (React 19 + Vite + Tailwind 4 + Zustand screens).
 - **Plan 7** — Wails 3 desktop wrapper.
 

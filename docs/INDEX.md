@@ -28,8 +28,9 @@ Stage: alpha (pre-Plan-1).
   - [`0001-stack-and-architecture.md`](architecture/decisions/0001-stack-and-architecture.md) — stack + two-plane gateway architecture.
   - [`0002-policy-and-approval.md`](architecture/decisions/0002-policy-and-approval.md) — rule precedence, blocking approval, rate limiter, OIDC-CC token cache.
   - [`0003-mcp-control-plane.md`](architecture/decisions/0003-mcp-control-plane.md) — MCP server, session=agent identity, SDK-free mcpsvc / thin adapter split, access-request intent log.
+  - [`0004-audit.md`](architecture/decisions/0004-audit.md) — capped streaming body capture, text/binary classification, masking, record-on-close, data-plane-only scope.
 - `modules/` — per-package API docs: `secret`, `store`, `upstream`, `agent`, `authn`,
-  `policy`, `approval`, `access`, `mcpsvc`, `mcp`, `proxy`, `daemon`, `client`, `cli`, `version`.
+  `policy`, `approval`, `access`, `mcpsvc`, `mcp`, `audit`, `proxy`, `daemon`, `client`, `cli`, `version`.
 
 ## workflow/ — how we work
 
