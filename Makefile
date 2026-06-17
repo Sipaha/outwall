@@ -9,7 +9,7 @@ GO_LDFLAGS := -X github.com/Sipaha/outwall/internal/version.version=$(shell git 
 # binary stays CGO-free.
 DESKTOP_TAGS ?= desktop
 
-.PHONY: build build-fast build-web build-desktop build-desktop-fast test fmt vet tidy
+.PHONY: build build-fast build-web build-desktop build-desktop-fast run run-server test fmt vet tidy
 
 # Full build: rebuild the web UI first (its output lands in internal/daemon/webdist,
 # which the Go binary embeds via //go:embed), then compile the binary.
@@ -37,6 +37,16 @@ build-desktop: build-web build-desktop-fast
 build-desktop-fast:
 	@mkdir -p $(BINDIR)
 	CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS)" -ldflags "$(GO_LDFLAGS)" -o $(DESKTOP) ./cmd/outwall-desktop
+
+# run rebuilds everything (web bundle + Wails desktop binary) so all code changes are
+# picked up, then launches the desktop app.
+run: build-desktop
+	$(DESKTOP)
+
+# run-server rebuilds the CGO-free server+CLI (web bundle included) and runs the daemon in
+# the foreground (UI at http://127.0.0.1:8182/). Convenience for UI work without the webview.
+run-server: build
+	$(BIN) serve
 
 test:
 	go test ./...

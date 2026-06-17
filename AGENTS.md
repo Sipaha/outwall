@@ -29,7 +29,10 @@ patterns. There must be **no `citeck` strings, imports, or branding** in outwall
 ## Build & test commands
 
 ```bash
-make build      # CGO_ENABLED=0 go build → dist/bin/outwall
+make run        # rebuild web + desktop and launch the Wails app (picks up all code changes)
+make run-server # rebuild web + server and run the daemon (UI at http://127.0.0.1:8182/)
+make build      # CGO_ENABLED=0 go build → dist/bin/outwall (server+CLI, web bundle embedded)
+make build-desktop  # CGO+GTK Wails app → dist/bin/outwall-desktop (web bundle embedded)
 make test       # go test ./...
 make fmt        # gofmt -w .
 make vet        # go vet ./...
