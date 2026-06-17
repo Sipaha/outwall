@@ -9,21 +9,26 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Sipaha/outwall/internal/agent"
+	"github.com/Sipaha/outwall/internal/approval"
 	"github.com/Sipaha/outwall/internal/authn"
-	"github.com/Sipaha/outwall/internal/grant"
+	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/secret"
 	"github.com/Sipaha/outwall/internal/upstream"
 )
 
 // Deps are the data-plane dependencies.
 type Deps struct {
-	Agents    *agent.Registry
-	Upstreams *upstream.Registry
-	Grants    *grant.Registry
-	Vault     *secret.Vault
-	Logger    *slog.Logger
+	Agents      *agent.Registry
+	Upstreams   *upstream.Registry
+	Policy      *policy.Registry
+	Limiter     *policy.Limiter
+	Approvals   *approval.Queue
+	AuthManager *authn.Manager
+	Vault       *secret.Vault
+	Logger      *slog.Logger
 }
 
 type handler struct {
@@ -75,14 +80,33 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allowed, err := h.Grants.Allowed(ag.ID, up.ID)
+	dec, err := h.Policy.Decide(policy.Input{AgentID: ag.ID, UpstreamID: up.ID, Method: r.Method, Path: "/" + rest})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "policy error")
 		return
 	}
-	if !allowed {
+	switch dec.Outcome {
+	case policy.Deny:
 		writeErr(w, http.StatusForbidden, "access denied")
 		return
+	case policy.RequireApproval:
+		ok, err := h.Approvals.Submit(r.Context(), approval.Pending{
+			AgentID: ag.ID, UpstreamID: up.ID, Method: r.Method, Path: "/" + rest,
+		})
+		if err != nil {
+			writeErr(w, http.StatusGatewayTimeout, "approval wait canceled")
+			return
+		}
+		if !ok {
+			writeErr(w, http.StatusForbidden, "request not approved")
+			return
+		}
+	}
+	if dec.Rule != nil && dec.Rule.RateLimitPerMin > 0 {
+		if !h.Limiter.Allow(ag.ID+"|"+dec.Rule.ID, dec.Rule.RateLimitPerMin, time.Now()) {
+			writeErr(w, http.StatusTooManyRequests, "rate limited")
+			return
+		}
 	}
 
 	base, err := url.Parse(up.BaseURL)
@@ -90,7 +114,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "bad upstream url")
 		return
 	}
-	auth, err := authn.For(up.Auth)
+	auth, err := h.AuthManager.Authenticator(up)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "auth config error")
 		return
