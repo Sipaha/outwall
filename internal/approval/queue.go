@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Sipaha/outwall/internal/audit"
 	"github.com/Sipaha/outwall/internal/events"
 )
 
@@ -34,6 +35,12 @@ type Pending struct {
 	Namespace string
 	Resource  string // "resource" or "resource/subresource"
 	Verb      string
+
+	// RequestBody is the captured agent-sent request body (the patch/apply payload), capped at
+	// audit.BodyCap, surfaced on the approval card so the operator sees exactly what will
+	// change. It carries ONLY the agent's body — never the injected cluster credential. Empty
+	// for bodyless requests.
+	RequestBody []byte
 }
 
 type waiter struct {
@@ -87,10 +94,18 @@ func (q *Queue) Submit(ctx context.Context, p Pending) (bool, error) {
 	q.mu.Unlock()
 
 	if pub := q.publisher(); pub != nil {
-		pub.Publish("approval.enqueued", map[string]any{
+		evt := map[string]any{
 			"id": p.ID, "agent_id": p.AgentID, "upstream_id": p.UpstreamID,
 			"method": p.Method, "path": p.Path, "purpose": p.Purpose,
-		})
+			// k8s tuple (empty for http approvals) so the console can render the change target.
+			"namespace": p.Namespace, "resource": p.Resource, "verb": p.Verb,
+		}
+		// The agent-sent patch/apply body, credentials masked — never the injected cluster
+		// credential (that is added downstream of capture).
+		if len(p.RequestBody) > 0 {
+			evt["request_body"] = audit.MaskBody(p.RequestBody)
+		}
+		pub.Publish("approval.enqueued", evt)
 	}
 
 	defer func() {

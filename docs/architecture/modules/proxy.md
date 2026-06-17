@@ -21,7 +21,17 @@ namespace/resource/subresource/verb instead of method+path. Discovery/health pat
 holds ≥1 grant on the cluster (kubectl needs them), else denied. The per-cluster TLS transport
 from `authn.Manager.Transport` is attached, and `FlushInterval=-1` is set so `logs -f` / `-w`
 stream incrementally. The `approval.Pending` carries the k8s tuple (Namespace/Resource/Verb)
-for the UI (K2 makes mutating verbs park on it).
+for the UI.
+
+**K2 (mutating verbs gated by approval).** For a k8s mutating verb
+(create/update/patch/delete/deletecollection) whose rule resolves to `require-approval`, the
+proxy reads the agent's request body once **before** `approval.Submit`, stores a
+`audit.BodyCap`-capped copy on `Pending.RequestBody` (the patch = the change the operator
+sees), and replaces `r.Body` with a reader over the **full** bytes so the forwarded payload is
+never truncated and the audit tee re-reads the same body — the underlying stream is read
+exactly once. On approve the request proceeds and the agent gets the real API response; on
+deny it returns 403 and the upstream is **not** called. The injected cluster credential is
+added later (the `Rewrite` step), so it is never part of the captured/previewed body.
 
 ## Audit (optional)
 

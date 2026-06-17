@@ -19,6 +19,13 @@ against `resource` and, when a subresource is present, also `resource/subresourc
 all-namespaces) matches **only** a rule whose namespace is `*` — never a concrete-namespace
 rule (see ADR-0008).
 
+**K2 (mutating verbs).** The mutating RBAC verbs (create/update/patch/delete/deletecollection)
+need no special-casing here: `internal/k8s.Parse` produces them and the generic `verbMatches`
+matches them like any verb, so a `require-approval` rule on `verb=patch` resolves through the
+unchanged tier/precedence logic. The proxy then parks the request on the approval queue (see
+`proxy.md` / ADR-0009). No verb whitelist is enforced at rule-creation time — an unknown verb
+simply never matches a real request.
+
 ## Public API
 
 - Outcome consts: `Allow = "allow"`, `Deny = "deny"`, `RequireApproval = "require-approval"`; `ValidOutcome(o string) bool`.

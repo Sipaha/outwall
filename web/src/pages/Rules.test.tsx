@@ -59,4 +59,39 @@ describe('<Rules>', () => {
       }),
     )
   })
+
+  it('shows k8s namespace/resource/verb fields when the selected upstream is a cluster', async () => {
+    vi.spyOn(api, 'listRules').mockResolvedValue([])
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([
+      { id: 'c1', name: 'prod-cluster', base_url: 'https://k8s', auth_type: 'none', kind: 'k8s' },
+    ])
+    vi.spyOn(api, 'listAgents').mockResolvedValue([])
+    const createSpy = vi.spyOn(api, 'createRule').mockResolvedValue({ id: 'new' })
+
+    render(<Rules />)
+    await screen.findByText('No rules yet — default-deny applies')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add rule' }))
+
+    // k8s fields are present; the http-only path glob field is hidden.
+    const ns = await screen.findByLabelText('Namespace')
+    fireEvent.change(ns, { target: { value: 'prod' } })
+    fireEvent.change(screen.getByLabelText('Resource'), { target: { value: 'deployments' } })
+    fireEvent.change(screen.getByLabelText('Verb'), { target: { value: 'patch' } })
+    expect(screen.queryByLabelText('Path glob')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() =>
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          upstream_id: 'c1',
+          namespace: 'prod',
+          resource: 'deployments',
+          verb: 'patch',
+          outcome: 'allow',
+        }),
+      ),
+    )
+  })
 })

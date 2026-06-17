@@ -23,6 +23,9 @@ interface DraftRule {
   path_glob: string
   outcome: string
   rate_limit_per_min: number
+  namespace: string
+  resource: string
+  verb: string
 }
 
 const emptyDraft: DraftRule = {
@@ -32,7 +35,13 @@ const emptyDraft: DraftRule = {
   path_glob: '/**',
   outcome: 'allow',
   rate_limit_per_min: 0,
+  namespace: '',
+  resource: '',
+  verb: '',
 }
+
+// k8s RBAC verbs offered in the rule editor (mirrors internal/k8s verbFor + policy.Rule.Verb).
+const K8S_VERBS = ['*', 'get', 'list', 'watch', 'create', 'update', 'patch', 'delete', 'deletecollection']
 
 export function Rules() {
   const [rules, setRules] = useState<Rule[]>([])
@@ -63,8 +72,13 @@ export function Rules() {
   const upstreamName = (id: string) => upstreams.find((u) => u.id === id)?.name ?? id
   const agentName = (id: string) => (id === '' ? 'any' : agents.find((a) => a.id === id)?.name ?? id)
 
+  // The rule editor adapts to the selected upstream: k8s clusters match on the RBAC tuple
+  // (namespace/resource/verb); http upstreams match on method+path glob.
+  const draftIsK8s = upstreams.find((u) => u.id === draft.upstream_id)?.kind === 'k8s'
+
   function openModal() {
-    setDraft({ ...emptyDraft, upstream_id: upstreams[0]?.id ?? '' })
+    // Default the verb to "*" so the k8s verb <select> is a controlled match from the start.
+    setDraft({ ...emptyDraft, upstream_id: upstreams[0]?.id ?? '', verb: '*' })
     setOpen(true)
   }
 
@@ -76,7 +90,28 @@ export function Rules() {
     }
     setBusy(true)
     try {
-      await createRule(draft)
+      // k8s rules send the RBAC tuple (and no http path glob); http rules send method+path.
+      const payload = draftIsK8s
+        ? {
+            subject_agent_id: draft.subject_agent_id,
+            upstream_id: draft.upstream_id,
+            method: '',
+            path_glob: '',
+            outcome: draft.outcome,
+            rate_limit_per_min: draft.rate_limit_per_min,
+            namespace: draft.namespace,
+            resource: draft.resource,
+            verb: draft.verb,
+          }
+        : {
+            subject_agent_id: draft.subject_agent_id,
+            upstream_id: draft.upstream_id,
+            method: draft.method,
+            path_glob: draft.path_glob,
+            outcome: draft.outcome,
+            rate_limit_per_min: draft.rate_limit_per_min,
+          }
+      await createRule(payload)
       push('success', 'Rule created')
       setOpen(false)
       load()
@@ -118,8 +153,21 @@ export function Rules() {
           columns={[
             { header: 'Subject', cell: (r) => agentName(r.subject_agent_id) },
             { header: 'Upstream', cell: (r) => upstreamName(r.upstream_id) },
-            { header: 'Method', cell: (r) => (r.method === '*' || r.method === '' ? 'any' : r.method), className: 'font-mono' },
-            { header: 'Path glob', cell: (r) => r.path_glob, className: 'font-mono' },
+            {
+              header: 'Match',
+              // k8s rules show the RBAC tuple (ns/resource verb); http rules show method+path.
+              cell: (r) =>
+                r.namespace || r.resource || r.verb ? (
+                  <span className="font-mono">
+                    {(r.namespace || '*') + '/' + (r.resource || '*')}{' '}
+                    <span className="text-muted-foreground">{r.verb || '*'}</span>
+                  </span>
+                ) : (
+                  <span className="font-mono">
+                    {(r.method === '*' || r.method === '' ? 'any' : r.method) + ' ' + r.path_glob}
+                  </span>
+                ),
+            },
             { header: 'Outcome', cell: (r) => <StatusBadge status={r.outcome} /> },
             {
               header: 'Rate',
@@ -184,24 +232,56 @@ export function Rules() {
             options={upstreams.map((u) => ({ value: u.id, label: u.name }))}
           />
         </FormField>
-        <FormField label="Method">
-          <input
-            className={fieldControlClass}
-            value={draft.method}
-            onChange={(e) => setDraft({ ...draft, method: e.target.value })}
-            placeholder="*"
-            aria-label="Method"
-          />
-        </FormField>
-        <FormField label="Path glob">
-          <input
-            className={fieldControlClass}
-            value={draft.path_glob}
-            onChange={(e) => setDraft({ ...draft, path_glob: e.target.value })}
-            placeholder="/**"
-            aria-label="Path glob"
-          />
-        </FormField>
+        {draftIsK8s ? (
+          <>
+            <FormField label="Namespace">
+              <input
+                className={fieldControlClass}
+                value={draft.namespace}
+                onChange={(e) => setDraft({ ...draft, namespace: e.target.value })}
+                placeholder="prod, prod-*, *"
+                aria-label="Namespace"
+              />
+            </FormField>
+            <FormField label="Resource">
+              <input
+                className={fieldControlClass}
+                value={draft.resource}
+                onChange={(e) => setDraft({ ...draft, resource: e.target.value })}
+                placeholder="deployments, pods/log, *"
+                aria-label="Resource"
+              />
+            </FormField>
+            <FormField label="Verb">
+              <Select
+                value={draft.verb}
+                onChange={(v) => setDraft({ ...draft, verb: v })}
+                options={K8S_VERBS.map((v) => ({ value: v, label: v }))}
+              />
+            </FormField>
+          </>
+        ) : (
+          <>
+            <FormField label="Method">
+              <input
+                className={fieldControlClass}
+                value={draft.method}
+                onChange={(e) => setDraft({ ...draft, method: e.target.value })}
+                placeholder="*"
+                aria-label="Method"
+              />
+            </FormField>
+            <FormField label="Path glob">
+              <input
+                className={fieldControlClass}
+                value={draft.path_glob}
+                onChange={(e) => setDraft({ ...draft, path_glob: e.target.value })}
+                placeholder="/**"
+                aria-label="Path glob"
+              />
+            </FormField>
+          </>
+        )}
         <FormField label="Outcome">
           <Select
             value={draft.outcome}

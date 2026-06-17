@@ -8,11 +8,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sipaha/outwall/internal/approval"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/upstream"
 )
@@ -134,6 +137,90 @@ func TestK8sProxyStreamsIncrementally(t *testing.T) {
 	rest, err := io.ReadAll(br)
 	require.NoError(t, err)
 	require.Contains(t, string(rest), "line-3")
+}
+
+// patchBody is the JSON merge-patch an agent sends to bump a deployment image.
+const patchBody = `{"spec":{"template":{"spec":{"containers":[{"name":"web","image":"web:v2"}]}}}}`
+
+// k8sApprovalServer builds a TLS fake API server that records whether it was called and the
+// body it received, plus a proxy handler with a require-approval patch rule on prod/deployments.
+func k8sApprovalServer(t *testing.T) (h http.Handler, appr *approval.Queue, token string, called *atomic.Bool, gotBody *atomic.Pointer[string]) {
+	t.Helper()
+	called = &atomic.Bool{}
+	gotBody = &atomic.Pointer[string]{}
+	api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called.Store(true)
+		b, _ := io.ReadAll(r.Body)
+		s := string(b)
+		gotBody.Store(&s)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"kind":"Deployment"}`)
+	}))
+	t.Cleanup(api.Close)
+
+	h, ag, up, pol, appr, _ := build(t)
+	_, err := up.CreateKind("prod-cluster", api.URL, upstream.KindK8s, upstream.AuthConfig{
+		Type: "none", K8sAuth: "token", Token: "cluster-tok", CABundle: certPEM(t, api),
+	})
+	require.NoError(t, err)
+	cl, err := up.GetByName("prod-cluster")
+	require.NoError(t, err)
+	_, err = pol.Create(policy.Rule{UpstreamID: cl.ID, Namespace: "prod", Resource: "deployments", Verb: "patch", Outcome: policy.RequireApproval})
+	require.NoError(t, err)
+	_, token, err = ag.Register("claude")
+	require.NoError(t, err)
+	return h, appr, token, called, gotBody
+}
+
+// doBody issues a request carrying a body and content-type through the handler.
+func doBody(t *testing.T, h http.Handler, method, target, token, ctype, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(method, target, strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+token)
+	if ctype != "" {
+		r.Header.Set("Content-Type", ctype)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w
+}
+
+const patchPath = "/prod-cluster/api/v1/namespaces/prod/deployments/web"
+
+func TestK8sApprovalPatchProceedsOnApprove(t *testing.T) {
+	h, appr, token, called, gotBody := k8sApprovalServer(t)
+
+	var pend approval.Pending
+	go func() {
+		require.Eventually(t, func() bool { return len(appr.List()) == 1 }, time.Second, 10*time.Millisecond)
+		pend = appr.List()[0]
+		_ = appr.Resolve(pend.ID, true)
+	}()
+
+	w := doBody(t, h, http.MethodPatch, patchPath, token, "application/merge-patch+json", patchBody)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.True(t, called.Load(), "upstream must be called after approval")
+	require.NotNil(t, gotBody.Load())
+	require.Equal(t, patchBody, *gotBody.Load(), "upstream must receive the agent's patch body")
+
+	require.Eventually(t, func() bool { return pend.ID != "" }, time.Second, 10*time.Millisecond)
+	require.Equal(t, "patch", pend.Verb)
+	require.Equal(t, "prod", pend.Namespace)
+	require.Equal(t, "deployments", pend.Resource)
+	require.Equal(t, patchBody, string(pend.RequestBody), "the pending approval must carry the patch body")
+}
+
+func TestK8sApprovalPatchDeniedReturns403AndDoesNotCallUpstream(t *testing.T) {
+	h, appr, token, called, _ := k8sApprovalServer(t)
+
+	go func() {
+		require.Eventually(t, func() bool { return len(appr.List()) == 1 }, time.Second, 10*time.Millisecond)
+		_ = appr.Resolve(appr.List()[0].ID, false)
+	}()
+
+	w := doBody(t, h, http.MethodPatch, patchPath, token, "application/merge-patch+json", patchBody)
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.False(t, called.Load(), "upstream must NOT be called on deny")
 }
 
 // keep x509 import honest (used indirectly when building certs in helpers).
