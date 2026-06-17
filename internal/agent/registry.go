@@ -17,6 +17,9 @@ import (
 // ErrUnknownToken is returned when a token matches no agent.
 var ErrUnknownToken = errors.New("unknown agent token")
 
+// ErrNotFound is returned when no agent matches the given ID.
+var ErrNotFound = errors.New("agent not found")
+
 // StatusNew is the default status of a freshly registered agent (default-deny).
 const StatusNew = "new"
 
@@ -76,6 +79,25 @@ func (r *Registry) Authenticate(token string) (*Agent, error) {
 	).Scan(&a.ID, &a.Name, &a.Status, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUnknownToken
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query agent: %w", err)
+	}
+	a.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	return &a, nil
+}
+
+// GetByID resolves an agent by its ID.
+func (r *Registry) GetByID(id string) (*Agent, error) {
+	var (
+		a       Agent
+		created string
+	)
+	err := r.store.DB().QueryRow(
+		`SELECT id, name, status, created_at FROM agents WHERE id=?`, id,
+	).Scan(&a.ID, &a.Name, &a.Status, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query agent: %w", err)
