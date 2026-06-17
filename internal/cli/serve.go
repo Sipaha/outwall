@@ -21,7 +21,8 @@ func newServeCmd(gf *globalFlags) *cobra.Command {
 				return fmt.Errorf("create data dir: %w", err)
 			}
 			d, err := daemon.New(daemon.Config{
-				DBPath: gf.db, SocketPath: gf.socket, Listen: gf.listen, MCPListen: gf.mcpListen,
+				DBPath: gf.db, SocketPath: gf.socket, Listen: gf.listen,
+				MCPListen: gf.mcpListen, UIListen: gf.uiListen,
 			})
 			if err != nil {
 				return err
@@ -29,8 +30,8 @@ func newServeCmd(gf *globalFlags) *cobra.Command {
 			defer d.Close()
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			fmt.Fprintf(cmd.OutOrStdout(), "outwall serving: data plane %s, mcp %s, admin %s\n",
-				gf.listen, gf.mcpListen, gf.socket)
+			fmt.Fprintf(cmd.OutOrStdout(), "outwall serving: data plane %s, mcp %s, ui %s, admin %s\n",
+				gf.listen, gf.mcpListen, gf.uiListen, gf.socket)
 			return d.Serve(ctx)
 		},
 	}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sipaha/outwall/internal/access"
 	"github.com/Sipaha/outwall/internal/agent"
+	"github.com/Sipaha/outwall/internal/events"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/upstream"
 )
@@ -23,12 +24,19 @@ type Service struct {
 	upstreams *upstream.Registry
 	policy    *policy.Registry
 	access    *access.Registry
+	pub       events.Publisher
 }
 
 // New constructs the domain service.
 func New(a *agent.Registry, u *upstream.Registry, p *policy.Registry, ac *access.Registry) *Service {
 	return &Service{agents: a, upstreams: u, policy: p, access: ac}
 }
+
+// SetPublisher attaches a (nil-safe) event publisher. RequestAccess publishes "access.requested"
+// after logging the intent. Passing nil disables publishing. The access-request Create happens
+// on this MCP path (not the admin API), so the bus is injected here rather than into the daemon
+// admin handlers (see ADR-0005).
+func (s *Service) SetPublisher(p events.Publisher) { s.pub = p }
 
 // UpstreamInfo describes a known upstream and the agent's status against it.
 // Status: open | needs-request | denied.
@@ -186,8 +194,15 @@ func (s *Service) RequestAccess(agentID, hostOrUpstream, purpose string) (Access
 	if err != nil {
 		return AccessResult{}, err
 	}
-	if _, err := s.access.Create(agentID, up.ID, purpose); err != nil {
+	rec, err := s.access.Create(agentID, up.ID, purpose)
+	if err != nil {
 		return AccessResult{}, fmt.Errorf("log access request: %w", err)
+	}
+	if s.pub != nil {
+		s.pub.Publish("access.requested", map[string]any{
+			"id": rec.ID, "agent_id": agentID, "upstream_id": up.ID,
+			"upstream_name": up.Name, "purpose": purpose,
+		})
 	}
 	st, allowing, err := s.statusFor(agentID, up.ID)
 	if err != nil {

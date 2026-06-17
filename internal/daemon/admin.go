@@ -15,8 +15,10 @@ import (
 	"github.com/Sipaha/outwall/internal/upstream"
 )
 
-// AdminHandler builds the admin API mux (served over the unix socket).
-func (d *Daemon) AdminHandler() http.Handler {
+// adminMux registers the shared admin API routes onto a fresh mux. Both transports — the
+// CSRF-free unix socket (AdminHandler, for the local CLI) and the CSRF-gated TCP listener
+// (UIHandler, for the desktop UI) — build their handler from this same route table.
+func (d *Daemon) adminMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /vault/init", d.hVaultInit)
 	mux.HandleFunc("POST /vault/unlock", d.hVaultUnlock)
@@ -36,6 +38,30 @@ func (d *Daemon) AdminHandler() http.Handler {
 	mux.HandleFunc("GET /audit/{id}", d.hAuditGet)
 	mux.HandleFunc("POST /audit/prune", d.hAuditPrune)
 	return mux
+}
+
+// AdminHandler builds the admin API mux served over the unix socket (CSRF-free, local CLI).
+func (d *Daemon) AdminHandler() http.Handler { return d.adminMux() }
+
+// UIHandler builds the desktop-UI handler served over the UIListen TCP bind: the shared admin
+// mux plus GET /events (SSE), all behind the X-Outwall-CSRF gate. The CSRF header is a
+// CSRF-not-auth boundary — loopback bind + single-tenant host is the trust model (ADR-0005).
+func (d *Daemon) UIHandler() http.Handler {
+	mux := d.adminMux()
+	mux.HandleFunc("GET /events", sseHandler(d.bus))
+	return csrfMiddleware(mux)
+}
+
+// csrfMiddleware rejects any request lacking a non-empty X-Outwall-CSRF header with 403. It
+// defeats browser cross-origin form posts; it is NOT authentication (see ADR-0005).
+func csrfMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Outwall-CSRF") == "" {
+			adminErr(w, http.StatusForbidden, "missing csrf header")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -75,6 +101,7 @@ func (d *Daemon) hVaultUnlock(w http.ResponseWriter, r *http.Request) {
 	}
 	switch err := d.vault.Unlock(body.Password); {
 	case err == nil:
+		d.publish("vault.unlocked", map[string]any{})
 		writeJSON(w, http.StatusOK, map[string]bool{"locked": false})
 	case errors.Is(err, secret.ErrBadPassword):
 		adminErr(w, http.StatusUnauthorized, "incorrect master password")
@@ -107,6 +134,7 @@ func (d *Daemon) hUpstreamCreate(w http.ResponseWriter, r *http.Request) {
 		adminErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	d.publish("upstream.created", map[string]any{"id": up.ID, "name": up.Name})
 	writeJSON(w, http.StatusOK, map[string]string{"id": up.ID})
 }
 
@@ -138,6 +166,7 @@ func (d *Daemon) hAgentRegister(w http.ResponseWriter, r *http.Request) {
 		adminErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	d.publish("agent.registered", map[string]any{"id": a.ID, "name": a.Name})
 	writeJSON(w, http.StatusOK, map[string]string{"id": a.ID, "token": token})
 }
 
@@ -175,6 +204,7 @@ func (d *Daemon) hRuleCreate(w http.ResponseWriter, r *http.Request) {
 		adminErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	d.publish("rule.created", map[string]any{"id": rule.ID})
 	writeJSON(w, http.StatusOK, map[string]string{"id": rule.ID})
 }
 

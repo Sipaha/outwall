@@ -16,6 +16,7 @@ type globalFlags struct {
 	db        string
 	listen    string
 	mcpListen string
+	uiListen  string
 }
 
 func defaultDir() string {
@@ -40,6 +41,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&gf.db, "db", filepath.Join(dir, "outwall.db"), "database path")
 	root.PersistentFlags().StringVar(&gf.listen, "listen", "127.0.0.1:8080", "data-plane listen address")
 	root.PersistentFlags().StringVar(&gf.mcpListen, "mcp-listen", "127.0.0.1:8181", "MCP control-plane listen address")
+	root.PersistentFlags().StringVar(&gf.uiListen, "ui-listen", "127.0.0.1:8182", "desktop-UI control API + SSE listen address")
 
 	root.AddCommand(
 		newServeCmd(gf),

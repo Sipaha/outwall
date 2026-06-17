@@ -90,6 +90,22 @@ func TestAdminAuditEmptyOK(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, req(t, h, "GET", "/audit/nope", "").Code)
 }
 
+func TestUICSRFGate(t *testing.T) {
+	d := newDaemon(t)
+	h := d.UIHandler() // the CSRF-wrapped TCP mux
+	// no CSRF header → 403
+	r1 := httptest.NewRequest("GET", "/vault/status", nil)
+	w1 := httptest.NewRecorder()
+	h.ServeHTTP(w1, r1)
+	require.Equal(t, http.StatusForbidden, w1.Code)
+	// with CSRF header → passes through (200)
+	r2 := httptest.NewRequest("GET", "/vault/status", nil)
+	r2.Header.Set("X-Outwall-CSRF", "1")
+	w2 := httptest.NewRecorder()
+	h.ServeHTTP(w2, r2)
+	require.Equal(t, http.StatusOK, w2.Code)
+}
+
 func TestAdminAccessRequests(t *testing.T) {
 	d := newDaemon(t)
 	h := d.AdminHandler()
