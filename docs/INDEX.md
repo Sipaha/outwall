@@ -26,7 +26,9 @@ Stage: alpha (pre-Plan-1).
 - [`overview.md`](architecture/overview.md) — the overall system picture.
 - `decisions/` — ADRs (one architectural decision each, `NNNN-slug.md`):
   - [`0001-stack-and-architecture.md`](architecture/decisions/0001-stack-and-architecture.md) — stack + two-plane gateway architecture.
-- `modules/` — per-package API docs (added as packages land).
+  - [`0002-policy-and-approval.md`](architecture/decisions/0002-policy-and-approval.md) — rule precedence, blocking approval, rate limiter, OIDC-CC token cache.
+- `modules/` — per-package API docs: `secret`, `store`, `upstream`, `agent`, `authn`,
+  `policy`, `approval`, `proxy`, `daemon`, `client`, `cli`, `version` (added as packages land).
 
 ## workflow/ — how we work
 
