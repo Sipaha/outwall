@@ -33,3 +33,13 @@ func TestClassifyNonText(t *testing.T) {
 	b2 := ClassifyBody("request", "application/json", []byte("{}"), 2, false)
 	require.Equal(t, []byte("{}"), b2.Stored)
 }
+
+func TestMaskBodyRedactsCredentials(t *testing.T) {
+	in := `{"Authorization":"Bearer sk-deadbeef","token":"t0psecret","image":"web:v2","note":"plain Bearer abc.def-123 token"}`
+	out := MaskBody([]byte(in))
+	require.NotContains(t, out, "sk-deadbeef")
+	require.NotContains(t, out, "t0psecret")
+	require.NotContains(t, out, "abc.def-123")
+	require.Contains(t, out, "web:v2", "non-secret content is preserved")
+	require.Contains(t, out, "***")
+}

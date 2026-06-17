@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -8,8 +9,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/Sipaha/outwall/internal/approval"
+	"github.com/Sipaha/outwall/internal/events"
 )
 
 func newDaemon(t *testing.T) *Daemon {
@@ -96,6 +101,81 @@ func TestAdminRulesAndApprovals(t *testing.T) {
 
 	// resolving an unknown approval → 404.
 	require.Equal(t, http.StatusNotFound, req(t, h, "POST", "/approvals/nope/resolve", `{"approve":true}`).Code)
+}
+
+func TestAdminApprovalListExposesK8sTupleAndMaskedBody(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	// A k8s patch body that (adversarially) embeds a credential — it must be masked out of
+	// the surfaced preview so the operator console never leaks it.
+	const secretTok = "sk-supersecret-deadbeef"
+	body := `{"op":"replace","Authorization":"Bearer ` + secretTok + `","spec":{"image":"web:v2"}}`
+
+	go func() {
+		_, _ = d.approvals.Submit(context.Background(), approval.Pending{
+			AgentID: "a1", UpstreamID: "u1", Method: "PATCH",
+			Path:      "/api/v1/namespaces/prod/deployments/web",
+			Namespace: "prod", Resource: "deployments", Verb: "patch",
+			RequestBody: []byte(body),
+		})
+	}()
+	require.Eventually(t, func() bool { return len(d.approvals.List()) == 1 }, time.Second, 10*time.Millisecond)
+
+	w := req(t, h, "GET", "/approvals", "")
+	require.Equal(t, http.StatusOK, w.Code)
+	var list []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &list))
+	require.Len(t, list, 1)
+	a := list[0]
+	require.Equal(t, "prod", a["namespace"])
+	require.Equal(t, "deployments", a["resource"])
+	require.Equal(t, "patch", a["verb"])
+	rb, _ := a["request_body"].(string)
+	require.Contains(t, rb, "web:v2", "the patch change must be visible")
+	require.NotContains(t, rb, secretTok, "the credential must NOT leak into the surfaced body")
+	require.NotContains(t, w.Body.String(), secretTok)
+}
+
+func TestApprovalEnqueuedSSECarriesTupleAndMaskedBody(t *testing.T) {
+	bus := events.NewBus()
+	q := approval.NewQueueWithTimeout(time.Second)
+	q.SetPublisher(bus)
+
+	srv := httptest.NewServer(sseHandler(bus))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	r, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	resp, err := http.DefaultClient.Do(r)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	const secretTok = "sk-supersecret-deadbeef"
+	body := `{"Authorization":"Bearer ` + secretTok + `","image":"web:v2"}`
+	go func() {
+		_, _ = q.Submit(context.Background(), approval.Pending{
+			AgentID: "a1", Namespace: "prod", Resource: "deployments", Verb: "patch",
+			RequestBody: []byte(body),
+		})
+	}()
+
+	sc := bufio.NewScanner(resp.Body)
+	var dataLine string
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "data: ") && strings.Contains(line, "deployments") {
+			dataLine = line
+			break
+		}
+	}
+	require.Contains(t, dataLine, `"namespace":"prod"`)
+	require.Contains(t, dataLine, `"resource":"deployments"`)
+	require.Contains(t, dataLine, `"verb":"patch"`)
+	require.Contains(t, dataLine, "web:v2")
+	require.NotContains(t, dataLine, secretTok, "the SSE event must not leak the credential")
 }
 
 func TestAdminAuditEmptyOK(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -92,6 +93,28 @@ func shouldMask(name string) bool {
 		}
 	}
 	return false
+}
+
+// bodyMaskPatterns redact secrets that may appear inside a request body shown to the
+// operator (e.g. an approval preview). They cover the standard transport credentials:
+//   - a `Bearer <token>` literal anywhere in the text;
+//   - a JSON-ish `"<sensitive-key>": "<value>"` pair, where the key is one of the
+//     maskedHeaderNames / maskedSubstrings used for headers (authorization, token, secret,
+//     api-key, password). The value is replaced, the key kept.
+var bodyMaskPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._~+/=-]+`),
+	regexp.MustCompile(`(?i)("(?:[^"]*(?:authorization|api[-_]?key|token|secret|password)[^"]*)"\s*:\s*)"[^"]*"`),
+}
+
+// MaskBody returns a copy of body with embedded credentials redacted, suitable for surfacing
+// an agent-sent request body (e.g. a k8s patch) on the approval card or SSE event without
+// leaking a credential the agent may have placed in it. It never reveals the injected upstream
+// credential — that is added downstream of capture and is not part of this body.
+func MaskBody(body []byte) string {
+	s := string(body)
+	s = bodyMaskPatterns[0].ReplaceAllString(s, "Bearer ***")
+	s = bodyMaskPatterns[1].ReplaceAllString(s, `${1}"***"`)
+	return s
 }
 
 // MaskHeaders flattens an http.Header to a single-value map with sensitive values

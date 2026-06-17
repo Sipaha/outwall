@@ -309,13 +309,21 @@ func (d *Daemon) hRuleDelete(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) hApprovalList(w http.ResponseWriter, _ *http.Request) {
 	pending := d.approvals.List()
-	out := make([]map[string]string, 0, len(pending))
+	out := make([]map[string]any, 0, len(pending))
 	for _, p := range pending {
-		out = append(out, map[string]string{
+		m := map[string]any{
 			"id": p.ID, "agent_id": p.AgentID, "upstream_id": p.UpstreamID,
 			"method": p.Method, "path": p.Path, "purpose": p.Purpose,
 			"created_at": p.CreatedAt.Format(time.RFC3339Nano),
-		})
+			// k8s tuple (empty for http approvals).
+			"namespace": p.Namespace, "resource": p.Resource, "verb": p.Verb,
+		}
+		// Surface the agent-sent patch/apply body with credentials masked. Never the injected
+		// cluster credential — RequestBody is the agent's payload, captured before injection.
+		if len(p.RequestBody) > 0 {
+			m["request_body"] = audit.MaskBody(p.RequestBody)
+		}
+		out = append(out, m)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
