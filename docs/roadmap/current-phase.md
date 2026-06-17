@@ -11,15 +11,21 @@ request-rights + approval + audit flow — cluster credentials never reach the a
 
 Delivery (full product, no feature cut — three sequential milestone plans):
 
-- **K2 — mutating verbs + approval** (ACTIVE). Plan: `…-k8s-k2-mutate.md`.
-  create/update/patch/delete via the blocking approval queue + patch-diff approval card.
-  ADR-0009. Delivers "change deployments".
-- **K3 — exec / attach / cp / port-forward.** Plan: `…-k8s-k3-exec.md`. WebSocket/SPDY upgrade
-  proxying + metadata audit + approval-on-upgrade. ADR-0010.
+- **K3 — exec / attach / cp / port-forward** (ACTIVE). Plan: `…-k8s-k3-exec.md`. WebSocket/SPDY
+  upgrade proxying + metadata audit + approval-on-upgrade. ADR-0010. Last K-milestone — after it,
+  Phase 2 (k8s) is complete.
 
 Phase-1 follow-ups still open (pick with the user): see "Phase 2+ (deferred by design)".
 
 ## Done
+
+- **Plan K2 — k8s mutating verbs + approval.** Mutating k8s verbs (patch/update/create/delete/
+  deletecollection) gated by the existing blocking approval queue; the proxy captures the request
+  body once up-front (full bytes forwarded; a `BodyCap`-capped, credential-masked preview on
+  `approval.Pending.RequestBody`); the approvals admin API + `approval.enqueued` SSE carry the
+  `(namespace,resource,verb)` tuple + the masked body; `audit.MaskBody` redacts `Bearer`/
+  `Authorization` secrets; Web UI gained a k8s-aware Rules editor + a patch-diff Approvals card.
+  All green (`-race`, web vitest+lint, CGO-free + desktop builds). ADR-0009.
 
 - **Plan K1 — Kubernetes read gateway.** `internal/k8s` RBAC path parser + agent kubeconfig;
   `internal/tlsca` local CA + TLS data plane (data plane is now HTTPS; clients trust the local

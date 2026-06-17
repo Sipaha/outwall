@@ -33,6 +33,7 @@ Stage: alpha (pre-Plan-1).
   - [`0006-web-ui-foundation.md`](architecture/decisions/0006-web-ui-foundation.md) — Vite→webdist go:embed, /api prefix + SPA serve, SSE CSRF exemption, dark theme tokens.
   - [`0007-desktop-wrapper.md`](architecture/decisions/0007-desktop-wrapper.md) — Wails 3 desktop wrapper runs the daemon in-process; server stays CGO-free via build tag.
   - [`0008-k8s-gateway-read.md`](architecture/decisions/0008-k8s-gateway-read.md) — k8s reverse-proxy; cluster=k8s-kind upstream; transport seam; (namespace,resource,verb) policy + namespace safety; token/client-cert/exec auth; local CA + kubeconfig.
+  - [`0009-k8s-mutate-approval.md`](architecture/decisions/0009-k8s-mutate-approval.md) — mutating k8s verbs gated by the blocking approval queue; request body captured once (full forwarded, masked preview on the approval); tuple + masked body on approvals API/SSE.
 - `modules/` — per-package API docs: `secret`, `store`, `upstream`, `agent`, `authn`,
   `policy`, `approval`, `access`, `mcpsvc`, `mcp`, `audit`, `events`, `proxy`, `daemon`, `client`, `cli`, `version`, `k8s`, `tlsca`, plus `webui` (the `web/` app).
 
