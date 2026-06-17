@@ -1,0 +1,8 @@
+/dist/
+*.db
+*.db-wal
+*.db-shm
+*.sock
+.outwall/
+/coverage.out
+/coverage.html
