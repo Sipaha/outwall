@@ -60,7 +60,8 @@ Full design: the spec above. Package layout: the plan above.
 - ❌ **No panics / `log.Fatal` in library code.** Return `error` (wrapped with `%w`).
   Panics only in `main`/tests.
 - ❌ **No hacks / workarounds in place of a proper fix.** See Quality bar below.
-- ❌ **Don't bump dependency versions** without a dedicated "upgrade-X" task.
+- ✅ **Add new dependencies at their latest released version** (`go get <mod>@latest`) — never an old pin.
+- ❌ **Don't bump *existing* dependency versions** mid-feature — deliberate upgrades are a dedicated "upgrade-X" task.
 - ❌ **Don't commit code without updating the docs** (module doc / ADR / finding — whatever applies).
 - ❌ **No `Co-Authored-By`** in commit messages. **No `git commit --amend`** / no rewriting
   existing commits — always new commits. (Per the user's global instructions.)
