@@ -2,12 +2,12 @@
 package cli
 
 import (
-	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Sipaha/outwall/internal/client"
+	"github.com/Sipaha/outwall/internal/config"
 	"github.com/Sipaha/outwall/internal/version"
 )
 
@@ -20,10 +20,7 @@ type globalFlags struct {
 }
 
 func defaultDir() string {
-	if d, err := os.UserConfigDir(); err == nil {
-		return filepath.Join(d, "outwall")
-	}
-	return ".outwall"
+	return config.DataDir()
 }
 
 // NewRootCmd builds the root cobra command.

@@ -27,6 +27,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
+	"github.com/Sipaha/outwall/internal/config"
 	"github.com/Sipaha/outwall/internal/daemon"
 	"github.com/Sipaha/outwall/internal/desktop"
 )
@@ -133,17 +134,9 @@ func run() error {
 	return nil
 }
 
-// dataDir resolves (and creates) the outwall data directory under the user's
-// config dir, falling back to the home dir if UserConfigDir is unavailable.
+// dataDir resolves (and creates) the outwall data directory ($HOME/.spk/outwall).
 func dataDir() (string, error) {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		base, err = os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-	}
-	dir := filepath.Join(base, "outwall")
+	dir := config.DataDir()
 	if mkErr := os.MkdirAll(dir, 0o700); mkErr != nil {
 		return "", mkErr
 	}
