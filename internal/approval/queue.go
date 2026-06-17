@@ -28,6 +28,12 @@ type Pending struct {
 	Path       string
 	Purpose    string
 	CreatedAt  time.Time
+
+	// k8s display fields (set for k8s-cluster requests; empty otherwise). Used by the UI to
+	// show the parsed tuple. K2 makes mutating verbs actually park here.
+	Namespace string
+	Resource  string // "resource" or "resource/subresource"
+	Verb      string
 }
 
 type waiter struct {
