@@ -1345,7 +1345,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -2065,7 +2064,6 @@ func newClient(gf *globalFlags) *client.Client { return client.New(gf.socket) }
 package cli
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/signal"

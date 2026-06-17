@@ -4,24 +4,24 @@
 
 ## Active phase
 
-**Plan 1 — Foundation & data-plane skeleton.**
+**Plan 2 — Policy engine + blocking approval + OIDC client-credentials + rate limit.**
 
-Goal: a working vertical slice — agent bearer token, vault-encrypted upstream credential, and
-a localhost reverse proxy that injects upstream auth, enforces default-deny via grants, and
-returns 503 while the vault is locked — all driven by a CLI over a Unix socket. No MCP, no
-web UI, no policy engine yet.
+Goal: replace the flat `grant` allow-list with a real `policy` engine — rules
+`(subject: agent|any, upstream, method+path-glob, rate-limit) → allow|deny|require-approval`,
+with specific-agent precedence over global-upstream over default-deny; an `internal/approval`
+blocking queue (the data-plane request long-polls until the operator decides, surfaced on the
+admin API); and an `oidc-client-credentials` authenticator (token cache + refresh) behind the
+existing `authn.For` seam. Not yet started — needs a plan written (invoke writing-plans).
 
-Spec: `docs/superpowers/specs/2026-06-17-outwall-design.md`
-Plan: `docs/superpowers/plans/2026-06-17-outwall-foundation.md` (9 tasks, TDD).
+## Done
 
-Tasks: scaffold → SQLite store → vault (Argon2id+AES-GCM) → upstream registry → agent
-registry → authenticators (none/static/basic) → grant registry → data-plane proxy → daemon
-assembly + unix-socket admin API + CLI.
+- **Plan 1 — Foundation & data-plane skeleton.** Shipped: vault (Argon2id+AES-GCM), SQLite
+  store, upstream/agent/grant registries, none/static/basic authenticators, data-plane reverse
+  proxy (default-deny + auth injection + 503-when-locked), daemon `serve` + unix-socket admin
+  API + CLI. 9 packages, all tested; e2e proxy flow verified against httpbin. See git
+  `a0a678b..e665a19`.
 
 ## Queued candidates (Phase 1, later plans)
-
-- **Plan 2** — policy engine (rules: subject×upstream×method×path-glob×rate-limit →
-  allow/deny/require-approval) + blocking approval queue + OIDC client-credentials authenticator.
 - **Plan 3** — MCP control plane (streamable HTTP; `list_upstreams`, `request_access`,
   `get_access`, `whoami`; dynamic agent self-registration).
 - **Plan 4** — audit (request journal + body store ≤256 KB, masking, retention).

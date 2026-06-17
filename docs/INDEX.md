@@ -42,4 +42,4 @@ Stage: alpha (pre-Plan-1).
 
 ## findings/ — non-obvious discoveries
 
-(empty — add `YYYY-MM-<slug>.md` when you discover a non-obvious library/pattern/gotcha.)
+- [`2026-06-vault-cli-needs-tty.md`](findings/2026-06-vault-cli-needs-tty.md) — `vault init`/`unlock` need a real TTY; add `--password-stdin` later.
