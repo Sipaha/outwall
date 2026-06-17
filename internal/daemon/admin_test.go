@@ -81,6 +81,15 @@ func TestAdminRulesAndApprovals(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, req(t, h, "POST", "/approvals/nope/resolve", `{"approve":true}`).Code)
 }
 
+func TestAdminAuditEmptyOK(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+	require.Equal(t, http.StatusOK, req(t, h, "GET", "/audit", "").Code)
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/audit/prune", `{"older_than_rfc3339":"2020-01-01T00:00:00Z"}`).Code)
+	require.Equal(t, http.StatusNotFound, req(t, h, "GET", "/audit/nope", "").Code)
+}
+
 func TestAdminAccessRequests(t *testing.T) {
 	d := newDaemon(t)
 	h := d.AdminHandler()

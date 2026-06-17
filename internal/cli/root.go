@@ -49,6 +49,7 @@ func NewRootCmd() *cobra.Command {
 		newRuleCmd(gf),
 		newApprovalCmd(gf),
 		newAccessCmd(gf),
+		newAuditCmd(gf),
 	)
 	return root
 }

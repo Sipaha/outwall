@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Sipaha/outwall/internal/access"
 	"github.com/Sipaha/outwall/internal/approval"
+	"github.com/Sipaha/outwall/internal/audit"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/secret"
 	"github.com/Sipaha/outwall/internal/upstream"
@@ -30,6 +32,9 @@ func (d *Daemon) AdminHandler() http.Handler {
 	mux.HandleFunc("POST /approvals/{id}/resolve", d.hApprovalResolve)
 	mux.HandleFunc("GET /access-requests", d.hAccessRequestList)
 	mux.HandleFunc("POST /access-requests/{id}/resolve", d.hAccessRequestResolve)
+	mux.HandleFunc("GET /audit", d.hAuditList)
+	mux.HandleFunc("GET /audit/{id}", d.hAuditGet)
+	mux.HandleFunc("POST /audit/prune", d.hAuditPrune)
 	return mux
 }
 
@@ -275,4 +280,84 @@ func (d *Daemon) hAccessRequestResolve(w http.ResponseWriter, r *http.Request) {
 	default:
 		adminErr(w, http.StatusBadRequest, err.Error())
 	}
+}
+
+func auditEntryMap(e audit.Entry) map[string]any {
+	return map[string]any{
+		"id": e.ID, "ts": e.TS.Format(time.RFC3339Nano),
+		"agent_id": e.AgentID, "agent_name": e.AgentName,
+		"upstream_id": e.UpstreamID, "upstream_name": e.UpstreamName,
+		"method": e.Method, "path": e.Path, "query": e.Query,
+		"status_code": e.StatusCode, "duration_ms": e.DurationMs,
+		"req_bytes": e.ReqBytes, "resp_bytes": e.RespBytes,
+		"decision": e.Decision, "rule_id": e.RuleID, "error": e.Error,
+	}
+}
+
+func (d *Daemon) hAuditList(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	entries, err := d.audit.List(limit)
+	if err != nil {
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]map[string]any, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, auditEntryMap(e))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (d *Daemon) hAuditGet(w http.ResponseWriter, r *http.Request) {
+	e, bodies, err := d.audit.Get(r.PathValue("id"))
+	switch {
+	case err == nil:
+	case errors.Is(err, audit.ErrNotFound):
+		adminErr(w, http.StatusNotFound, "audit entry not found")
+		return
+	default:
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := auditEntryMap(e)
+	out["headers"] = e.Headers
+	bodyOut := make([]map[string]any, 0, len(bodies))
+	for _, b := range bodies {
+		m := map[string]any{
+			"kind": b.Kind, "content_type": b.ContentType, "size": b.Size,
+			"sha256": b.Sha256, "truncated": b.Truncated,
+		}
+		if b.Stored != nil {
+			m["body"] = string(b.Stored)
+		}
+		bodyOut = append(bodyOut, m)
+	}
+	out["bodies"] = bodyOut
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (d *Daemon) hAuditPrune(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		OlderThanRFC3339 string `json:"older_than_rfc3339"`
+	}
+	if err := decode(r, &body); err != nil {
+		adminErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	cutoff, err := time.Parse(time.RFC3339, body.OlderThanRFC3339)
+	if err != nil {
+		adminErr(w, http.StatusBadRequest, "bad older_than_rfc3339: "+err.Error())
+		return
+	}
+	n, err := d.audit.Prune(cutoff)
+	if err != nil {
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"deleted": n})
 }

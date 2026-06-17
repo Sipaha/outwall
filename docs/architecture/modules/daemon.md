@@ -10,9 +10,13 @@ Admin endpoints: `POST /vault/init`, `POST /vault/unlock`, `GET /vault/status`,
 `POST /upstreams`, `GET /upstreams` (secrets omitted), `POST /agents/register`,
 `GET /agents`, `POST /rules`, `GET /rules`, `DELETE /rules/{id}`, `GET /approvals`,
 `POST /approvals/{id}/resolve`, `GET /access-requests` (joined with agent + upstream names),
-`POST /access-requests/{id}/resolve` (`{status}` ∈ granted/denied/dismissed; 404 if absent).
+`POST /access-requests/{id}/resolve` (`{status}` ∈ granted/denied/dismissed; 404 if absent),
+`GET /audit?limit=N` (journal, newest first, no bodies), `GET /audit/{id}` (entry + masked
+headers + bodies; stored text bodies decoded to a `body` string, non-text → metadata only;
+404 if absent), `POST /audit/prune {older_than_rfc3339}` → `{deleted:N}`.
 Resolving an access request only records the operator's decision — granting actual access is
-still done by creating rules via `POST /rules`.
+still done by creating rules via `POST /rules`. The daemon builds one `audit.Recorder` over the
+store and passes it to the proxy (see `audit.md`, ADR-0004).
 
 ## Public API
 

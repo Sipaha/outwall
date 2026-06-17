@@ -13,6 +13,7 @@ import (
 	"github.com/Sipaha/outwall/internal/access"
 	"github.com/Sipaha/outwall/internal/agent"
 	"github.com/Sipaha/outwall/internal/approval"
+	"github.com/Sipaha/outwall/internal/audit"
 	"github.com/Sipaha/outwall/internal/authn"
 	owmcp "github.com/Sipaha/outwall/internal/mcp"
 	"github.com/Sipaha/outwall/internal/mcpsvc"
@@ -44,6 +45,7 @@ type Daemon struct {
 	policy    *policy.Registry
 	access    *access.Registry
 	approvals *approval.Queue
+	audit     *audit.Recorder
 	dataPlane http.Handler
 	mcp       http.Handler
 }
@@ -63,6 +65,7 @@ func New(cfg Config) (*Daemon, error) {
 	pol := policy.NewRegistry(s)
 	acc := access.NewRegistry(s)
 	appr := approval.NewQueue()
+	aud := audit.NewRecorder(s)
 	mcpHandler, err := owmcp.NewHandler(owmcp.Deps{
 		Svc: mcpsvc.New(ag, up, pol, acc), Agents: ag, Locked: v.Locked,
 	})
@@ -72,10 +75,10 @@ func New(cfg Config) (*Daemon, error) {
 	}
 	d := &Daemon{
 		cfg: cfg, store: s, vault: v, agents: ag, upstreams: up, policy: pol, access: acc,
-		approvals: appr,
+		approvals: appr, audit: aud,
 		dataPlane: proxy.New(proxy.Deps{
 			Agents: ag, Upstreams: up, Policy: pol, Limiter: policy.NewLimiter(),
-			Approvals: appr, AuthManager: authn.NewManager(nil), Vault: v,
+			Approvals: appr, AuthManager: authn.NewManager(nil), Vault: v, Audit: aud,
 		}),
 		mcp: mcpHandler,
 	}
