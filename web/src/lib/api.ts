@@ -87,6 +87,10 @@ export function vaultUnlock(password: string): Promise<{ locked: boolean }> {
   return request('POST', '/vault/unlock', { password })
 }
 
+export function vaultLock(): Promise<{ locked: boolean }> {
+  return request('POST', '/vault/lock')
+}
+
 // --- Agents ---
 
 export function listAgents(): Promise<Agent[]> {

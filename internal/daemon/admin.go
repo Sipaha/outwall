@@ -23,6 +23,7 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /vault/init", d.hVaultInit)
 	mux.HandleFunc("POST /vault/unlock", d.hVaultUnlock)
+	mux.HandleFunc("POST /vault/lock", d.hVaultLock)
 	mux.HandleFunc("GET /vault/status", d.hVaultStatus)
 	mux.HandleFunc("POST /upstreams", d.hUpstreamCreate)
 	mux.HandleFunc("GET /upstreams", d.hUpstreamList)
@@ -120,6 +121,12 @@ func (d *Daemon) hVaultUnlock(w http.ResponseWriter, r *http.Request) {
 	default:
 		adminErr(w, http.StatusBadRequest, err.Error())
 	}
+}
+
+func (d *Daemon) hVaultLock(w http.ResponseWriter, _ *http.Request) {
+	d.vault.Lock()
+	d.publish("vault.locked", map[string]any{})
+	writeJSON(w, http.StatusOK, map[string]bool{"locked": true})
 }
 
 func (d *Daemon) hVaultStatus(w http.ResponseWriter, _ *http.Request) {

@@ -7,6 +7,7 @@ import { Sidebar } from './components/Sidebar'
 import { ToastContainer } from './components/Toast'
 import { Unlock } from './pages/Unlock'
 import { Dashboard } from './pages/Dashboard'
+import { Upstreams } from './pages/Upstreams'
 
 // Placeholder for routes Plan 6B fills in (Upstreams, Agents, Rules, Approvals, Audit, Settings).
 function ComingSoon({ name }: { name: string }) {
@@ -77,7 +78,7 @@ export default function App() {
       <main className="h-screen flex-1 overflow-y-auto">
         <Routes>
           <Route path="/" element={<Dashboard />} />
-          <Route path="/upstreams" element={<ComingSoon name="Upstreams" />} />
+          <Route path="/upstreams" element={<Upstreams />} />
           <Route path="/agents" element={<ComingSoon name="Agents" />} />
           <Route path="/rules" element={<ComingSoon name="Rules" />} />
           <Route path="/approvals" element={<ComingSoon name="Approvals" />} />

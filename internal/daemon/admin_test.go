@@ -61,6 +61,22 @@ func TestAdminVaultAndUpstreamFlow(t *testing.T) {
 	require.Contains(t, wa.Body.String(), "owa_")
 }
 
+func TestAdminVaultLock(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+	// After init the vault is unlocked.
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/lock", "").Code)
+
+	// Status now reports locked:true.
+	ws := req(t, h, "GET", "/vault/status", "")
+	require.Equal(t, http.StatusOK, ws.Code)
+	var st map[string]bool
+	require.NoError(t, json.Unmarshal(ws.Body.Bytes(), &st))
+	require.True(t, st["locked"])
+}
+
 func TestAdminRulesAndApprovals(t *testing.T) {
 	d := newDaemon(t)
 	h := d.AdminHandler()
