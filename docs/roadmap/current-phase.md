@@ -4,15 +4,14 @@
 
 ## Active phase
 
-**Plan 5 — Daemon control API + SSE for the UI.**
+**Plan 6 — Web UI (React).** ⏸ awaiting UI direction from the user before the plan is written.
 
-Goal: consolidate the UI-facing surface and add a live event stream. A read/control HTTP API
-(over the same admin transport, plus a localhost TCP bind for the desktop webview) exposing
-agents / upstreams / rules / approvals / access-requests / audit, and an **SSE** endpoint that
-pushes live events: new agent registered, approval enqueued/resolved, access-request logged,
-audit entry recorded, vault lock/unlock. This is the seam the web UI (Plan 6) and Wails wrapper
-(Plan 7) consume. Not yet started — needs a plan written; decide the API shape + event taxonomy
-+ how the approval queue / audit recorder publish events (an in-process event bus).
+Goal: the embedded React UI (React 19 + Vite + TS + Tailwind 4 + Zustand + lucide-react, served
+via `go:embed`) consuming the Plan 5 control API + SSE. Screens (from the spec): Unlock,
+Dashboard (agents + live approval queue), Upstreams (CRUD + auth + secrets), Agent detail,
+Policies/Rules editor, Approvals (with purpose, allow/deny), Audit (journal + body viewer),
+Settings. **Blocked on a design decision** — theme/vibe + reference feel — to be taken with the
+user (a frontend-design skill will then drive the build).
 
 ## Done
 
@@ -35,10 +34,14 @@ audit entry recorded, vault lock/unlock. This is the seam the web UI (Plan 6) an
   + sha256), masked request headers, decision/rule recorded; entry written on response-body
   close; deny/429/approval-denied/502 early outcomes recorded. Admin API + `audit list|show|prune`
   CLI. Nil-safe (prior behavior unchanged when absent). e2e verified. ADR-0004.
+- **Plan 5 — Control API + SSE.** In-process non-blocking event `Bus` (drop-on-full), publishers
+  in approval/audit/mcpsvc + admin handlers (`agent.registered`, `upstream.created`, `rule.created`,
+  `vault.unlocked`, `approval.enqueued/resolved`, `audit.recorded`, `access.requested`), `GET /events`
+  SSE handler (heartbeat), and a `UIListen` loopback TCP bind serving the admin mux behind an
+  `X-Outwall-CSRF` gate. e2e SSE verified. ADR-0005.
 
 ## Queued candidates (Phase 1, later plans)
-- **Plan 6** — web UI (React 19 + Vite + Tailwind 4 + Zustand screens).
-- **Plan 7** — Wails 3 desktop wrapper.
+- **Plan 7** — Wails 3 desktop wrapper (supervises the daemon, renders the embedded UI, unlock screen at launch).
 
 ## Phase 2+ (deferred by design)
 
