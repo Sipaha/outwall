@@ -1,10 +1,76 @@
 package policy
 
 import (
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestDecideHTTPOperation(t *testing.T) {
+	reg := newReg(t)
+	mk(t, reg, Rule{
+		UpstreamID:      "u1",
+		OpMethod:        "GET",
+		OpPathTemplate:  "/api/v4/projects/{project_path:text}/pipelines",
+		OpQueryTemplate: map[string]string{"updated_after": "{since:date}"},
+		OpValuePolicies: map[string]ValuePolicy{
+			"project_path": {Type: "text", Mode: "set", Values: []string{"infra/helm"}},
+			"since":        {Type: "date", Mode: "any"},
+		},
+		Outcome: Allow,
+	})
+
+	in := func(path, query string) Input {
+		q, err := url.ParseQuery(query)
+		require.NoError(t, err)
+		return Input{AgentID: "a1", UpstreamID: "u1", Method: "GET", Path: path, Query: q}
+	}
+
+	// allowed value in the set → allow, with vars extracted
+	d, err := reg.Decide(in("/api/v4/projects/infra%2Fhelm/pipelines", "updated_after=2026-06-01"))
+	require.NoError(t, err)
+	require.Equal(t, Allow, d.Outcome)
+	require.Equal(t, "infra/helm", d.Vars["project_path"])
+	require.Equal(t, "2026-06-01", d.Vars["since"])
+	require.Empty(t, d.NewValues)
+
+	// a new text value → require-approval with the NewValues pair
+	d, err = reg.Decide(in("/api/v4/projects/other/pipelines", "updated_after=2026-06-01"))
+	require.NoError(t, err)
+	require.Equal(t, RequireApproval, d.Outcome)
+	require.Equal(t, []VarValue{{Var: "project_path", Value: "other"}}, d.NewValues)
+	require.NotNil(t, d.Rule)
+
+	// a path that does not match any template → deny
+	d, err = reg.Decide(in("/api/v4/projects/infra%2Fhelm/builds", "updated_after=2026-06-01"))
+	require.NoError(t, err)
+	require.Equal(t, Deny, d.Outcome)
+
+	// a date var that is not a date → no structural match → deny
+	d, err = reg.Decide(in("/api/v4/projects/infra%2Fhelm/pipelines", "updated_after=notadate"))
+	require.NoError(t, err)
+	require.Equal(t, Deny, d.Outcome)
+}
+
+func TestDecideHTTPTierPrecedence(t *testing.T) {
+	reg := newReg(t)
+	tmpl := func() (string, string, map[string]string, map[string]ValuePolicy) {
+		return "GET", "/x/{id:text}", nil, map[string]ValuePolicy{"id": {Type: "text", Mode: "any"}}
+	}
+	m, p, q, vp := tmpl()
+	// any-agent allow + agent-specific deny on the same matched template → deny wins.
+	mk(t, reg, Rule{UpstreamID: "u1", OpMethod: m, OpPathTemplate: p, OpQueryTemplate: q, OpValuePolicies: vp, Outcome: Allow})
+	mk(t, reg, Rule{SubjectAgentID: "a1", UpstreamID: "u1", OpMethod: m, OpPathTemplate: p, OpQueryTemplate: q, OpValuePolicies: vp, Outcome: Deny})
+
+	d, err := reg.Decide(Input{AgentID: "a1", UpstreamID: "u1", Method: "GET", Path: "/x/1", Query: url.Values{}})
+	require.NoError(t, err)
+	require.Equal(t, Deny, d.Outcome)
+
+	// a different agent rides the any-agent allow.
+	d, _ = reg.Decide(Input{AgentID: "a2", UpstreamID: "u1", Method: "GET", Path: "/x/1", Query: url.Values{}})
+	require.Equal(t, Allow, d.Outcome)
+}
 
 func mk(t *testing.T, reg *Registry, r Rule) {
 	t.Helper()
