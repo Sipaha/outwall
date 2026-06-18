@@ -47,6 +47,42 @@ func TestCreateEncryptsAuthConfig(t *testing.T) {
 	_ = sql.ErrNoRows // keep import honest if refactored
 }
 
+func TestGetOrCreateByHostLazyAndIdempotent(t *testing.T) {
+	s, reg := setup(t)
+
+	up, created, err := reg.GetOrCreateByHost("gitlab.example")
+	require.NoError(t, err)
+	require.True(t, created)
+	require.Equal(t, "gitlab.example", up.Name)
+	require.Equal(t, "https://gitlab.example", up.BaseURL)
+	require.Equal(t, KindHTTP, up.Kind)
+	require.Equal(t, "none", up.Auth.Type) // credential-less on lazy create
+
+	// Idempotent: a second call returns the same upstream and created=false.
+	again, created2, err := reg.GetOrCreateByHost("gitlab.example")
+	require.NoError(t, err)
+	require.False(t, created2)
+	require.Equal(t, up.ID, again.ID)
+
+	// Only one row was created.
+	var n int
+	require.NoError(t, s.DB().QueryRow(`SELECT COUNT(*) FROM upstreams WHERE name=?`, "gitlab.example").Scan(&n))
+	require.Equal(t, 1, n)
+
+	// Host-approval resolve attaches the operator-entered token: it round-trips decrypted...
+	err = reg.SetAuth(up.ID, AuthConfig{Type: "static", Header: "Authorization", Token: "glpat-secret"})
+	require.NoError(t, err)
+	got, err := reg.GetByName("gitlab.example")
+	require.NoError(t, err)
+	require.Equal(t, "glpat-secret", got.Auth.Token)
+	require.Equal(t, "static", got.AuthType)
+
+	// ...and is masked at rest (no plaintext token in the stored blob).
+	var blob []byte
+	require.NoError(t, s.DB().QueryRow(`SELECT auth_config FROM upstreams WHERE id=?`, up.ID).Scan(&blob))
+	require.NotContains(t, string(blob), "glpat-secret")
+}
+
 func TestCreateKindK8sRoundTrips(t *testing.T) {
 	_, reg := setup(t)
 
