@@ -20,10 +20,6 @@ type Decision struct {
 	Rule    *Rule
 }
 
-func methodMatches(ruleMethod, reqMethod string) bool {
-	return ruleMethod == "" || ruleMethod == "*" || strings.EqualFold(ruleMethod, reqMethod)
-}
-
 // verbMatches: an empty or "*" rule verb matches any verb; otherwise exact (case-insensitive).
 func verbMatches(ruleVerb, reqVerb string) bool {
 	return ruleVerb == "" || ruleVerb == "*" || strings.EqualFold(ruleVerb, reqVerb)
@@ -78,7 +74,8 @@ func (r *Registry) Decide(in Input) (Decision, error) {
 			if !k8sMatches(rule, in) {
 				continue
 			}
-		} else if !methodMatches(rule.Method, in.Method) || !MatchGlob(rule.PathGlob, in.Path) {
+		} else {
+			// HTTP operation matching is implemented in Task 3; until then http rules match nothing.
 			continue
 		}
 		switch rule.SubjectAgentID {
