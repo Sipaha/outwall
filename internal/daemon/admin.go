@@ -46,7 +46,21 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	mux.HandleFunc("GET /audit/{id}", d.hAuditGet)
 	mux.HandleFunc("POST /audit/prune", d.hAuditPrune)
 	mux.HandleFunc("GET /events", sseHandler(d.bus))
+	mux.HandleFunc("POST /desktop/focus", d.hDesktopFocus)
 	return mux
+}
+
+// hDesktopFocus raises the desktop window for the single-instance gate (ADR-0013): a second
+// launch posts here over the CSRF-free unix socket so the running instance comes to the
+// foreground. If no window is registered (OnFocusRequest is nil, e.g. a headless serve) it
+// answers 503 so the second launcher can tell "lock held but nobody to focus" from success.
+func (d *Daemon) hDesktopFocus(w http.ResponseWriter, _ *http.Request) {
+	if d.cfg.OnFocusRequest == nil {
+		adminErr(w, http.StatusServiceUnavailable, "no window to focus")
+		return
+	}
+	d.cfg.OnFocusRequest()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // AdminHandler builds the admin API mux served over the unix socket (CSRF-free, local CLI).

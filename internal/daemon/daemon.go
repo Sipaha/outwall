@@ -47,6 +47,12 @@ type Config struct {
 	MCPListen  string // MCP control-plane TCP listen address, e.g. 127.0.0.1:8181
 	UIListen   string // desktop-UI control API + SSE TCP listen address, e.g. 127.0.0.1:8182
 	CADir      string // local-CA dir; defaults to the DB's directory when empty
+
+	// OnFocusRequest, when non-nil, is invoked by the POST /desktop/focus admin route to
+	// raise the desktop window. The desktop wrapper sets it; a headless serve leaves it nil
+	// (the route then answers non-2xx — there is no window to focus). Single-instance gate
+	// (ADR-0013): a second launch posts here over the unix socket to focus the running app.
+	OnFocusRequest func()
 }
 
 // Daemon owns the running gateway.

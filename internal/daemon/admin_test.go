@@ -195,6 +195,37 @@ func TestAdminAuditEmptyOK(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, req(t, h, "GET", "/audit/nope", "").Code)
 }
 
+func TestDesktopFocusRoute(t *testing.T) {
+	// A daemon built with OnFocusRequest set: POST /desktop/focus over the CSRF-free
+	// admin (unix socket) handler returns 2xx and the registered callback ran.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "no-kubeconfig"))
+	focused := make(chan struct{}, 1)
+	d, err := New(Config{
+		DBPath:         filepath.Join(t.TempDir(), "d.db"),
+		SocketPath:     filepath.Join(t.TempDir(), "d.sock"),
+		Listen:         "127.0.0.1:0",
+		OnFocusRequest: func() { focused <- struct{}{} },
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+
+	w := req(t, d.AdminHandler(), "POST", "/desktop/focus", "")
+	require.GreaterOrEqual(t, w.Code, 200)
+	require.Less(t, w.Code, 300)
+	select {
+	case <-focused:
+	default:
+		t.Fatal("OnFocusRequest callback did not run")
+	}
+
+	// A daemon with a nil OnFocusRequest returns a non-2xx (no window to focus) and
+	// must not panic.
+	dNil := newDaemon(t)
+	wNil := req(t, dNil.AdminHandler(), "POST", "/desktop/focus", "")
+	require.True(t, wNil.Code < 200 || wNil.Code >= 300, "expected non-2xx, got %d", wNil.Code)
+}
+
 func TestUICSRFGate(t *testing.T) {
 	d := newDaemon(t)
 	h := d.UIHandler() // the static + /api TCP mux
