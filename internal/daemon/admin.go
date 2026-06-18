@@ -246,11 +246,18 @@ func (d *Daemon) hUpstreamList(w http.ResponseWriter, _ *http.Request) {
 		adminErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	out := make([]map[string]string, 0, len(ups))
+	out := make([]map[string]any, 0, len(ups))
 	for _, u := range ups {
-		out = append(out, map[string]string{
+		m := map[string]any{
 			"id": u.ID, "name": u.Name, "base_url": u.BaseURL, "auth_type": u.AuthType, "kind": u.Kind,
-		}) // secrets intentionally omitted
+		} // secrets intentionally omitted
+		if u.Kind == upstream.KindK8s {
+			// Non-secret cluster metadata the Clusters UI needs: the auth method and whether TLS
+			// verification is disabled (drives the red "insecure" badge). No credentials leak.
+			m["k8s_auth"] = u.Auth.K8sAuth
+			m["k8s_insecure"] = u.Auth.K8sInsecureSkipVerify
+		}
+		out = append(out, m)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

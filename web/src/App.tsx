@@ -8,6 +8,7 @@ import { ToastContainer } from './components/Toast'
 import { Unlock } from './pages/Unlock'
 import { Dashboard } from './pages/Dashboard'
 import { Upstreams } from './pages/Upstreams'
+import { Clusters } from './pages/Clusters'
 import { Agents } from './pages/Agents'
 import { Rules } from './pages/Rules'
 import { Approvals } from './pages/Approvals'
@@ -74,6 +75,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/upstreams" element={<Upstreams />} />
+          <Route path="/clusters" element={<Clusters />} />
           <Route path="/agents" element={<Agents />} />
           <Route path="/rules" element={<Rules />} />
           <Route path="/approvals" element={<Approvals />} />

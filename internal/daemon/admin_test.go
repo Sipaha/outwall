@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -282,11 +283,11 @@ contexts:
 	// The two kubeconfig contexts are now kind=k8s upstreams.
 	wl := req(t, h, "GET", "/upstreams", "")
 	require.Equal(t, http.StatusOK, wl.Code)
-	var ups []map[string]string
+	var ups []map[string]any
 	require.NoError(t, json.Unmarshal(wl.Body.Bytes(), &ups))
-	names := map[string]string{}
+	names := map[string]any{}
 	for _, u := range ups {
-		names[u["name"]] = u["kind"]
+		names[fmt.Sprint(u["name"])] = u["kind"]
 	}
 	require.Equal(t, "k8s", names["kc-ctx-1"])
 	require.Equal(t, "k8s", names["kc-ctx-2"])
@@ -295,7 +296,7 @@ contexts:
 	d.vault.Lock()
 	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/unlock", `{"password":"pw"}`).Code)
 	wl2 := req(t, h, "GET", "/upstreams", "")
-	var ups2 []map[string]string
+	var ups2 []map[string]any
 	require.NoError(t, json.Unmarshal(wl2.Body.Bytes(), &ups2))
 	count := 0
 	for _, u := range ups2 {
