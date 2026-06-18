@@ -36,6 +36,7 @@ Stage: alpha (pre-Plan-1).
   - [`0009-k8s-mutate-approval.md`](architecture/decisions/0009-k8s-mutate-approval.md) — mutating k8s verbs gated by the blocking approval queue; request body captured once (full forwarded, masked preview on the approval); tuple + masked body on approvals API/SSE.
   - [`0010-k8s-exec-attach.md`](architecture/decisions/0010-k8s-exec-attach.md) — exec/attach/cp/port-forward via ReverseProxy's native Upgrade; gated before the 101; ModifyResponse skipped on 101; metadata-only audit; stdlib-only (no websocket/client-go).
   - [`0011-k8s-clusters-ui-kubeconfig-import.md`](architecture/decisions/0011-k8s-clusters-ui-kubeconfig-import.md) — Clusters UI; yaml.v3 kubeconfig parser + idempotent import on unlock; color-scheme:dark form controls; insecure-skip-tls-verify mirrored from the operator kubeconfig (CA wins, warned).
+  - [`0012-kubeconfig-import-scan-and-upload.md`](architecture/decisions/0012-kubeconfig-import-scan-and-upload.md) — import lists non-nil ([] not null); auto-import scans all ~/.kube files; file-picker upload (ImportContent); non-kubeconfig skipped on scan / 400 on upload.
 - `modules/` — per-package API docs: `secret`, `store`, `upstream`, `agent`, `authn`,
   `policy`, `approval`, `access`, `mcpsvc`, `mcp`, `audit`, `events`, `proxy`, `daemon`, `client`, `cli`, `version`, `k8s`, `tlsca`, plus `webui` (the `web/` app).
 

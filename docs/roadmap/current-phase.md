@@ -10,16 +10,17 @@ controlled access to Kubernetes clusters (read logs/resources, change workloads,
 same request-rights + approval + audit flow — cluster credentials never reach the agent. Design
 spec: `docs/superpowers/specs/2026-06-18-outwall-k8s-gateway-design.md`; ADR-0008/0009/0010.
 
-**Active: Plan K5 — kubeconfig import fixes** (found in real use). Three root causes: the import
-response encodes empty lists as JSON `null` → the UI's `res.added.length` throws → false "Failed to
-import clusters" toast (import actually succeeds); auto-import reads only `~/.kube/config` so only 1 of
-the user's clusters (spread across `~/.kube/*.yaml|*.conf`) is pulled; the "Import from kubeconfig"
-button should be a **file picker**, not a fixed-path rescan. Plan:
-`docs/superpowers/plans/2026-06-18-outwall-k8s-k5-import-fixes.md`. ADR-0012.
-
-After K5: no active phase — pick with the user. Candidates below.
+No active phase — pick with the user. Candidates below.
 
 ## Done
+
+- **Plan K5 — kubeconfig import fixes.** Import response now returns non-nil `[]` (a Go nil slice
+  encoded as JSON `null` crashed the UI toast via `res.added.length`, so a successful import showed
+  "Failed to import clusters") + UI null-guard; auto-import scans **all** kubeconfig files in
+  `~/.kube/` (config + `*.yaml`/`*.conf`/…), not just `config`, so clusters in sibling files import;
+  "Import from kubeconfig" is now a **file picker** (`Importer.ImportContent` + a body branch on
+  `POST /clusters/import`); non-kubeconfig files are skipped on auto-scan but rejected (400) on
+  explicit upload. Test isolation hardened (`newDaemon` pins `HOME`+`KUBECONFIG` to temp). ADR-0012.
 
 - **Plan K4 — Clusters UI + kubeconfig auto-import + dark form controls.** `color-scheme: dark`
   fixes the light native `<select>`/scrollbars (WebKitGTK UA theming); a `yaml.v3` kubeconfig parser
