@@ -7,7 +7,7 @@ import {
   deleteRule,
   ApiError,
 } from '../lib/api'
-import type { Rule, Upstream, Agent } from '../lib/types'
+import type { Rule, Upstream, Agent, ValuePolicy } from '../lib/types'
 import { useEventStore } from '../lib/events'
 import { DataTable } from '../components/DataTable'
 import { StatusBadge } from '../components/StatusBadge'
@@ -19,8 +19,10 @@ import { useToastStore } from '../lib/toast'
 interface DraftRule {
   subject_agent_id: string
   upstream_id: string
-  method: string
-  path_glob: string
+  op_method: string
+  op_path_template: string
+  // op_values: one "var=value" per line; "var=*" trusts any value for that variable.
+  op_values: string
   outcome: string
   rate_limit_per_min: number
   namespace: string
@@ -31,13 +33,36 @@ interface DraftRule {
 const emptyDraft: DraftRule = {
   subject_agent_id: '',
   upstream_id: '',
-  method: '*',
-  path_glob: '/**',
+  op_method: 'GET',
+  op_path_template: '',
+  op_values: '',
   outcome: 'allow',
   rate_limit_per_min: 0,
   namespace: '',
   resource: '',
   verb: '',
+}
+
+// parseOpValues turns "var=value" lines into per-variable text value policies. "var=*" sets the
+// variable to mode "any" (trust any value); otherwise the value joins the variable's allowed-set.
+function parseOpValues(text: string): Record<string, ValuePolicy> {
+  const out: Record<string, ValuePolicy> = {}
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (line === '') continue
+    const eq = line.indexOf('=')
+    if (eq <= 0) continue
+    const name = line.slice(0, eq)
+    const val = line.slice(eq + 1)
+    const vp = out[name] ?? { type: 'text', mode: 'set', values: [] }
+    if (val === '*') {
+      vp.mode = 'any'
+    } else if (vp.mode !== 'any') {
+      vp.values = [...(vp.values ?? []), val]
+    }
+    out[name] = vp
+  }
+  return out
 }
 
 // k8s RBAC verbs offered in the rule editor (mirrors internal/k8s verbFor + policy.Rule.Verb).
@@ -73,7 +98,8 @@ export function Rules() {
   const agentName = (id: string) => (id === '' ? 'any' : agents.find((a) => a.id === id)?.name ?? id)
 
   // The rule editor adapts to the selected upstream: k8s clusters match on the RBAC tuple
-  // (namespace/resource/verb); http upstreams match on method+path glob.
+  // (namespace/resource/verb); http upstreams are operation rules (method + path-template +
+  // per-variable value policies).
   const draftIsK8s = upstreams.find((u) => u.id === draft.upstream_id)?.kind === 'k8s'
 
   function openModal() {
@@ -90,13 +116,12 @@ export function Rules() {
     }
     setBusy(true)
     try {
-      // k8s rules send the RBAC tuple (and no http path glob); http rules send method+path.
+      // k8s rules send the RBAC tuple; http rules are operation rules (method + path-template +
+      // per-variable value policies).
       const payload = draftIsK8s
         ? {
             subject_agent_id: draft.subject_agent_id,
             upstream_id: draft.upstream_id,
-            method: '',
-            path_glob: '',
             outcome: draft.outcome,
             rate_limit_per_min: draft.rate_limit_per_min,
             namespace: draft.namespace,
@@ -106,8 +131,9 @@ export function Rules() {
         : {
             subject_agent_id: draft.subject_agent_id,
             upstream_id: draft.upstream_id,
-            method: draft.method,
-            path_glob: draft.path_glob,
+            op_method: draft.op_method,
+            op_path_template: draft.op_path_template,
+            op_value_policies: parseOpValues(draft.op_values),
             outcome: draft.outcome,
             rate_limit_per_min: draft.rate_limit_per_min,
           }
@@ -155,7 +181,8 @@ export function Rules() {
             { header: 'Upstream', cell: (r) => upstreamName(r.upstream_id) },
             {
               header: 'Match',
-              // k8s rules show the RBAC tuple (ns/resource verb); http rules show method+path.
+              // k8s rules show the RBAC tuple (ns/resource verb); http rules show the operation
+              // (method + path-template).
               cell: (r) =>
                 r.namespace || r.resource || r.verb ? (
                   <span className="font-mono">
@@ -164,7 +191,9 @@ export function Rules() {
                   </span>
                 ) : (
                   <span className="font-mono">
-                    {(r.method === '*' || r.method === '' ? 'any' : r.method) + ' ' + r.path_glob}
+                    {(!r.op_method || r.op_method === '*' ? 'any' : r.op_method) +
+                      ' ' +
+                      (r.op_path_template ?? '')}
                   </span>
                 ),
             },
@@ -265,19 +294,29 @@ export function Rules() {
             <FormField label="Method">
               <input
                 className={fieldControlClass}
-                value={draft.method}
-                onChange={(e) => setDraft({ ...draft, method: e.target.value })}
-                placeholder="*"
+                value={draft.op_method}
+                onChange={(e) => setDraft({ ...draft, op_method: e.target.value })}
+                placeholder="GET"
                 aria-label="Method"
               />
             </FormField>
-            <FormField label="Path glob">
+            <FormField label="Operation path-template">
               <input
                 className={fieldControlClass}
-                value={draft.path_glob}
-                onChange={(e) => setDraft({ ...draft, path_glob: e.target.value })}
-                placeholder="/**"
-                aria-label="Path glob"
+                value={draft.op_path_template}
+                onChange={(e) => setDraft({ ...draft, op_path_template: e.target.value })}
+                placeholder="/projects/{project_path:text}/pipelines"
+                aria-label="Operation path-template"
+              />
+            </FormField>
+            <FormField label="Allowed values (one var=value per line; var=* trusts any)">
+              <textarea
+                className={fieldControlClass}
+                value={draft.op_values}
+                onChange={(e) => setDraft({ ...draft, op_values: e.target.value })}
+                placeholder={'project_path=infra/helm\nproject_path=infra/charts'}
+                aria-label="Allowed values"
+                rows={3}
               />
             </FormField>
           </>

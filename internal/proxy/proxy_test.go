@@ -65,6 +65,19 @@ func do(t *testing.T, h http.Handler, method, target, token string) *httptest.Re
 	return w
 }
 
+// allowOp registers an allow operation rule whose template matches the given method/path
+// (any-value text vars), the operation-model equivalent of the old "allow all" path-glob.
+func allowOp(t *testing.T, pol *policy.Registry, upstreamID, method, pathTemplate string, vars ...string) {
+	t.Helper()
+	vp := map[string]policy.ValuePolicy{}
+	for _, v := range vars {
+		vp[v] = policy.ValuePolicy{Type: "text", Mode: "any"}
+	}
+	_, err := pol.Create(policy.Rule{UpstreamID: upstreamID, OpMethod: method,
+		OpPathTemplate: pathTemplate, OpValuePolicies: vp, Outcome: policy.Allow})
+	require.NoError(t, err)
+}
+
 func TestProxyHappyPathInjectsAuthAndStripsAgentToken(t *testing.T) {
 	var gotAuth, gotPath string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -81,14 +94,66 @@ func TestProxyHappyPathInjectsAuthAndStripsAgentToken(t *testing.T) {
 		Type: "static", Header: "Authorization", Token: "Bearer upstreamtok",
 	})
 	require.NoError(t, err)
-	_, err = pol.Create(policy.Rule{UpstreamID: u.ID, Method: "*", PathGlob: "/**", Outcome: policy.Allow})
-	require.NoError(t, err)
+	// page is an exempt pagination param; repos/{name} extracts one segment.
+	allowOp(t, pol, u.ID, "GET", "/repos/{name:text}", "name")
 
 	w := do(t, h, http.MethodGet, "/be/repos/x?page=2", token)
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "ok", w.Body.String())
 	require.Equal(t, "Bearer upstreamtok", gotAuth) // upstream cred injected
 	require.Equal(t, "/repos/x?page=2", gotPath)    // agent token NOT forwarded
+}
+
+func TestProxyOperationEnforcement(t *testing.T) {
+	var gotPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer backend.Close()
+
+	h, ag, up, pol, appr, _ := build(t)
+	_, token, _ := ag.Register("claude")
+	// The upstream Name is the host; the first path segment routes to it.
+	u, err := up.Create("example.test", backend.URL, upstream.AuthConfig{Type: "none"})
+	require.NoError(t, err)
+	_, err = pol.Create(policy.Rule{
+		UpstreamID: u.ID, OpMethod: "GET",
+		OpPathTemplate:  "/projects/{project_path:text}/pipelines",
+		OpValuePolicies: map[string]policy.ValuePolicy{"project_path": {Type: "text", Mode: "set", Values: []string{"a"}}},
+		Outcome:         policy.Allow,
+	})
+	require.NoError(t, err)
+
+	// (1) an allowed value proxies through (200).
+	w := do(t, h, http.MethodGet, "/example.test/projects/a/pipelines", token)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "ok", w.Body.String())
+
+	// (2) a new value blocks on approval; once approved the set is extended and it proceeds.
+	go func() {
+		require.Eventually(t, func() bool { return len(appr.List()) == 1 }, time.Second, 10*time.Millisecond)
+		_ = appr.Resolve(appr.List()[0].ID, true)
+	}()
+	w = do(t, h, http.MethodGet, "/example.test/projects/b/pipelines", token)
+	require.Equal(t, http.StatusOK, w.Code, "new value approved → proceeds")
+
+	// The set was extended: a second request for the same value is now allowed without approval.
+	w = do(t, h, http.MethodGet, "/example.test/projects/b/pipelines", token)
+	require.Equal(t, http.StatusOK, w.Code, "value b is now in the set")
+	require.Equal(t, "/projects/b/pipelines", gotPath)
+
+	// (3) a path that matches no template is denied (403).
+	w = do(t, h, http.MethodGet, "/example.test/other", token)
+	require.Equal(t, http.StatusForbidden, w.Code)
+
+	// A denied new-value approval returns 403.
+	go func() {
+		require.Eventually(t, func() bool { return len(appr.List()) == 1 }, time.Second, 10*time.Millisecond)
+		_ = appr.Resolve(appr.List()[0].ID, false)
+	}()
+	w = do(t, h, http.MethodGet, "/example.test/projects/c/pipelines", token)
+	require.Equal(t, http.StatusForbidden, w.Code, "denied new value → 403")
 }
 
 func TestProxyGuards(t *testing.T) {
@@ -105,8 +170,7 @@ func TestProxyGuards(t *testing.T) {
 	// 403 default-deny (no rule yet)
 	require.Equal(t, http.StatusForbidden, do(t, h, http.MethodGet, "/be/x", token).Code)
 	// 503 vault locked
-	_, err := pol.Create(policy.Rule{UpstreamID: u.ID, Method: "*", PathGlob: "/**", Outcome: policy.Allow})
-	require.NoError(t, err)
+	allowOp(t, pol, u.ID, "GET", "/{p:text}", "p")
 	v.Lock()
 	require.Equal(t, http.StatusServiceUnavailable, do(t, h, http.MethodGet, "/be/x", token).Code)
 }
@@ -119,7 +183,10 @@ func TestProxyRequireApprovalBlocksUntilResolved(t *testing.T) {
 	h, ag, up, pol, appr, _ := build(t)
 	_, token, _ := ag.Register("claude")
 	u, _ := up.Create("be", backend.URL, upstream.AuthConfig{Type: "none"})
-	_, err := pol.Create(policy.Rule{UpstreamID: u.ID, Method: "*", PathGlob: "/**", Outcome: policy.RequireApproval})
+	_, err := pol.Create(policy.Rule{UpstreamID: u.ID, OpMethod: "GET",
+		OpPathTemplate:  "/{p:text}",
+		OpValuePolicies: map[string]policy.ValuePolicy{"p": {Type: "text", Mode: "any"}},
+		Outcome:         policy.RequireApproval})
 	require.NoError(t, err)
 
 	go func() {
@@ -139,7 +206,10 @@ func TestProxyRateLimit(t *testing.T) {
 	h, ag, up, pol, _, _ := build(t)
 	_, token, _ := ag.Register("claude")
 	u, _ := up.Create("be", backend.URL, upstream.AuthConfig{Type: "none"})
-	_, err := pol.Create(policy.Rule{UpstreamID: u.ID, Method: "*", PathGlob: "/**", Outcome: policy.Allow, RateLimitPerMin: 1})
+	_, err := pol.Create(policy.Rule{UpstreamID: u.ID, OpMethod: "GET",
+		OpPathTemplate:  "/{p:text}",
+		OpValuePolicies: map[string]policy.ValuePolicy{"p": {Type: "text", Mode: "any"}},
+		Outcome:         policy.Allow, RateLimitPerMin: 1})
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, do(t, h, http.MethodGet, "/be/x", token).Code)
 	require.Equal(t, http.StatusTooManyRequests, do(t, h, http.MethodGet, "/be/x", token).Code)
@@ -154,7 +224,11 @@ func TestProxyRecordsAudit(t *testing.T) {
 	h, ag, up, pol, _, rec := buildWithAudit(t)
 	_, token, _ := ag.Register("claude")
 	u, _ := up.Create("be", backend.URL, upstream.AuthConfig{Type: "static", Header: "Authorization", Token: "Bearer up"})
-	_, _ = pol.Create(policy.Rule{UpstreamID: u.ID, Method: "*", PathGlob: "/**", Outcome: policy.Allow})
+	_, _ = pol.Create(policy.Rule{UpstreamID: u.ID, OpMethod: "POST",
+		OpPathTemplate:  "/things",
+		OpQueryTemplate: map[string]string{"x": "{x:text}"},
+		OpValuePolicies: map[string]policy.ValuePolicy{"x": {Type: "text", Mode: "any"}},
+		Outcome:         policy.Allow})
 
 	r := httptest.NewRequest(http.MethodPost, "/be/things?x=1", strings.NewReader(`{"hi":1}`))
 	r.Header.Set("Authorization", "Bearer "+token)

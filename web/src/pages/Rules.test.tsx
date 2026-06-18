@@ -15,8 +15,8 @@ describe('<Rules>', () => {
         id: 'r1',
         subject_agent_id: 'a1',
         upstream_id: 'u1',
-        method: '*',
-        path_glob: '/**',
+        op_method: 'GET',
+        op_path_template: '/repos/{repo:text}',
         outcome: 'allow',
         rate_limit_per_min: 0,
       },
@@ -52,8 +52,9 @@ describe('<Rules>', () => {
       expect(createSpy).toHaveBeenCalledWith({
         subject_agent_id: '',
         upstream_id: 'u1',
-        method: '*',
-        path_glob: '/**',
+        op_method: 'GET',
+        op_path_template: '',
+        op_value_policies: {},
         outcome: 'allow',
         rate_limit_per_min: 0,
       }),
@@ -78,7 +79,7 @@ describe('<Rules>', () => {
     fireEvent.change(ns, { target: { value: 'prod' } })
     fireEvent.change(screen.getByLabelText('Resource'), { target: { value: 'deployments' } })
     fireEvent.change(screen.getByLabelText('Verb'), { target: { value: 'patch' } })
-    expect(screen.queryByLabelText('Path glob')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Operation path-template')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Create' }))
 

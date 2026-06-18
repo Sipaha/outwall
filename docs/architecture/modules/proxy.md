@@ -14,6 +14,16 @@ If the matched rule sets a rate limit, the in-memory `policy.Limiter` is consult
 upstream authenticator obtained from `authn.Manager` (so OIDC tokens are cached across requests),
 and forwards via `httputil.ReverseProxy` (`Host` rewritten to the upstream, query preserved).
 
+**H1 (operation enforcement — HTTP).** For an HTTP upstream the proxy builds
+`policy.Input{Method, Path: <escaped upstream-relative path>, Query: r.URL.Query()}` and calls
+`Decide` (ADR-0014). The path is taken from `r.URL.EscapedPath()` so a `%2F` inside one segment is
+preserved (the operation-template matcher splits on real `/` only). A `require-approval` outcome
+carrying `NewValues` (a not-yet-allowed text value) puts the matched rule id + the `(var,value)`
+pairs + the template on `approval.Pending`; on approve the proxy calls
+`policy.Registry.AddAllowedValue` for each pair — **extending the rule's value-set** — then the
+request proceeds; on deny → 403. No template match → 403 (default-deny). The host upstream is
+resolved by the first path segment as the host name (lazy host creation is H2).
+
 **K1 (k8s clusters).** When the resolved target is `Kind=="k8s"`, the proxy parses the request
 into the RBAC tuple (`k8s.Parse`) and evaluates `policy.Decide` with `Kind:"k8s"` +
 namespace/resource/subresource/verb instead of method+path. Discovery/health paths
@@ -52,7 +62,9 @@ and ADR-0004). The inbound request body is wrapped with a capped capture before 
 upstream response body is wrapped in `ModifyResponse`, and the audit row is written from that
 capture's `onClose` — after the response has fully streamed to the agent. The entry carries the
 agent/upstream id+name, method, upstream-relative path, query, status, duration, req/resp sizes,
-the decision + matched rule id, the masked request headers, and both captured bodies. Upstream
+the decision + matched rule id, the masked request headers, and both captured bodies. For an
+HTTP operation request it also records the matched operation template (`Operation`) and the
+variable values outwall extracted from the real request (`Vars`). Upstream
 transport failures are recorded via the `ErrorHandler` as a `502`. The early policy outcomes are
 recorded inline before returning: `deny → 403`, approval-denied `→ 403`, rate-limited `→ 429`. The
 pre-policy guards (`401`/`404`/`503`) are not recorded. When `Audit == nil` the proxy behaves

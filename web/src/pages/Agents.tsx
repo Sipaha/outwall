@@ -86,8 +86,8 @@ export function Agents() {
                 rowKey={(r) => r.id}
                 empty="No rules target this agent"
                 columns={[
-                  { header: 'Method', cell: (r) => r.method || '*', className: 'font-mono' },
-                  { header: 'Path', cell: (r) => r.path_glob, className: 'font-mono' },
+                  { header: 'Method', cell: (r) => r.op_method || '*', className: 'font-mono' },
+                  { header: 'Operation', cell: (r) => r.op_path_template, className: 'font-mono' },
                   { header: 'Outcome', cell: (r) => <StatusBadge status={r.outcome} /> },
                 ]}
               />

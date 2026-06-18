@@ -100,7 +100,7 @@ func TestAdminRulesAndApprovals(t *testing.T) {
 	var up map[string]string
 	require.NoError(t, json.Unmarshal(wu.Body.Bytes(), &up))
 
-	wr := req(t, h, "POST", "/rules", `{"upstream_id":"`+up["id"]+`","method":"*","path_glob":"/**","outcome":"allow"}`)
+	wr := req(t, h, "POST", "/rules", `{"upstream_id":"`+up["id"]+`","op_method":"GET","op_path_template":"/repos/{repo:text}","op_value_policies":{"repo":{"type":"text","mode":"any"}},"outcome":"allow"}`)
 	require.Equal(t, http.StatusOK, wr.Code, wr.Body.String())
 
 	wl := req(t, h, "GET", "/rules", "")

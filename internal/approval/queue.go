@@ -20,6 +20,12 @@ const DefaultTimeout = 5 * time.Minute
 // ErrNotFound is returned by Resolve for an unknown pending id.
 var ErrNotFound = errors.New("approval not found")
 
+// NewValue is a not-yet-allowed (variable, value) pair on an http operation new-value approval.
+type NewValue struct {
+	Var   string `json:"var"`
+	Value string `json:"value"`
+}
+
 // Pending describes a request awaiting approval.
 type Pending struct {
 	ID         string
@@ -35,6 +41,14 @@ type Pending struct {
 	Namespace string
 	Resource  string // "resource" or "resource/subresource"
 	Verb      string
+
+	// HTTP operation fields (set for an http new-value approval; empty otherwise). RuleID is the
+	// matched operation rule; NewValues are the not-yet-allowed (variable, value) pairs the
+	// operator is being asked to admit; Template is the matched path-template for display. On
+	// approve, the resolve path extends each variable's allowed-set with these values.
+	RuleID    string
+	NewValues []NewValue
+	Template  string
 
 	// RequestBody is the captured agent-sent request body (the patch/apply payload), capped at
 	// audit.BodyCap, surfaced on the approval card so the operator sees exactly what will
@@ -99,6 +113,12 @@ func (q *Queue) Submit(ctx context.Context, p Pending) (bool, error) {
 			"method": p.Method, "path": p.Path, "purpose": p.Purpose,
 			// k8s tuple (empty for http approvals) so the console can render the change target.
 			"namespace": p.Namespace, "resource": p.Resource, "verb": p.Verb,
+		}
+		// http new-value approval context (empty for k8s approvals).
+		if len(p.NewValues) > 0 {
+			evt["new_values"] = p.NewValues
+			evt["template"] = p.Template
+			evt["rule_id"] = p.RuleID
 		}
 		// The agent-sent patch/apply body, credentials masked — never the injected cluster
 		// credential (that is added downstream of capture).

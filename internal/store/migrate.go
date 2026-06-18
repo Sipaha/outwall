@@ -31,8 +31,10 @@ CREATE TABLE IF NOT EXISTS rules (
 	id                 TEXT PRIMARY KEY,
 	subject_agent_id   TEXT NOT NULL DEFAULT '',
 	upstream_id        TEXT NOT NULL,
-	method             TEXT NOT NULL DEFAULT '',
-	path_glob          TEXT NOT NULL DEFAULT '/**',
+	op_method          TEXT NOT NULL DEFAULT '',
+	op_path_template   TEXT NOT NULL DEFAULT '',
+	op_query_template  TEXT NOT NULL DEFAULT '{}',
+	op_value_policies  TEXT NOT NULL DEFAULT '{}',
 	outcome            TEXT NOT NULL,
 	rate_limit_per_min INTEGER NOT NULL DEFAULT 0,
 	k8s_namespace      TEXT NOT NULL DEFAULT '',
@@ -67,6 +69,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
 	resp_bytes    INTEGER NOT NULL DEFAULT 0,
 	decision      TEXT NOT NULL DEFAULT '',
 	rule_id       TEXT NOT NULL DEFAULT '',
+	operation     TEXT NOT NULL DEFAULT '',   -- matched operation path-template (http)
+	vars_json     TEXT NOT NULL DEFAULT '',   -- extracted variable values (http), JSON object
 	headers_json  TEXT NOT NULL DEFAULT '',
 	error         TEXT NOT NULL DEFAULT ''
 );

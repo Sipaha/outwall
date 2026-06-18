@@ -87,6 +87,17 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	relPath := "/" + rest
 
+	// escRelPath preserves percent-encoding (e.g. %2F inside one segment) so the operation
+	// template matcher splits on real '/' only and an encoded slash stays within a segment.
+	// r.URL.EscapedPath() is "/<upstream>/<rest...>"; strip the leading "/<upstream>".
+	escRelPath := relPath
+	if esc := r.URL.EscapedPath(); strings.HasPrefix(esc, "/"+name) {
+		escRelPath = strings.TrimPrefix(esc, "/"+name)
+		if escRelPath == "" {
+			escRelPath = "/"
+		}
+	}
+
 	isK8s := up.Kind == upstream.KindK8s
 	var ri k8s.RequestInfo
 	var pending approval.Pending
@@ -126,12 +137,22 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Namespace: ri.Namespace, Resource: resourceKey(ri), Verb: ri.Verb,
 		}
 	} else {
-		dec, err = h.Policy.Decide(policy.Input{AgentID: ag.ID, UpstreamID: up.ID, Method: r.Method, Path: relPath})
+		dec, err = h.Policy.Decide(policy.Input{AgentID: ag.ID, UpstreamID: up.ID,
+			Method: r.Method, Path: escRelPath, Query: r.URL.Query()})
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "policy error")
 			return
 		}
 		pending = approval.Pending{AgentID: ag.ID, UpstreamID: up.ID, Method: r.Method, Path: relPath}
+		// On an http new-value approval, carry the matched rule + the not-yet-allowed pairs so
+		// the operator card shows "new value" and the resolve path can extend the set.
+		if dec.Outcome == policy.RequireApproval && len(dec.NewValues) > 0 && dec.Rule != nil {
+			pending.RuleID = dec.Rule.ID
+			pending.Template = dec.Rule.OpPathTemplate
+			for _, nv := range dec.NewValues {
+				pending.NewValues = append(pending.NewValues, approval.NewValue{Var: nv.Var, Value: nv.Value})
+			}
+		}
 	}
 
 	// For a k8s mutating request gated by approval, capture the agent-sent body once and put
@@ -169,6 +190,15 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusForbidden, "request not approved")
 			return
 		}
+		// An approved http new-value request extends the matched rule's value-sets so the same
+		// operation template now admits these values without re-approval.
+		if !isK8s && len(dec.NewValues) > 0 && dec.Rule != nil {
+			for _, nv := range dec.NewValues {
+				if aerr := h.Policy.AddAllowedValue(dec.Rule.ID, nv.Var, nv.Value); aerr != nil {
+					h.Logger.Error("extend allowed value", "rule", dec.Rule.ID, "var", nv.Var, "err", aerr)
+				}
+			}
+		}
 	}
 	if dec.Rule != nil && dec.Rule.RateLimitPerMin > 0 {
 		if !h.Limiter.Allow(ag.ID+"|"+dec.Rule.ID, dec.Rule.RateLimitPerMin, time.Now()) {
@@ -203,6 +233,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var (
 		started        = time.Now()
 		ruleID         = ruleIDOf(dec.Rule)
+		operation      = operationOf(dec.Rule)
+		auditVars      = dec.Vars
 		maskedHeaders  map[string]string
 		reqCapture     *audit.Capture
 		reqContentType string
@@ -242,8 +274,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					Path: relPath, Query: r.URL.RawQuery, StatusCode: http.StatusBadGateway,
 					DurationMs: int(time.Since(started).Milliseconds()),
 					ReqBytes:   reqSize,
-					Decision:   dec.Outcome, RuleID: ruleID, Headers: maskedHeaders,
-					Error: err.Error(),
+					Decision:   dec.Outcome, RuleID: ruleID, Operation: operation, Vars: auditVars,
+					Headers: maskedHeaders,
+					Error:   err.Error(),
 				}
 				if reqBody != nil {
 					h.record(e, *reqBody)
@@ -272,7 +305,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					Path: relPath, Query: r.URL.RawQuery, StatusCode: status,
 					DurationMs: int(time.Since(started).Milliseconds()),
 					ReqBytes:   reqSize, RespBytes: total,
-					Decision: dec.Outcome, RuleID: ruleID, Headers: maskedHeaders,
+					Decision: dec.Outcome, RuleID: ruleID, Operation: operation, Vars: auditVars,
+					Headers: maskedHeaders,
 				}, bodies...)
 			})
 			return nil
@@ -398,6 +432,14 @@ func ruleIDOf(rule *policy.Rule) string {
 		return ""
 	}
 	return rule.ID
+}
+
+// operationOf returns the matched rule's operation path-template, for the audit record (§8).
+func operationOf(rule *policy.Rule) string {
+	if rule == nil {
+		return ""
+	}
+	return rule.OpPathTemplate
 }
 
 func singleJoin(a, b string) string {

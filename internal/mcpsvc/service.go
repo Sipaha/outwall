@@ -127,11 +127,11 @@ func toAccessResult(internal, upstreamName string, allowing []*policy.Rule) Acce
 	case stOpen:
 		memos := make([]string, 0, len(allowing))
 		for _, r := range allowing {
-			method := r.Method
+			method := r.OpMethod
 			if method == "" {
 				method = "*"
 			}
-			memos = append(memos, method+" "+r.PathGlob)
+			memos = append(memos, method+" "+r.OpPathTemplate)
 		}
 		return AccessResult{
 			Status:   "granted",
