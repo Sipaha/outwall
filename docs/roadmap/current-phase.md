@@ -10,15 +10,21 @@ controlled access to Kubernetes clusters (read logs/resources, change workloads,
 same request-rights + approval + audit flow — cluster credentials never reach the agent. Design
 spec: `docs/superpowers/specs/2026-06-18-outwall-k8s-gateway-design.md`; ADR-0008/0009/0010.
 
-**Active: Plan K6 — desktop single-instance + focus-existing.** Only one outwall desktop app runs
-at a time; a second launch foregrounds the running window and exits. Wails v3 native
-`SingleInstanceOptions` (Linux dbus lock), with the single-instance gate moved **before** the
-in-process daemon binds its loopback ports. Plan:
-`docs/superpowers/plans/2026-06-18-outwall-k6-single-instance.md`. ADR-0013.
-
-After K6: no active phase — pick with the user. Candidates below.
+No active phase — pick with the user. Candidates below.
 
 ## Done
+
+- **Plan K6 — desktop single-instance + focus-existing.** Only one desktop app runs at a time; a
+  second launch foregrounds the running window and exits 0. Pattern mirrors citeck-launcher (chosen
+  over Wails-native SingleInstance): a **flock lock file** (`desktop.lock`) gates the primary; on
+  conflict the second instance hands focus off over outwall's existing **unix admin socket**
+  (`POST /desktop/focus` → `Config.OnFocusRequest`) and exits, surfacing an error only if no live
+  instance answers (stale lock). The lock gate runs **before** the in-process daemon binds its ports.
+  Linux/GTK focus-stealing workaround (`SetAlwaysOnTop` pin + `Focus()`, dropped after 700 ms via
+  `application.InvokeAsync` — all window calls on the UI thread). Lock/notify/route are CGO-free and
+  unit-tested in the standard gate; only the GTK raise is `//go:build desktop`. Two-launch xvfb smoke
+  passes (instance #2 exits 0, no port-bind; #1 survives) and reaps cleanly. No new dep; no citeck in
+  code. ADR-0013.
 
 - **Plan K5 — kubeconfig import fixes.** Import response now returns non-nil `[]` (a Go nil slice
   encoded as JSON `null` crashed the UI toast via `res.added.length`, so a successful import showed
