@@ -22,10 +22,12 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
 - `lib/api.ts` — typed control-API client. `API_BASE='/api'`, one `X-Outwall-CSRF` header on
   every call, `ApiError {status, message}` thrown on non-2xx (parsing the daemon's `{error}`
   body), `fetchWithTimeout`. One helper per endpoint (`getVaultStatus`, `vaultInit/Unlock`,
-  `listAgents`, `listUpstreams`/`createUpstream`, `listRules`/`createRule`/`deleteRule`,
-  `listApprovals`/`resolveApproval`, `listAccessRequests`/`resolveAccessRequest`,
-  `listAudit`/`getAudit`/`pruneAudit`, `vaultLock`).
-- `lib/types.ts` — TS interfaces mirroring the Go admin JSON field names (Agent, Upstream, Rule,
+  `listAgents`, `listUpstreams`/`createUpstream`/`deleteUpstream`, `listRules`/`createRule`/
+  `deleteRule`, `listApprovals`/`resolveApproval`, `listAccessRequests`/`resolveAccessRequest`,
+  `listAudit`/`getAudit`/`pruneAudit`, `vaultLock`, and the K4 cluster helpers
+  `createCluster`/`importClusters`/`getKubeconfig`).
+- `lib/types.ts` — TS interfaces mirroring the Go admin JSON field names (Agent, Upstream — with
+  the K4 `k8s_auth`/`k8s_insecure` cluster fields, ClusterAuthConfig, ClusterImportResult, Rule,
   Approval, AccessRequest, AuditEntry/AuditBody/AuditDetail, VaultStatus, OutwallEvent).
 - `lib/events.ts` — Zustand store wrapping one `EventSource('/api/events')`. Tracks `connected`
   and a per-event-type counter (`counters['approval.enqueued']`, …) bumped on each event, so a
@@ -33,6 +35,8 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
 - `lib/toast.ts` — Zustand transient-notification store (auto-dismiss after 5s).
 - `index.css` — `@import "tailwindcss"` + the Darcula/Lens `@theme` token block (dark-only in
   6A): `--color-background:#1e1f22`, the `--color-status-*` palette, JetBrains-Mono `--font-mono`.
+  Sets `color-scheme: dark` on `:root`/`body` (+ an `option` background) so WebKitGTK renders
+  native form controls — the `<select>` and its option popup — dark instead of light (ADR-0011).
 - `components/` — `Sidebar` (wordmark + nav + live SSE connection dot), `StatusBadge` (status →
   color pill), `Modal`, `Toast` (`ToastContainer`), `DataTable` (compact dense table),
   `FormField` (labelled control wrapper + shared themed `fieldControlClass`), `Select` (themed
@@ -41,9 +45,14 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
   - `Unlock` — init/unlock master-password card (`vaultInit`/`vaultUnlock`).
   - `Dashboard` — Agents table + live Approval queue (refetched on `agent.registered`,
     `approval.enqueued`, `approval.resolved`; Approve/Deny → `resolveApproval`).
-  - `Upstreams` — `listUpstreams` table + "Add upstream" modal whose auth form switches
-    conditional fields by `<Select>` type (none/static/basic/oidc-client-credentials);
-    `createUpstream`. Refetch on `upstream.created`.
+  - `Upstreams` — `listUpstreams` (filtered to `kind!=="k8s"` — clusters live on Clusters) table +
+    "Add upstream" modal whose auth form switches conditional fields by `<Select>` type
+    (none/static/basic/oidc-client-credentials); `createUpstream`. Refetch on `upstream.created`.
+  - `Clusters` (K4) — lists kind=k8s upstreams (name + red **"insecure"** badge when
+    `k8s_insecure`, API URL, auth type). "Add cluster" modal (token/client-cert/exec → `createCluster`
+    with `kind:"k8s"`); "Import from kubeconfig" → `importClusters` toasting added/skipped;
+    per-cluster "Kubeconfig" → pick an agent, paste its token, `getKubeconfig` → show/download YAML;
+    delete → `deleteUpstream`. Refetch on `upstream.created`/`.deleted`.
   - `Agents` — `listAgents` table; row "Detail" modal shows the agent's rules (filtered
     `listRules`) and access requests (filtered `listAccessRequests`), read-only. Refetch on
     `agent.registered`.
@@ -64,8 +73,8 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
   - `Settings` — vault status + Lock vault (`vaultLock` then reload → Unlock screen); audit
     prune control (`pruneAudit` older-than-N-days); a localhost-only daemon note.
 - `App.tsx` — on mount `getVaultStatus()`: not-initialized → Unlock(init); locked →
-  Unlock(unlock); else the shell (Sidebar + routed `<main>`), connecting the SSE store. All six
-  routes (Upstreams/Agents/Rules/Approvals/Audit/Settings) are wired.
+  Unlock(unlock); else the shell (Sidebar + routed `<main>`), connecting the SSE store. The
+  routes (Upstreams/**Clusters**/Agents/Rules/Approvals/Audit/Settings) are wired.
 
 ## Tests
 
@@ -75,6 +84,10 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
   the daemon error and skips `onDone`; init mode requires a matching confirmation.
 - `pages/Upstreams.test.tsx` — rows render from `listUpstreams`; switching the auth `<Select>`
   reveals the conditional fields; submit calls `createUpstream` with the built auth config.
+- `pages/Clusters.test.tsx` — kind=k8s rows render (and the insecure cluster shows the "insecure"
+  badge) while an http upstream is filtered out; "Import from kubeconfig" calls `importClusters`
+  and toasts added/skipped; the add form reveals exec fields when auth=exec. Also asserts the
+  Upstreams screen no longer lists a kind=k8s row.
 - `pages/Rules.test.tsx` — rows resolve agent/upstream names; the add-rule modal submits
   `createRule` with the default draft; for a `kind:"k8s"` upstream the modal shows
   Namespace/Resource/Verb (and hides Path glob) and submits the tuple.

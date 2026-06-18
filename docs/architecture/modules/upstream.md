@@ -10,10 +10,15 @@ the `upstreams.kind` column). A k8s cluster's `BaseURL` is the API-server URL an
 (`token|client-cert|exec`), `ClientCert`/`ClientKey`, and `ExecCommand`/`ExecArgs`/`ExecEnv`
 (`Token` is reused for `K8sAuth=="token"`). All encrypted at rest like any auth config.
 
+**K4 (insecure clusters).** `AuthConfig` adds `K8sInsecureSkipVerify bool` — set only from an
+explicit `insecure-skip-tls-verify:true` in the operator's own kubeconfig (the CA wins when both
+are present). `authn` honors it in the cluster transport; the Clusters UI badges it. New JSON
+field inside the already-encrypted blob — no migration (defaults false on old rows). See ADR-0011.
+
 ## Public API
 
 - `KindHTTP = "http"`, `KindK8s = "k8s"`.
-- `AuthConfig struct { Type, Header, Token, Username, Password, TokenURL, ClientID, ClientSecret, Scope string; CABundle, K8sAuth, ClientCert, ClientKey, ExecCommand string; ExecArgs []string; ExecEnv map[string]string }`.
+- `AuthConfig struct { Type, Header, Token, Username, Password, TokenURL, ClientID, ClientSecret, Scope string; CABundle, K8sAuth, ClientCert, ClientKey, ExecCommand string; ExecArgs []string; ExecEnv map[string]string; K8sInsecureSkipVerify bool }`.
 - `Upstream struct { ID, Name, BaseURL, Kind, AuthType string; Auth AuthConfig; CreatedAt time.Time }`
 - `NewRegistry(s *store.Store, v *secret.Vault) *Registry`
 - `(*Registry).Create(name, baseURL string, auth AuthConfig) (*Upstream, error)` — http kind; delegates to `CreateKind`.
