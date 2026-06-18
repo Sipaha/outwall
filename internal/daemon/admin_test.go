@@ -17,6 +17,7 @@ import (
 
 	"github.com/Sipaha/outwall/internal/approval"
 	"github.com/Sipaha/outwall/internal/events"
+	"github.com/Sipaha/outwall/internal/policy"
 )
 
 func newDaemon(t *testing.T) *Daemon {
@@ -109,6 +110,94 @@ func TestAdminRulesAndApprovals(t *testing.T) {
 
 	// resolving an unknown approval → 404.
 	require.Equal(t, http.StatusNotFound, req(t, h, "POST", "/approvals/nope/resolve", `{"approve":true}`).Code)
+}
+
+// submitOp parks a KindOperation pending and waits until it is listed, returning its id.
+func submitOp(t *testing.T, d *Daemon, upstreamID string, values map[string]string) string {
+	t.Helper()
+	go func() {
+		_, _ = d.approvals.Submit(context.Background(), approval.Pending{
+			Kind: approval.KindOperation, AgentID: "a1", UpstreamID: upstreamID, Host: "gitlab.example",
+			Method: "GET", Path: "/api/v4/projects/{project_path:text}/pipelines", Purpose: "ci",
+			OpMethod:        "GET",
+			OpPathTemplate:  "/api/v4/projects/{project_path:text}/pipelines",
+			OpQueryTemplate: map[string]string{"updated_after": "{since:date}"},
+			OpVariables: []approval.Variable{
+				{Name: "project_path", Type: "text"}, {Name: "since", Type: "date"},
+			},
+			OpValues: values,
+		})
+	}()
+	var id string
+	require.Eventually(t, func() bool {
+		for _, p := range d.approvals.List() {
+			if p.Kind == approval.KindOperation && p.OpValues["project_path"] == values["project_path"] {
+				id = p.ID
+				return true
+			}
+		}
+		return false
+	}, time.Second, 10*time.Millisecond)
+	return id
+}
+
+func TestOperationApprovalCreatesThenExtendsRule(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	hostUp, _, err := d.upstreams.GetOrCreateByHost("gitlab.example")
+	require.NoError(t, err)
+
+	// First operation approval (approve) → one rule with project_path's set = {infra/helm}.
+	id1 := submitOp(t, d, hostUp.ID, map[string]string{"project_path": "infra/helm"})
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/approvals/"+id1+"/resolve", `{"approve":true}`).Code)
+
+	rules, err := d.policy.ForUpstream(hostUp.ID)
+	require.NoError(t, err)
+	require.Len(t, rules, 1)
+	r := rules[0]
+	require.Equal(t, policy.Allow, r.Outcome)
+	require.Equal(t, "GET", r.OpMethod)
+	require.Equal(t, "/api/v4/projects/{project_path:text}/pipelines", r.OpPathTemplate)
+	require.Equal(t, []string{"infra/helm"}, r.OpValuePolicies["project_path"].Values)
+	require.Equal(t, "set", r.OpValuePolicies["project_path"].Mode)
+	// date var auto-allows.
+	require.Equal(t, "any", r.OpValuePolicies["since"].Mode)
+
+	// Second approval for a NEW value on the SAME template extends the set — one rule, two values.
+	id2 := submitOp(t, d, hostUp.ID, map[string]string{"project_path": "apps/web"})
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/approvals/"+id2+"/resolve", `{"approve":true}`).Code)
+
+	rules, err = d.policy.ForUpstream(hostUp.ID)
+	require.NoError(t, err)
+	require.Len(t, rules, 1, "approving a new value must EXTEND the existing rule, not create a new one")
+	require.ElementsMatch(t, []string{"infra/helm", "apps/web"}, rules[0].OpValuePolicies["project_path"].Values)
+
+	// trust_any:[project_path] → that var's policy flips to mode "any".
+	id3 := submitOp(t, d, hostUp.ID, map[string]string{"project_path": "anything/here"})
+	require.Equal(t, http.StatusOK,
+		req(t, h, "POST", "/approvals/"+id3+"/resolve", `{"approve":true,"trust_any":["project_path"]}`).Code)
+	rules, err = d.policy.ForUpstream(hostUp.ID)
+	require.NoError(t, err)
+	require.Len(t, rules, 1)
+	require.Equal(t, "any", rules[0].OpValuePolicies["project_path"].Mode)
+}
+
+func TestOperationApprovalDenyMakesNoRule(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	hostUp, _, err := d.upstreams.GetOrCreateByHost("gitlab.example")
+	require.NoError(t, err)
+
+	id := submitOp(t, d, hostUp.ID, map[string]string{"project_path": "infra/helm"})
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/approvals/"+id+"/resolve", `{"approve":false}`).Code)
+
+	rules, err := d.policy.ForUpstream(hostUp.ID)
+	require.NoError(t, err)
+	require.Empty(t, rules, "a denied operation approval must create no rule")
 }
 
 func TestAdminApprovalListExposesK8sTupleAndMaskedBody(t *testing.T) {
