@@ -10,7 +10,13 @@ controlled access to Kubernetes clusters (read logs/resources, change workloads,
 same request-rights + approval + audit flow — cluster credentials never reach the agent. Design
 spec: `docs/superpowers/specs/2026-06-18-outwall-k8s-gateway-design.md`; ADR-0008/0009/0010.
 
-No active phase — pick with the user. Candidates below.
+**Active: Plan K6 — desktop single-instance + focus-existing.** Only one outwall desktop app runs
+at a time; a second launch foregrounds the running window and exits. Wails v3 native
+`SingleInstanceOptions` (Linux dbus lock), with the single-instance gate moved **before** the
+in-process daemon binds its loopback ports. Plan:
+`docs/superpowers/plans/2026-06-18-outwall-k6-single-instance.md`. ADR-0013.
+
+After K6: no active phase — pick with the user. Candidates below.
 
 ## Done
 
