@@ -18,6 +18,14 @@ command -v xvfb-run >/dev/null 2>&1 || skip "xvfb-run not available (no headless
 command -v dbus-run-session >/dev/null 2>&1 || skip "dbus-run-session not available"
 [ -x "$bin" ] || fail "binary not built: $bin (run: make build-desktop)"
 
+# The desktop binds fixed loopback ports (8182/8099/8181). If a real instance already
+# holds them, skip — instance #1 could not come up, and cleanup (which reaps the binary by
+# path) could disturb the running app. Close the running desktop app before running this.
+if command -v ss >/dev/null 2>&1; then
+  ss -ltn 2>/dev/null | grep -qE '127\.0\.0\.1:(8182|8099|8181)\b' \
+    && skip "ports 8182/8099/8181 are busy (a desktop instance is already running)"
+fi
+
 work="$(mktemp -d)"
 export HOME="$work"        # throwaway data dir → $HOME/.spk/outwall
 sock="$HOME/.spk/outwall/outwall.sock"
@@ -25,9 +33,14 @@ log1="$work/inst1.log"
 log2="$work/inst2.log"
 
 cleanup() {
-  [ -n "${pid1:-}" ] && kill "$pid1" 2>/dev/null
-  # xvfb-run leaves an Xvfb child; kill the whole process group of pid1 best-effort.
-  [ -n "${pid1:-}" ] && pkill -P "$pid1" 2>/dev/null
+  # Each launch is `xvfb-run -> dbus-run-session -> outwall-desktop`; the desktop binary is a
+  # GRANDCHILD, so killing pid1/pid2 (the xvfb-run wrappers) or `pkill -P` (direct children
+  # only) leaves it orphaned holding the loopback ports. Reap it by its absolute path — scoped
+  # to THIS binary, and the pre-flight skip above guarantees no real instance is running.
+  pkill -9 -f "$bin" 2>/dev/null
+  for p in "${pid1:-}" "${pid2:-}"; do
+    [ -n "$p" ] && { pkill -P "$p" 2>/dev/null; kill "$p" 2>/dev/null; }
+  done
   rm -rf "$work"
 }
 trap cleanup EXIT
