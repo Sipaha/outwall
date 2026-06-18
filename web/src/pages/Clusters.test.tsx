@@ -54,6 +54,27 @@ describe('<Clusters>', () => {
     expect(await screen.findByText(/added 2/i)).toBeInTheDocument()
   })
 
+  it('shows a success toast (not a false error) when the backend returns added:null', async () => {
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([])
+    vi.spyOn(api, 'listAgents').mockResolvedValue([])
+    // The Go daemon used to encode an all-skipped import's nil slice as JSON null; the UI must
+    // null-guard so an HTTP-200 import never fires "Failed to import clusters".
+    vi.spyOn(api, 'importClusters').mockResolvedValue({
+      added: null as unknown as string[],
+      skipped: ['lab'],
+    })
+    render(
+      <>
+        <Clusters />
+        <ToastContainer />
+      </>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Import from kubeconfig' }))
+    expect(await screen.findByText(/added 0, skipped 1/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Failed to import/i)).not.toBeInTheDocument()
+  })
+
   it('shows exec fields when the add-cluster auth type is exec', async () => {
     vi.spyOn(api, 'listUpstreams').mockResolvedValue([])
     vi.spyOn(api, 'listAgents').mockResolvedValue([])

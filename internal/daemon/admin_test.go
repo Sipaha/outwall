@@ -349,6 +349,11 @@ contexts:
 	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &res2))
 	require.Contains(t, res2.Skipped, "ep-ctx")
 	require.Empty(t, res2.Added)
+
+	// The all-skipped response must encode `added` as an empty JSON array, never `null`:
+	// a nil Go slice serializes to null, and the UI's res.added.length throws on null,
+	// firing a false "Failed to import" toast even though the import succeeded (HTTP 200).
+	require.JSONEq(t, `{"added":[],"skipped":["ep-ctx"]}`, w2.Body.String())
 }
 
 func TestAdminAccessRequests(t *testing.T) {

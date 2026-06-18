@@ -29,6 +29,10 @@ func (im *Importer) Import(paths []string) (added, skipped []string, err error) 
 		log = slog.Default()
 	}
 
+	// Non-nil from the start: a nil slice encodes to JSON `null`, which the UI's
+	// res.added.length / res.skipped.length then throws on (false "Failed to import" toast).
+	added, skipped = []string{}, []string{}
+
 	existing, err := im.Reg.List()
 	if err != nil {
 		return nil, nil, fmt.Errorf("list upstreams: %w", err)

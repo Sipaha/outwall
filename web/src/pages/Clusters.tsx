@@ -116,7 +116,10 @@ export function Clusters() {
     setImporting(true)
     try {
       const res = await importClusters()
-      push('success', `Imported clusters — added ${res.added.length}, skipped ${res.skipped.length}`)
+      push(
+        'success',
+        `Imported clusters — added ${(res.added ?? []).length}, skipped ${(res.skipped ?? []).length}`,
+      )
       load()
     } catch (err) {
       push('error', err instanceof ApiError ? err.message : 'Failed to import clusters')
