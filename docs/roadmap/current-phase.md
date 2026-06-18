@@ -15,15 +15,21 @@ spec: `docs/superpowers/specs/2026-06-18-outwall-k8s-gateway-design.md`; ADR-000
 approve-on-request, per-variable value-sets), enforced by parsing the real request. Spec:
 `docs/superpowers/specs/2026-06-18-outwall-operation-access-design.md`. Three sequential plans:
 
-- **H2 — enriched MCP + approval entry points** (ACTIVE). Plan: `…-opaccess-h2-mcp-approval.md`.
-  `request_host_access` + typed `request_access`; lazy host upstream + credential attach; approval
-  resolve creates/extends the operation rule + trust-any. ADR-0015.
-- **H3 — UI.** Plan: `…-opaccess-h3-ui.md`. Host/operation/new-value approval cards + Operations
-  (templates + value-sets) + Hosts screens. ADR-0016.
+- **H3 — UI** (ACTIVE). Plan: `…-opaccess-h3-ui.md`. Host/operation/new-value approval cards +
+  Operations (templates + value-sets) + Hosts screens. ADR-0016. Last opaccess milestone.
 
 After H1–H3: no active phase — pick with the user. Candidates below.
 
 ## Done
+
+- **Plan H2 — enriched MCP + approval entry points (Phase 3).** `upstream.GetOrCreateByHost` (lazy
+  credential-less host upstream + operator credential attach on host approval). MCP
+  `request_host_access(host, purpose)` + typed `request_access(host, method, path/query templates,
+  variables, values, purpose)` — template validated via `optemplate.Parse` (bad → tool error);
+  enqueues a pending operation approval non-blockingly (agent polls `get_access`). Approval resolve
+  creates the operation rule for `Template.Key()` then **extends** its value-set on later approvals
+  (reusing `AddAllowedValue`) + per-variable `trust_any → any`; deny → no rule. One blocking queue,
+  no parallel mechanism. k8s untouched. All green (`-race`, CGO-free build). ADR-0015.
 
 - **Plan H1 — operation-template engine + proxy enforcement (Phase 3).** `internal/optemplate`:
   typed, segment-bounded `{name:type}` placeholders; parse/match/extract variable values **from the
