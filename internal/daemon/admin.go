@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -31,6 +32,7 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /upstreams/{name}", d.hUpstreamDelete)
 	mux.HandleFunc("POST /agents/register", d.hAgentRegister)
 	mux.HandleFunc("GET /agents", d.hAgentList)
+	mux.HandleFunc("POST /clusters/import", d.hClustersImport)
 	mux.HandleFunc("POST /kubeconfig", d.hKubeconfig)
 	mux.HandleFunc("POST /rules", d.hRuleCreate)
 	mux.HandleFunc("GET /rules", d.hRuleList)
@@ -118,6 +120,9 @@ func (d *Daemon) hVaultUnlock(w http.ResponseWriter, r *http.Request) {
 	switch err := d.vault.Unlock(body.Password); {
 	case err == nil:
 		d.publish("vault.unlocked", map[string]any{})
+		// Best-effort auto-import of the host's kubeconfig clusters now that the vault can
+		// encrypt their auth. A failure here must NEVER fail the unlock — it is logged only.
+		d.autoImportClusters()
 		writeJSON(w, http.StatusOK, map[string]bool{"locked": false})
 	case errors.Is(err, secret.ErrBadPassword):
 		adminErr(w, http.StatusUnauthorized, "incorrect master password")
@@ -173,6 +178,34 @@ func (d *Daemon) hUpstreamDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	d.publish("upstream.deleted", map[string]any{"name": name})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// hClustersImport runs the kubeconfig importer over the host's discovered kubeconfig paths and
+// returns the cluster names added/skipped. It requires the vault unlocked (Create encrypts).
+func (d *Daemon) hClustersImport(w http.ResponseWriter, _ *http.Request) {
+	added, skipped, err := d.importer.Import(k8s.DiscoverKubeconfigPaths())
+	if err != nil {
+		adminErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(added) > 0 {
+		d.publish("upstream.created", map[string]any{"count": len(added)})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"added": added, "skipped": skipped})
+}
+
+// autoImportClusters runs the importer best-effort after a successful vault unlock. Any error
+// is logged and swallowed so a kubeconfig problem never blocks unlocking the daemon.
+func (d *Daemon) autoImportClusters() {
+	added, skipped, err := d.importer.Import(k8s.DiscoverKubeconfigPaths())
+	if err != nil {
+		slog.Warn("kubeconfig auto-import failed (continuing — unlock unaffected)", "err", err)
+		return
+	}
+	if len(added) > 0 {
+		slog.Info("kubeconfig auto-import", "added", len(added), "skipped", len(skipped))
+		d.publish("upstream.created", map[string]any{"count": len(added)})
+	}
 }
 
 // hKubeconfig assembles an agent kubeconfig for a cluster from an agent token + the local CA.

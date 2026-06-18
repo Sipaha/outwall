@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,6 +20,10 @@ import (
 
 func newDaemon(t *testing.T) *Daemon {
 	t.Helper()
+	// Point kubeconfig discovery at a nonexistent path so the unlock auto-import is a
+	// deterministic no-op — tests must not read (or import) the host's real ~/.kube/config.
+	// Tests that exercise auto-import override KUBECONFIG with their own temp file afterward.
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "no-kubeconfig"))
 	d, err := New(Config{
 		DBPath:     filepath.Join(t.TempDir(), "d.db"),
 		SocketPath: filepath.Join(t.TempDir(), "d.sock"),
@@ -236,6 +241,113 @@ func TestUISSEExemptFromCSRF(t *testing.T) {
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode) // 200, not 403 from the CSRF gate
 	require.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
+}
+
+func TestVaultUnlockAutoImportsClusters(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+
+	// A kubeconfig with two contexts on disk, pointed at by $KUBECONFIG.
+	src := `
+apiVersion: v1
+kind: Config
+clusters:
+  - name: c1
+    cluster:
+      server: https://c1.example:6443
+      insecure-skip-tls-verify: true
+  - name: c2
+    cluster:
+      server: https://c2.example:6443
+      insecure-skip-tls-verify: true
+users:
+  - name: u
+    user:
+      token: t
+contexts:
+  - name: kc-ctx-1
+    context: { cluster: c1, user: u }
+  - name: kc-ctx-2
+    context: { cluster: c2, user: u }
+`
+	kcPath := filepath.Join(t.TempDir(), "config")
+	require.NoError(t, os.WriteFile(kcPath, []byte(src), 0o600))
+	t.Setenv("KUBECONFIG", kcPath)
+
+	// init leaves the vault unlocked; lock then unlock to drive the unlock hook.
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+	d.vault.Lock()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/unlock", `{"password":"pw"}`).Code)
+
+	// The two kubeconfig contexts are now kind=k8s upstreams.
+	wl := req(t, h, "GET", "/upstreams", "")
+	require.Equal(t, http.StatusOK, wl.Code)
+	var ups []map[string]string
+	require.NoError(t, json.Unmarshal(wl.Body.Bytes(), &ups))
+	names := map[string]string{}
+	for _, u := range ups {
+		names[u["name"]] = u["kind"]
+	}
+	require.Equal(t, "k8s", names["kc-ctx-1"])
+	require.Equal(t, "k8s", names["kc-ctx-2"])
+
+	// Unlock again (idempotent) — still exactly the two clusters, no duplicates.
+	d.vault.Lock()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/unlock", `{"password":"pw"}`).Code)
+	wl2 := req(t, h, "GET", "/upstreams", "")
+	var ups2 []map[string]string
+	require.NoError(t, json.Unmarshal(wl2.Body.Bytes(), &ups2))
+	count := 0
+	for _, u := range ups2 {
+		if u["name"] == "kc-ctx-1" || u["name"] == "kc-ctx-2" {
+			count++
+		}
+	}
+	require.Equal(t, 2, count, "auto-import must be idempotent across unlocks")
+}
+
+// TestClustersImportEndpoint drives POST /clusters/import directly.
+func TestClustersImportEndpoint(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+
+	src := `
+apiVersion: v1
+kind: Config
+clusters:
+  - name: ec
+    cluster: { server: https://ec.example:6443, insecure-skip-tls-verify: true }
+users:
+  - name: u
+    user: { token: t }
+contexts:
+  - name: ep-ctx
+    context: { cluster: ec, user: u }
+`
+	kcPath := filepath.Join(t.TempDir(), "config")
+	require.NoError(t, os.WriteFile(kcPath, []byte(src), 0o600))
+	t.Setenv("KUBECONFIG", kcPath)
+
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+	w := req(t, h, "POST", "/clusters/import", "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var res struct {
+		Added   []string `json:"added"`
+		Skipped []string `json:"skipped"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	require.Contains(t, res.Added, "ep-ctx")
+
+	// Second call → skipped, nothing added.
+	w2 := req(t, h, "POST", "/clusters/import", "")
+	require.Equal(t, http.StatusOK, w2.Code)
+	var res2 struct {
+		Added   []string `json:"added"`
+		Skipped []string `json:"skipped"`
+	}
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &res2))
+	require.Contains(t, res2.Skipped, "ep-ctx")
+	require.Empty(t, res2.Added)
 }
 
 func TestAdminAccessRequests(t *testing.T) {

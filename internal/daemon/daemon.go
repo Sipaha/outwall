@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/Sipaha/outwall/internal/audit"
 	"github.com/Sipaha/outwall/internal/authn"
 	"github.com/Sipaha/outwall/internal/events"
+	"github.com/Sipaha/outwall/internal/k8s"
 	owmcp "github.com/Sipaha/outwall/internal/mcp"
 	"github.com/Sipaha/outwall/internal/mcpsvc"
 	"github.com/Sipaha/outwall/internal/policy"
@@ -60,6 +62,7 @@ type Daemon struct {
 	audit     *audit.Recorder
 	bus       *events.Bus
 	ca        *tlsca.CA
+	importer  *k8s.Importer
 	dataPlane http.Handler
 	mcp       http.Handler
 }
@@ -116,6 +119,7 @@ func New(cfg Config) (*Daemon, error) {
 	d := &Daemon{
 		cfg: cfg, store: s, vault: v, agents: ag, upstreams: up, policy: pol, access: acc,
 		approvals: appr, audit: aud, bus: bus, ca: ca,
+		importer: &k8s.Importer{Reg: up, Log: slog.Default()},
 		dataPlane: proxy.New(proxy.Deps{
 			Agents: ag, Upstreams: up, Policy: pol, Limiter: policy.NewLimiter(),
 			Approvals: appr, AuthManager: authn.NewManager(nil), Vault: v, Audit: aud,
