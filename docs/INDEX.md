@@ -56,6 +56,9 @@ Stage: alpha (pre-Plan-1).
   - [`2026-06-18-outwall-operation-access-design.md`](superpowers/specs/2026-06-18-outwall-operation-access-design.md) — operation-template + typed-variable HTTP access model (host=upstream, approve-on-request, value-set control, parse-from-request enforcement). Replaces HTTP path-glob rules.
 - `plans/` — bite-sized implementation plans.
   - Phase 1: the `2026-06-17-outwall-*` plans (foundation … wails-desktop), all shipped.
+  - Phase 3 (operation-access): [`…-opaccess-h1-engine.md`](superpowers/plans/2026-06-18-outwall-opaccess-h1-engine.md) (active),
+    [`…-opaccess-h2-mcp-approval.md`](superpowers/plans/2026-06-18-outwall-opaccess-h2-mcp-approval.md),
+    [`…-opaccess-h3-ui.md`](superpowers/plans/2026-06-18-outwall-opaccess-h3-ui.md).
   - Phase 2 (k8s): [`…-k8s-k1-read.md`](superpowers/plans/2026-06-18-outwall-k8s-k1-read.md) (active),
     [`…-k8s-k2-mutate.md`](superpowers/plans/2026-06-18-outwall-k8s-k2-mutate.md),
     [`…-k8s-k3-exec.md`](superpowers/plans/2026-06-18-outwall-k8s-k3-exec.md).

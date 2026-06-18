@@ -10,7 +10,23 @@ controlled access to Kubernetes clusters (read logs/resources, change workloads,
 same request-rights + approval + audit flow — cluster credentials never reach the agent. Design
 spec: `docs/superpowers/specs/2026-06-18-outwall-k8s-gateway-design.md`; ADR-0008/0009/0010.
 
-No active phase — pick with the user. Candidates below.
+**Active: Operation-Access model (Phase 3).** Replace HTTP path-glob policy with operation-templates
++ typed variables: the operator approves the operations an agent needs (host=upstream,
+approve-on-request, per-variable value-sets), enforced by parsing the real request. Spec:
+`docs/superpowers/specs/2026-06-18-outwall-operation-access-design.md`. Three sequential plans:
+
+- **H1 — template engine + proxy enforcement + host model** (ACTIVE). Plan:
+  `docs/superpowers/plans/2026-06-18-outwall-opaccess-h1-engine.md`. `internal/optemplate` (typed,
+  segment-bounded placeholders); operation rules (template → per-variable value policy); `Decide`
+  HTTP branch (match + value gating + new-value); proxy enforcement + value-set extend; removes the
+  path-glob HTTP rule type (no released data → no migration). ADR-0014.
+- **H2 — enriched MCP + approval entry points.** Plan: `…-opaccess-h2-mcp-approval.md`.
+  `request_host_access` + typed `request_access`; lazy host upstream + credential attach; approval
+  resolve creates/extends the operation rule + trust-any. ADR-0015.
+- **H3 — UI.** Plan: `…-opaccess-h3-ui.md`. Host/operation/new-value approval cards + Operations
+  (templates + value-sets) + Hosts screens. ADR-0016.
+
+After H1–H3: no active phase — pick with the user. Candidates below.
 
 ## Done
 
