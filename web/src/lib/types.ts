@@ -34,6 +34,27 @@ export interface Upstream {
   base_url: string
   auth_type: string
   kind?: string // "" / "http" = http upstream; "k8s" = a Kubernetes cluster
+  // k8s clusters: the cluster auth method and whether TLS verification is disabled (insecure).
+  k8s_auth?: string // token | client-cert | exec
+  k8s_insecure?: boolean // true → registered with insecure-skip-tls-verify (drives the red badge)
+}
+
+/** Cluster auth config sent on POST /api/upstreams when creating a kind=k8s cluster. */
+export interface ClusterAuthConfig {
+  type: 'none'
+  k8s_auth: 'token' | 'client-cert' | 'exec'
+  ca_bundle?: string
+  token?: string
+  client_cert?: string
+  client_key?: string
+  exec_command?: string
+  exec_args?: string[]
+}
+
+/** POST /api/clusters/import response — cluster names added / already-present. */
+export interface ClusterImportResult {
+  added: string[]
+  skipped: string[]
 }
 
 /**

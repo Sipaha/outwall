@@ -39,6 +39,12 @@ type AuthConfig struct {
 	ExecCommand string            `json:"exec_command,omitempty"` // exec auth: binary
 	ExecArgs    []string          `json:"exec_args,omitempty"`
 	ExecEnv     map[string]string `json:"exec_env,omitempty"`
+	// K8sInsecureSkipVerify disables TLS verification of the API server. SECURITY: it is set
+	// ONLY by an explicit insecure-skip-tls-verify:true in the operator's own kubeconfig (we
+	// mirror the trust decision they already made, like kubectl). Never a default, never
+	// agent-settable, never used to paper over a CA error. When a CA bundle is also present the
+	// CA wins and this stays false.
+	K8sInsecureSkipVerify bool `json:"k8s_insecure_skip_verify,omitempty"`
 }
 
 // KindHTTP and KindK8s are the upstream kinds.

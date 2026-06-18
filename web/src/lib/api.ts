@@ -3,6 +3,8 @@ import type {
   Agent,
   Upstream,
   UpstreamAuthConfig,
+  ClusterAuthConfig,
+  ClusterImportResult,
   Rule,
   Approval,
   AccessRequest,
@@ -109,6 +111,31 @@ export function createUpstream(
   auth: UpstreamAuthConfig,
 ): Promise<{ id: string }> {
   return request('POST', '/upstreams', { name, base_url: baseURL, auth })
+}
+
+export function deleteUpstream(name: string): Promise<{ ok: boolean }> {
+  return request('DELETE', `/upstreams/${encodeURIComponent(name)}`)
+}
+
+// --- Clusters (kind=k8s upstreams) ---
+
+/** Create a kind=k8s cluster. Reuses POST /upstreams with kind:"k8s". */
+export function createCluster(
+  name: string,
+  baseURL: string,
+  auth: ClusterAuthConfig,
+): Promise<{ id: string }> {
+  return request('POST', '/upstreams', { name, base_url: baseURL, kind: 'k8s', auth })
+}
+
+/** Import clusters from the host's kubeconfig(s). Returns the names added / already-present. */
+export function importClusters(): Promise<ClusterImportResult> {
+  return request('POST', '/clusters/import')
+}
+
+/** Assemble an agent kubeconfig for a cluster (agent token + the local CA). */
+export function getKubeconfig(cluster: string, token: string): Promise<{ kubeconfig: string }> {
+  return request('POST', '/kubeconfig', { cluster, token })
 }
 
 // --- Rules ---

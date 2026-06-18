@@ -22,7 +22,8 @@ export function Upstreams() {
 
   const load = useCallback(() => {
     listUpstreams()
-      .then((u) => setUpstreams(u ?? []))
+      // k8s clusters live on the dedicated Clusters screen — keep this list to http upstreams.
+      .then((u) => setUpstreams((u ?? []).filter((up) => up.kind !== 'k8s')))
       .catch((err) => {
         push('error', err instanceof ApiError ? err.message : 'Failed to load upstreams')
       })

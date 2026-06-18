@@ -92,6 +92,22 @@ func TestTransportK8sTrustsCA(t *testing.T) {
 	require.Error(t, err, "leaf from an unrelated CA must be rejected")
 }
 
+func TestTransportK8sInsecureSkipVerify(t *testing.T) {
+	mgr := NewManager(nil)
+	up := &upstream.Upstream{
+		ID:   "ins",
+		Kind: upstream.KindK8s,
+		Auth: upstream.AuthConfig{K8sAuth: "token", Token: "tok", K8sInsecureSkipVerify: true},
+	}
+	rt, err := mgr.Transport(up)
+	require.NoError(t, err)
+	tr, ok := rt.(*http.Transport)
+	require.True(t, ok)
+	require.NotNil(t, tr.TLSClientConfig)
+	require.True(t, tr.TLSClientConfig.InsecureSkipVerify, "the insecure flag must disable verification")
+	require.Nil(t, tr.TLSClientConfig.RootCAs, "no CA pool needed when verification is off")
+}
+
 func TestTransportHTTPIsNil(t *testing.T) {
 	mgr := NewManager(nil)
 	up := &upstream.Upstream{ID: "h1", Kind: upstream.KindHTTP, Auth: upstream.AuthConfig{Type: "none"}}

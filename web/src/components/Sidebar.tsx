@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router'
-import { LayoutDashboard, Server, Bot, ShieldCheck, CheckSquare, ScrollText, Settings } from 'lucide-react'
+import { LayoutDashboard, Server, Boxes, Bot, ShieldCheck, CheckSquare, ScrollText, Settings } from 'lucide-react'
 import { useEventStore } from '../lib/events'
 
 interface NavItem {
@@ -12,6 +12,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/upstreams', label: 'Upstreams', icon: Server },
+  { to: '/clusters', label: 'Clusters', icon: Boxes },
   { to: '/agents', label: 'Agents', icon: Bot },
   { to: '/rules', label: 'Rules', icon: ShieldCheck },
   { to: '/approvals', label: 'Approvals', icon: CheckSquare },

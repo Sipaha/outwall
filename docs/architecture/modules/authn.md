@@ -18,6 +18,12 @@ authenticator (same fingerprint, now including the k8s fields). The header step 
 `ExecCredential` token, bounded 30 s run, operator-only argv/env — see ADR-0008), `client-cert`
 ⇒ no header (identity rides the transport's cert).
 
+**K4 (insecure clusters).** `Transport` honors `AuthConfig.K8sInsecureSkipVerify`: when set (and
+only then, with no CA present) its `tls.Config` uses `InsecureSkipVerify:true` and skips the
+CA-pool requirement; a CA bundle, when present, always wins over the flag. The flag is set only
+from an explicit `insecure-skip-tls-verify:true` in the operator's own kubeconfig (never a
+default, never agent-settable — see ADR-0011); the importer warns and the UI badges such clusters.
+
 ## Public API
 
 - `Authenticator interface { Apply(req *http.Request) error }`

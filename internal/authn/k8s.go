@@ -14,12 +14,20 @@ import (
 // certificate (mTLS). Returns an *http.Transport so the proxy can attach it per request.
 func k8sTransport(cfg upstream.AuthConfig) (*http.Transport, error) {
 	tlsConf := &tls.Config{MinVersion: tls.VersionTLS12}
-	if cfg.CABundle != "" {
+	switch {
+	case cfg.CABundle != "":
+		// Trust the cluster's CA (the normal path). The CA always wins over the insecure flag.
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM([]byte(cfg.CABundle)) {
 			return nil, fmt.Errorf("k8s ca_bundle: no valid PEM certificates")
 		}
 		tlsConf.RootCAs = pool
+	case cfg.K8sInsecureSkipVerify:
+		// SECURITY: verification is disabled ONLY because the operator's own kubeconfig carried
+		// an explicit insecure-skip-tls-verify:true for this cluster — outwall mirrors the trust
+		// decision they already made (exactly as kubectl does), never as a default and never to
+		// paper over a CA error. The Clusters UI marks such a cluster with a red "insecure" badge.
+		tlsConf.InsecureSkipVerify = true
 	}
 	if cfg.K8sAuth == "client-cert" {
 		if cfg.ClientCert == "" || cfg.ClientKey == "" {
