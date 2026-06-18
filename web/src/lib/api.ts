@@ -6,7 +6,9 @@ import type {
   ClusterAuthConfig,
   ClusterImportResult,
   Rule,
+  ValuePolicy,
   Approval,
+  ResolveOptions,
   AccessRequest,
   AuditEntry,
   AuditDetail,
@@ -117,6 +119,15 @@ export function deleteUpstream(name: string): Promise<{ ok: boolean }> {
   return request('DELETE', `/upstreams/${encodeURIComponent(name)}`)
 }
 
+/**
+ * Set (or replace) the credential on an existing host upstream. The Hosts screen uses this to
+ * attach a credential after a host was registered lazily (or to rotate it). Secrets are
+ * write-only — they never come back on the list response.
+ */
+export function setUpstreamAuth(name: string, auth: UpstreamAuthConfig): Promise<{ ok: boolean }> {
+  return request('POST', `/upstreams/${encodeURIComponent(name)}/auth`, { auth })
+}
+
 // --- Clusters (kind=k8s upstreams) ---
 
 /** Create a kind=k8s cluster. Reuses POST /upstreams with kind:"k8s". */
@@ -167,14 +178,40 @@ export function deleteRule(id: string): Promise<{ ok: boolean }> {
   return request('DELETE', `/rules/${encodeURIComponent(id)}`)
 }
 
+/**
+ * Replace the value policy for a single variable on an existing operation rule. The Operations
+ * screen computes the new policy client-side (add a value → set + the value appended; remove → set
+ * minus the value; toggle "any" → mode "any") and posts the whole policy — one uniform endpoint for
+ * add / remove / trust-any rather than three.
+ */
+export function setRuleVariablePolicy(
+  ruleID: string,
+  varName: string,
+  policy: ValuePolicy,
+): Promise<{ ok: boolean }> {
+  return request('POST', `/rules/${encodeURIComponent(ruleID)}/value-policy`, {
+    var: varName,
+    policy,
+  })
+}
+
 // --- Approvals ---
 
 export function listApprovals(): Promise<Approval[]> {
   return request('GET', '/approvals')
 }
 
-export function resolveApproval(id: string, approve: boolean): Promise<{ ok: boolean }> {
-  return request('POST', `/approvals/${encodeURIComponent(id)}/resolve`, { approve })
+/**
+ * Resolve a pending approval. `opts` carries the host credential to attach (host-access cards) and
+ * the `trust_any` variable list (operation / new-value cards). Omitting `opts` is a plain
+ * approve/deny — the shape the data-plane / k8s cards use.
+ */
+export function resolveApproval(
+  id: string,
+  approve: boolean,
+  opts?: ResolveOptions,
+): Promise<{ ok: boolean }> {
+  return request('POST', `/approvals/${encodeURIComponent(id)}/resolve`, { approve, ...opts })
 }
 
 // --- Access requests ---
