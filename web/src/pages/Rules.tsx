@@ -5,6 +5,7 @@ import {
   listAgents,
   createRule,
   deleteRule,
+  setRuleVariablePolicy,
   ApiError,
 } from '../lib/api'
 import type { Rule, Upstream, Agent, ValuePolicy } from '../lib/types'
@@ -68,6 +69,134 @@ function parseOpValues(text: string): Record<string, ValuePolicy> {
 // k8s RBAC verbs offered in the rule editor (mirrors internal/k8s verbFor + policy.Rule.Verb).
 const K8S_VERBS = ['*', 'get', 'list', 'watch', 'create', 'update', 'patch', 'delete', 'deletecollection']
 
+// isOperationRule is true for an http operation rule (has a path-template); k8s rules carry the
+// RBAC tuple instead and live in their own section.
+function isOperationRule(r: Rule): boolean {
+  return !!r.op_path_template
+}
+
+// segmentsOf splits a path template into fixed vs `{name:type}` variable pieces so the template can
+// render variable segments visually distinct from the fixed structure.
+function segmentsOf(template: string): { text: string; variable: boolean }[] {
+  const out: { text: string; variable: boolean }[] = []
+  const re = /\{(\w+):(\w+)\}/g
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(template)) !== null) {
+    if (m.index > last) out.push({ text: template.slice(last, m.index), variable: false })
+    out.push({ text: m[0], variable: true })
+    last = m.index + m[0].length
+  }
+  if (last < template.length) out.push({ text: template.slice(last), variable: false })
+  return out
+}
+
+interface ValueSetEditorProps {
+  ruleID: string
+  varName: string
+  policy: ValuePolicy
+  onChange: () => void
+}
+
+/** Per-text-variable editor: the allowed-value chips (each removable), an add-value input, and a
+ *  "trust any value" toggle. Each action posts the whole recomputed policy via setRuleVariablePolicy. */
+function ValueSetEditor({ ruleID, varName, policy, onChange }: ValueSetEditorProps) {
+  const [draft, setDraft] = useState('')
+  const push = useToastStore((s) => s.push)
+  const isAny = policy.mode === 'any'
+  const values = policy.values ?? []
+
+  async function post(next: ValuePolicy) {
+    try {
+      await setRuleVariablePolicy(ruleID, varName, next)
+      onChange()
+    } catch (err) {
+      push('error', err instanceof ApiError ? err.message : 'Failed to update value policy')
+    }
+  }
+
+  function addValue() {
+    const v = draft.trim()
+    if (v === '') return
+    setDraft('')
+    void post({ type: 'text', mode: 'set', values: [...values, v] })
+  }
+
+  function removeValue(v: string) {
+    void post({ type: 'text', mode: 'set', values: values.filter((x) => x !== v) })
+  }
+
+  function toggleAny(any: boolean) {
+    void post(any ? { type: 'text', mode: 'any' } : { type: 'text', mode: 'set', values })
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-mono text-xs">
+          {varName}
+          <span className="ml-1 text-muted-foreground">:text</span>
+        </span>
+        <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={isAny}
+            onChange={(e) => toggleAny(e.target.checked)}
+            aria-label={`Trust any value for ${varName}`}
+          />
+          trust any value
+        </label>
+      </div>
+      {isAny ? (
+        <div className="rounded border border-warning/40 bg-warning/10 px-2 py-1 text-[11px] text-warning">
+          ⚠ Any value is allowed for {varName}.
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {values.length === 0 && (
+            <span className="text-[11px] text-muted-foreground">No values yet — none allowed.</span>
+          )}
+          {values.map((v) => (
+            <span
+              key={v}
+              className="inline-flex items-center gap-1 rounded bg-primary/15 px-1.5 py-0.5 font-mono text-[11px] text-primary"
+            >
+              {v}
+              <button
+                onClick={() => removeValue(v)}
+                aria-label={`Remove ${v} from ${varName}`}
+                className="text-primary/70 hover:text-primary"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          <input
+            className="w-40 rounded border border-border bg-muted px-2 py-0.5 text-[11px] focus:border-primary focus:outline-none"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                addValue()
+              }
+            }}
+            placeholder="add a value…"
+            aria-label={`Value to add for ${varName}`}
+          />
+          <button
+            onClick={addValue}
+            aria-label={`Add value for ${varName}`}
+            className="rounded bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+          >
+            Add
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function Rules() {
   const [rules, setRules] = useState<Rule[]>([])
   const [upstreams, setUpstreams] = useState<Upstream[]>([])
@@ -78,7 +207,8 @@ export function Rules() {
   const [confirmDelete, setConfirmDelete] = useState<Rule | null>(null)
   const push = useToastStore((s) => s.push)
 
-  const counter = useEventStore((s) => s.counters['rule.created'])
+  const counters = useEventStore((s) => s.counters)
+  const counter = (counters['rule.created'] ?? 0) + (counters['rule.updated'] ?? 0)
 
   const load = useCallback(() => {
     Promise.all([listRules(), listUpstreams(), listAgents()])
@@ -88,7 +218,7 @@ export function Rules() {
         setAgents(a ?? [])
       })
       .catch((err) => {
-        push('error', err instanceof ApiError ? err.message : 'Failed to load rules')
+        push('error', err instanceof ApiError ? err.message : 'Failed to load operations')
       })
   }, [push])
 
@@ -96,6 +226,9 @@ export function Rules() {
 
   const upstreamName = (id: string) => upstreams.find((u) => u.id === id)?.name ?? id
   const agentName = (id: string) => (id === '' ? 'any' : agents.find((a) => a.id === id)?.name ?? id)
+
+  const operationRules = rules.filter(isOperationRule)
+  const k8sRules = rules.filter((r) => !isOperationRule(r) && (r.namespace || r.resource || r.verb))
 
   // The rule editor adapts to the selected upstream: k8s clusters match on the RBAC tuple
   // (namespace/resource/verb); http upstreams are operation rules (method + path-template +
@@ -111,7 +244,7 @@ export function Rules() {
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!draft.upstream_id) {
-      push('error', 'Select an upstream')
+      push('error', 'Select a host')
       return
     }
     setBusy(true)
@@ -138,11 +271,11 @@ export function Rules() {
             rate_limit_per_min: draft.rate_limit_per_min,
           }
       await createRule(payload)
-      push('success', 'Rule created')
+      push('success', 'Operation created')
       setOpen(false)
       load()
     } catch (err) {
-      push('error', err instanceof ApiError ? err.message : 'Failed to create rule')
+      push('error', err instanceof ApiError ? err.message : 'Failed to create operation')
     } finally {
       setBusy(false)
     }
@@ -151,78 +284,164 @@ export function Rules() {
   async function remove(rule: Rule) {
     try {
       await deleteRule(rule.id)
-      push('success', 'Rule deleted')
+      push('success', 'Operation deleted')
       setConfirmDelete(null)
       load()
     } catch (err) {
-      push('error', err instanceof ApiError ? err.message : 'Failed to delete rule')
+      push('error', err instanceof ApiError ? err.message : 'Failed to delete operation')
     }
   }
 
   return (
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Rules</h1>
+        <h1 className="text-lg font-semibold">Operations</h1>
         <button
           onClick={openModal}
           className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
         >
-          Add rule
+          Add operation
         </button>
       </div>
 
-      <section className="rounded-lg border border-border bg-card">
-        <DataTable
-          rows={rules}
-          rowKey={(r) => r.id}
-          empty="No rules yet — default-deny applies"
-          columns={[
-            { header: 'Subject', cell: (r) => agentName(r.subject_agent_id) },
-            { header: 'Upstream', cell: (r) => upstreamName(r.upstream_id) },
-            {
-              header: 'Match',
-              // k8s rules show the RBAC tuple (ns/resource verb); http rules show the operation
-              // (method + path-template).
-              cell: (r) =>
-                r.namespace || r.resource || r.verb ? (
+      {/* Operation templates: each with its per-variable value-sets. */}
+      <section className="space-y-2">
+        <header className="text-xs font-semibold text-muted-foreground">Operation templates</header>
+        {operationRules.length === 0 ? (
+          <div className="rounded-lg border border-border bg-card px-3 py-6 text-center text-xs text-muted-foreground">
+            No operations yet — default-deny applies
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {operationRules.map((r) => {
+              const policies = r.op_value_policies ?? {}
+              const textVars = Object.entries(policies).filter(([, p]) => p.type === 'text')
+              const dateVars = Object.entries(policies).filter(([, p]) => p.type === 'date')
+              return (
+                <div key={r.id} className="rounded-lg border border-border bg-card p-3 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1">
+                      <div className="text-[11px] text-muted-foreground">
+                        {upstreamName(r.upstream_id)} · subject {agentName(r.subject_agent_id)}
+                      </div>
+                      <div className="font-mono text-xs">
+                        <span className="font-semibold">{(r.op_method || '*') + ' '}</span>
+                        {segmentsOf(r.op_path_template ?? '').map((s, i) => (
+                          <span
+                            key={i}
+                            className={
+                              s.variable
+                                ? 'rounded bg-primary/15 px-1 text-primary'
+                                : 'text-foreground'
+                            }
+                          >
+                            {s.text}
+                          </span>
+                        ))}
+                        {Object.entries(r.op_query_template ?? {}).map(([k, v], i) => (
+                          <span key={k}>
+                            {i === 0 ? '?' : '&'}
+                            {k}=
+                            {segmentsOf(v).map((s, j) => (
+                              <span
+                                key={j}
+                                className={
+                                  s.variable
+                                    ? 'rounded bg-primary/15 px-1 text-primary'
+                                    : 'text-foreground'
+                                }
+                              >
+                                {s.text}
+                              </span>
+                            ))}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <StatusBadge status={r.outcome} />
+                      <button
+                        onClick={() => setConfirmDelete(r)}
+                        className="rounded bg-destructive/15 px-2 py-0.5 text-[11px] font-medium text-destructive hover:bg-destructive/25"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+
+                  {textVars.length > 0 && (
+                    <div className="space-y-2 border-t border-border/60 pt-2">
+                      {textVars.map(([name, p]) => (
+                        <ValueSetEditor
+                          key={name}
+                          ruleID={r.id}
+                          varName={name}
+                          policy={p}
+                          onChange={load}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {dateVars.length > 0 && (
+                    <div className="text-[11px] text-muted-foreground">
+                      {dateVars.map(([name]) => (
+                        <span key={name} className="mr-3 font-mono">
+                          {name}:date <span className="text-muted-foreground">auto (any date)</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* k8s clusters keep their RBAC-tuple rules in a separate list. */}
+      {k8sRules.length > 0 && (
+        <section className="rounded-lg border border-border bg-card">
+          <header className="border-b border-border px-3 py-2 text-xs font-semibold text-muted-foreground">
+            Cluster (k8s) rules
+          </header>
+          <DataTable
+            rows={k8sRules}
+            rowKey={(r) => r.id}
+            empty="No cluster rules"
+            columns={[
+              { header: 'Subject', cell: (r) => agentName(r.subject_agent_id) },
+              { header: 'Cluster', cell: (r) => upstreamName(r.upstream_id) },
+              {
+                header: 'Match',
+                cell: (r) => (
                   <span className="font-mono">
                     {(r.namespace || '*') + '/' + (r.resource || '*')}{' '}
                     <span className="text-muted-foreground">{r.verb || '*'}</span>
                   </span>
-                ) : (
-                  <span className="font-mono">
-                    {(!r.op_method || r.op_method === '*' ? 'any' : r.op_method) +
-                      ' ' +
-                      (r.op_path_template ?? '')}
-                  </span>
                 ),
-            },
-            { header: 'Outcome', cell: (r) => <StatusBadge status={r.outcome} /> },
-            {
-              header: 'Rate',
-              cell: (r) => (r.rate_limit_per_min > 0 ? `${r.rate_limit_per_min}/min` : '∞'),
-              className: 'font-mono text-muted-foreground',
-            },
-            {
-              header: '',
-              cell: (r) => (
-                <div className="flex justify-end">
-                  <button
-                    onClick={() => setConfirmDelete(r)}
-                    className="rounded bg-destructive/15 px-2 py-0.5 text-[11px] font-medium text-destructive hover:bg-destructive/25"
-                  >
-                    Delete
-                  </button>
-                </div>
-              ),
-            },
-          ]}
-        />
-      </section>
+              },
+              { header: 'Outcome', cell: (r) => <StatusBadge status={r.outcome} /> },
+              {
+                header: '',
+                cell: (r) => (
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => setConfirmDelete(r)}
+                      className="rounded bg-destructive/15 px-2 py-0.5 text-[11px] font-medium text-destructive hover:bg-destructive/25"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </section>
+      )}
 
       <Modal
         open={open}
-        title="Add rule"
+        title="Add operation"
         onClose={() => setOpen(false)}
         onSubmit={submit}
         footer={
@@ -254,7 +473,7 @@ export function Rules() {
             ]}
           />
         </FormField>
-        <FormField label="Upstream">
+        <FormField label="Host">
           <Select
             value={draft.upstream_id}
             onChange={(v) => setDraft({ ...draft, upstream_id: v })}
@@ -346,7 +565,7 @@ export function Rules() {
 
       <Modal
         open={confirmDelete !== null}
-        title="Delete rule"
+        title="Delete operation"
         onClose={() => setConfirmDelete(null)}
         width="sm"
         footer={
@@ -369,7 +588,7 @@ export function Rules() {
         }
       >
         <p className="text-sm">
-          Delete this rule? Removing it falls back to default-deny for matching requests.
+          Delete this operation? Removing it falls back to default-deny for matching requests.
         </p>
       </Modal>
     </div>

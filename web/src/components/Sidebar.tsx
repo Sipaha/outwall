@@ -11,10 +11,10 @@ interface NavItem {
 // Only Dashboard is wired in 6A; the rest are routes Plan 6B fills.
 const NAV: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/upstreams', label: 'Upstreams', icon: Server },
+  { to: '/upstreams', label: 'Hosts', icon: Server },
   { to: '/clusters', label: 'Clusters', icon: Boxes },
   { to: '/agents', label: 'Agents', icon: Bot },
-  { to: '/rules', label: 'Rules', icon: ShieldCheck },
+  { to: '/rules', label: 'Operations', icon: ShieldCheck },
   { to: '/approvals', label: 'Approvals', icon: CheckSquare },
   { to: '/audit', label: 'Audit', icon: ScrollText },
   { to: '/settings', label: 'Settings', icon: Settings },

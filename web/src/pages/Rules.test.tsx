@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react'
 import { Rules } from './Rules'
 import * as api from '../lib/api'
 
@@ -8,44 +8,119 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('<Rules>', () => {
-  it('resolves agent and upstream names for rows', async () => {
-    vi.spyOn(api, 'listRules').mockResolvedValue([
-      {
-        id: 'r1',
-        subject_agent_id: 'a1',
-        upstream_id: 'u1',
-        op_method: 'GET',
-        op_path_template: '/repos/{repo:text}',
-        outcome: 'allow',
-        rate_limit_per_min: 0,
-      },
-    ])
-    vi.spyOn(api, 'listUpstreams').mockResolvedValue([
-      { id: 'u1', name: 'github', base_url: 'https://api.github.com', auth_type: 'none' },
-    ])
-    vi.spyOn(api, 'listAgents').mockResolvedValue([{ id: 'a1', name: 'claude', status: 'active' }])
+const githubUpstream = {
+  id: 'u1',
+  name: 'github',
+  base_url: 'https://api.github.com',
+  auth_type: 'none',
+}
+
+function operationRule() {
+  return {
+    id: 'r1',
+    subject_agent_id: '',
+    upstream_id: 'u1',
+    op_method: 'GET',
+    op_path_template: '/api/v4/projects/{project_path:text}/pipelines',
+    op_query_template: { updated_after: '{since:date}' },
+    op_value_policies: {
+      project_path: { type: 'text', mode: 'set', values: ['infra/helm'] },
+      since: { type: 'date', mode: 'any' },
+    },
+    outcome: 'allow',
+    rate_limit_per_min: 0,
+  }
+}
+
+describe('<Operations> (Rules.tsx)', () => {
+  it('renders an operation template with its per-variable value-set', async () => {
+    vi.spyOn(api, 'listRules').mockResolvedValue([operationRule()])
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([githubUpstream])
+    vi.spyOn(api, 'listAgents').mockResolvedValue([])
 
     render(<Rules />)
 
-    // Names are resolved into table cells (the closed add-modal also lists them as <option>s).
-    expect(await screen.findByRole('cell', { name: 'claude' })).toBeInTheDocument()
-    expect(screen.getByRole('cell', { name: 'github' })).toBeInTheDocument()
-    expect(screen.getByText('∞')).toBeInTheDocument()
+    // The host and the template are shown (the template renders fixed vs variable segments, so the
+    // variable placeholder and a fixed piece each appear as their own node).
+    expect(await screen.findByText('github')).toBeInTheDocument()
+    expect(screen.getByText('{project_path:text}')).toBeInTheDocument()
+    expect(screen.getByText(/\/api\/v4\/projects\//)).toBeInTheDocument()
+    // The text variable's allowed value is a chip; the date var is shown as auto.
+    expect(screen.getByText('infra/helm')).toBeInTheDocument()
+    expect(screen.getByText(/auto/i)).toBeInTheDocument()
   })
 
-  it('submits createRule from the add-rule modal', async () => {
+  it('adds a value to a text variable (posts the grown set)', async () => {
+    vi.spyOn(api, 'listRules').mockResolvedValue([operationRule()])
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([githubUpstream])
+    vi.spyOn(api, 'listAgents').mockResolvedValue([])
+    const setSpy = vi.spyOn(api, 'setRuleVariablePolicy').mockResolvedValue({ ok: true })
+
+    render(<Rules />)
+    await screen.findByText('infra/helm')
+
+    fireEvent.change(screen.getByLabelText('Value to add for project_path'), {
+      target: { value: 'infra/charts' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add value for project_path' }))
+
+    await waitFor(() =>
+      expect(setSpy).toHaveBeenCalledWith('r1', 'project_path', {
+        type: 'text',
+        mode: 'set',
+        values: ['infra/helm', 'infra/charts'],
+      }),
+    )
+  })
+
+  it('removes a value from a text variable (posts the trimmed set)', async () => {
+    const rule = operationRule()
+    rule.op_value_policies.project_path.values = ['infra/helm', 'infra/charts']
+    vi.spyOn(api, 'listRules').mockResolvedValue([rule])
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([githubUpstream])
+    vi.spyOn(api, 'listAgents').mockResolvedValue([])
+    const setSpy = vi.spyOn(api, 'setRuleVariablePolicy').mockResolvedValue({ ok: true })
+
+    render(<Rules />)
+    await screen.findByText('infra/helm')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove infra/helm from project_path' }))
+
+    await waitFor(() =>
+      expect(setSpy).toHaveBeenCalledWith('r1', 'project_path', {
+        type: 'text',
+        mode: 'set',
+        values: ['infra/charts'],
+      }),
+    )
+  })
+
+  it('toggles a text variable to "any" (posts mode any)', async () => {
+    vi.spyOn(api, 'listRules').mockResolvedValue([operationRule()])
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([githubUpstream])
+    vi.spyOn(api, 'listAgents').mockResolvedValue([])
+    const setSpy = vi.spyOn(api, 'setRuleVariablePolicy').mockResolvedValue({ ok: true })
+
+    render(<Rules />)
+    await screen.findByText('infra/helm')
+
+    fireEvent.click(screen.getByLabelText('Trust any value for project_path'))
+
+    await waitFor(() =>
+      expect(setSpy).toHaveBeenCalledWith('r1', 'project_path', { type: 'text', mode: 'any' }),
+    )
+  })
+
+  it('submits createRule from the add-operation modal', async () => {
     vi.spyOn(api, 'listRules').mockResolvedValue([])
-    vi.spyOn(api, 'listUpstreams').mockResolvedValue([
-      { id: 'u1', name: 'github', base_url: 'https://api.github.com', auth_type: 'none' },
-    ])
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([githubUpstream])
     vi.spyOn(api, 'listAgents').mockResolvedValue([])
     const createSpy = vi.spyOn(api, 'createRule').mockResolvedValue({ id: 'new' })
 
     render(<Rules />)
-    await screen.findByText('No rules yet — default-deny applies')
+    await screen.findByText('No operations yet — default-deny applies')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add rule' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add operation' }))
     fireEvent.click(screen.getByRole('button', { name: 'Create' }))
 
     await waitFor(() =>
@@ -70,11 +145,10 @@ describe('<Rules>', () => {
     const createSpy = vi.spyOn(api, 'createRule').mockResolvedValue({ id: 'new' })
 
     render(<Rules />)
-    await screen.findByText('No rules yet — default-deny applies')
+    await screen.findByText('No operations yet — default-deny applies')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add rule' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add operation' }))
 
-    // k8s fields are present; the http-only path glob field is hidden.
     const ns = await screen.findByLabelText('Namespace')
     fireEvent.change(ns, { target: { value: 'prod' } })
     fireEvent.change(screen.getByLabelText('Resource'), { target: { value: 'deployments' } })
@@ -94,5 +168,30 @@ describe('<Rules>', () => {
         }),
       ),
     )
+  })
+
+  it('keeps k8s rules in a separate tuple list (not the operations editor)', async () => {
+    vi.spyOn(api, 'listRules').mockResolvedValue([
+      {
+        id: 'k1',
+        subject_agent_id: '',
+        upstream_id: 'c1',
+        outcome: 'allow',
+        rate_limit_per_min: 0,
+        namespace: 'prod',
+        resource: 'deployments',
+        verb: 'patch',
+      },
+    ])
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([
+      { id: 'c1', name: 'prod-cluster', base_url: 'https://k8s', auth_type: 'none', kind: 'k8s' },
+    ])
+    vi.spyOn(api, 'listAgents').mockResolvedValue([])
+
+    render(<Rules />)
+
+    const k8sSection = (await screen.findByText('Cluster (k8s) rules')).closest('section')!
+    expect(within(k8sSection).getByText('prod-cluster')).toBeInTheDocument()
+    expect(within(k8sSection).getByText('patch')).toBeInTheDocument()
   })
 })
