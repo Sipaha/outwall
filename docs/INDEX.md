@@ -53,6 +53,7 @@ Stage: alpha (pre-Plan-1).
 - `specs/` — brainstormed design specs.
   - [`2026-06-17-outwall-design.md`](superpowers/specs/2026-06-17-outwall-design.md) — Phase 1 (HTTP egress gateway).
   - [`2026-06-18-outwall-k8s-gateway-design.md`](superpowers/specs/2026-06-18-outwall-k8s-gateway-design.md) — Kubernetes gateway (cluster targets, namespace-scoped policy, exec auth, kubeconfig, streaming/exec).
+  - [`2026-06-18-outwall-operation-access-design.md`](superpowers/specs/2026-06-18-outwall-operation-access-design.md) — operation-template + typed-variable HTTP access model (host=upstream, approve-on-request, value-set control, parse-from-request enforcement). Replaces HTTP path-glob rules.
 - `plans/` — bite-sized implementation plans.
   - Phase 1: the `2026-06-17-outwall-*` plans (foundation … wails-desktop), all shipped.
   - Phase 2 (k8s): [`…-k8s-k1-read.md`](superpowers/plans/2026-06-18-outwall-k8s-k1-read.md) (active),
