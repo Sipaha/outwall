@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"log"
 	"log/slog"
 	"os"
@@ -58,13 +59,39 @@ func run() error {
 		return err
 	}
 
+	socketPath := filepath.Join(dir, "outwall.sock")
+
+	// Single-instance gate (ADR-0013): flock FIRST, before the daemon binds any port or the
+	// unix socket. A second launch finds the lock held, posts POST /desktop/focus to the
+	// running instance over its admin socket, and — if answered — exits 0 (the running window
+	// was raised). A stale lock with no live daemon surfaces as a hard error instead.
+	lock, err := desktop.AcquireInstanceLock(filepath.Join(dir, "desktop.lock"), socketPath)
+	if errors.Is(err, desktop.ErrFocusedExisting) {
+		os.Exit(0)
+	}
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+
+	// mainWindow is captured below from NewWithOptions; raiseToFront (focus.go) brings it to
+	// the foreground. The OnFocusRequest callback marshals the call onto the Wails UI thread
+	// via application.InvokeAsync — calling Wails window methods off-thread deadlocks GTK.
+	var mainWindow application.Window
+	raiseToFront := func() {
+		if mainWindow != nil {
+			raiseWindow(mainWindow)
+		}
+	}
+
 	// Start the in-process daemon and wait for the UI bind to answer.
 	h, err := desktop.Run(daemon.Config{
-		DBPath:     filepath.Join(dir, "outwall.db"),
-		SocketPath: filepath.Join(dir, "outwall.sock"),
-		Listen:     dataListen,
-		UIListen:   uiListen,
-		MCPListen:  mcpListen,
+		DBPath:         filepath.Join(dir, "outwall.db"),
+		SocketPath:     socketPath,
+		Listen:         dataListen,
+		UIListen:       uiListen,
+		MCPListen:      mcpListen,
+		OnFocusRequest: func() { application.InvokeAsync(raiseToFront) },
 	})
 	if err != nil {
 		return err
@@ -96,7 +123,7 @@ func run() error {
 	// The resolved Wails v3 (alpha2.103) WebviewWindowOptions has a `URL` field,
 	// so the webview loads the local daemon UI directly over loopback — no
 	// reverse-proxy asset handler is needed (see ADR-0007).
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
+	mainWindow = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:            "main",
 		Title:           "outwall",
 		URL:             h.UIURL,
