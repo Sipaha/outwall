@@ -10,7 +10,14 @@ controlled access to Kubernetes clusters (read logs/resources, change workloads,
 same request-rights + approval + audit flow — cluster credentials never reach the agent. Design
 spec: `docs/superpowers/specs/2026-06-18-outwall-k8s-gateway-design.md`; ADR-0008/0009/0010.
 
-No active phase — pick with the user. Candidates below.
+**Active: Plan K5 — kubeconfig import fixes** (found in real use). Three root causes: the import
+response encodes empty lists as JSON `null` → the UI's `res.added.length` throws → false "Failed to
+import clusters" toast (import actually succeeds); auto-import reads only `~/.kube/config` so only 1 of
+the user's clusters (spread across `~/.kube/*.yaml|*.conf`) is pulled; the "Import from kubeconfig"
+button should be a **file picker**, not a fixed-path rescan. Plan:
+`docs/superpowers/plans/2026-06-18-outwall-k8s-k5-import-fixes.md`. ADR-0012.
+
+After K5: no active phase — pick with the user. Candidates below.
 
 ## Done
 
