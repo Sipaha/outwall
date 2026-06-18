@@ -10,17 +10,24 @@ controlled access to Kubernetes clusters (read logs/resources, change workloads,
 same request-rights + approval + audit flow — cluster credentials never reach the agent. Design
 spec: `docs/superpowers/specs/2026-06-18-outwall-k8s-gateway-design.md`; ADR-0008/0009/0010.
 
-**Active: Operation-Access model (Phase 3).** Replace HTTP path-glob policy with operation-templates
-+ typed variables: the operator approves the operations an agent needs (host=upstream,
-approve-on-request, per-variable value-sets), enforced by parsing the real request. Spec:
-`docs/superpowers/specs/2026-06-18-outwall-operation-access-design.md`. Three sequential plans:
+**Operation-Access model (Phase 3): COMPLETE.** All three plans (H1 engine, H2 MCP+approval, H3 UI)
+shipped, merged, pushed. The operator now controls agent HTTP egress by approving the operations an
+agent needs (host=upstream, approve-on-request, typed-variable value-sets), enforced by parsing the
+real request. Spec: `docs/superpowers/specs/2026-06-18-outwall-operation-access-design.md`;
+ADR-0014/0015/0016.
 
-- **H3 — UI** (ACTIVE). Plan: `…-opaccess-h3-ui.md`. Host/operation/new-value approval cards +
-  Operations (templates + value-sets) + Hosts screens. ADR-0016. Last opaccess milestone.
-
-After H1–H3: no active phase — pick with the user. Candidates below.
+No active phase — pick with the user. Candidates below.
 
 ## Done
+
+- **Plan H3 — operation-access UI (Phase 3).** Approval cards: **host** (with a credential field),
+  **operation** (fixed-vs-`{var:type}` segments, a concrete **example URL**, per-text-variable
+  trust-any checkbox, a broad-placeholder **warning**), **new-value**. An **Operations** screen
+  (templates + per-variable value-sets: add/remove value, trust-any toggle, date shown auto) and a
+  **Hosts** screen (credential status, set/replace, remove). Two new CGO-free endpoints:
+  `POST /upstreams/{name}/auth` and `POST /rules/{id}/value-policy` (`SetVariablePolicy` preserves the
+  declared type, rejects unknown vars). All green (`-race`, web 28 tests + lint, CGO-free + desktop
+  builds). No new dep. ADR-0016.
 
 - **Plan H2 — enriched MCP + approval entry points (Phase 3).** `upstream.GetOrCreateByHost` (lazy
   credential-less host upstream + operator credential attach on host approval). MCP

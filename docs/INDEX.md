@@ -40,6 +40,7 @@ Stage: alpha (pre-Plan-1).
   - [`0013-desktop-single-instance.md`](architecture/decisions/0013-desktop-single-instance.md) — single desktop instance via a flock lock + focus hand-off over the unix admin socket (POST /desktop/focus); gate before port-bind; Linux/GTK focus-stealing workaround. Launcher pattern, not Wails-native.
   - [`0014-operation-access-engine.md`](architecture/decisions/0014-operation-access-engine.md) — HTTP policy = operation templates with typed segment-bounded variables; enforce by parsing the real request + per-variable value-sets; new-value approval extends the set; replaces path-glob (no migration).
   - [`0015-operation-access-mcp-approval.md`](architecture/decisions/0015-operation-access-mcp-approval.md) — lazy host upstream + credential attach; MCP request_host_access + typed request_access (non-blocking, poll get_access); approval resolve creates/extends the operation rule + trust-any.
+  - [`0016-operation-access-ui.md`](architecture/decisions/0016-operation-access-ui.md) — host/operation/new-value approval cards (example URL, trust-any, broad-placeholder warning); Operations + Hosts screens; POST /upstreams/{name}/auth + /rules/{id}/value-policy.
 - `modules/` — per-package API docs: `secret`, `store`, `upstream`, `agent`, `authn`,
   `policy`, `approval`, `access`, `mcpsvc`, `mcp`, `audit`, `events`, `proxy`, `daemon`, `client`, `cli`, `version`, `k8s`, `tlsca`, plus `webui` (the `web/` app).
 
