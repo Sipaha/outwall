@@ -16,7 +16,13 @@ agent needs (host=upstream, approve-on-request, typed-variable value-sets), enfo
 real request. Spec: `docs/superpowers/specs/2026-06-18-outwall-operation-access-design.md`;
 ADR-0014/0015/0016.
 
-No active phase — pick with the user. Candidates below.
+**Phase 4 — Feature expansion: ACTIVE.** Shipping the queued candidate features in two waves.
+Wave 1 (parallel, independent packages): **P1** number/enum variable types (optemplate/policy/mcp/UI);
+**P2** operational hardening (audit auto-prune + `vault --password-stdin` + documented headless mode);
+**P3** additional upstream auth schemes (mTLS / AWS SigV4 / HMAC). Wave 2 (after Wave 1 merges):
+**P4** request-body variables (parse typed vars out of the JSON request body, builds on P1's type
+system); **P5** OIDC authorization-code / browser login (builds on P3's authn surface). ADRs
+0017 (P1), 0018 (P2), 0019 (P3), 0020 (P4), 0021 (P5).
 
 ## Done
 
