@@ -15,12 +15,7 @@ spec: `docs/superpowers/specs/2026-06-18-outwall-k8s-gateway-design.md`; ADR-000
 approve-on-request, per-variable value-sets), enforced by parsing the real request. Spec:
 `docs/superpowers/specs/2026-06-18-outwall-operation-access-design.md`. Three sequential plans:
 
-- **H1 — template engine + proxy enforcement + host model** (ACTIVE). Plan:
-  `docs/superpowers/plans/2026-06-18-outwall-opaccess-h1-engine.md`. `internal/optemplate` (typed,
-  segment-bounded placeholders); operation rules (template → per-variable value policy); `Decide`
-  HTTP branch (match + value gating + new-value); proxy enforcement + value-set extend; removes the
-  path-glob HTTP rule type (no released data → no migration). ADR-0014.
-- **H2 — enriched MCP + approval entry points.** Plan: `…-opaccess-h2-mcp-approval.md`.
+- **H2 — enriched MCP + approval entry points** (ACTIVE). Plan: `…-opaccess-h2-mcp-approval.md`.
   `request_host_access` + typed `request_access`; lazy host upstream + credential attach; approval
   resolve creates/extends the operation rule + trust-any. ADR-0015.
 - **H3 — UI.** Plan: `…-opaccess-h3-ui.md`. Host/operation/new-value approval cards + Operations
@@ -29,6 +24,17 @@ approve-on-request, per-variable value-sets), enforced by parsing the real reque
 After H1–H3: no active phase — pick with the user. Candidates below.
 
 ## Done
+
+- **Plan H1 — operation-template engine + proxy enforcement (Phase 3).** `internal/optemplate`:
+  typed, segment-bounded `{name:type}` placeholders; parse/match/extract variable values **from the
+  real request** (`%2F` preserved in one segment, no over-capture, undeclared-query denial + exempt
+  pagination, `date` validation). Operation rules (`template → per-variable value policy`:
+  text-set/`any`, date-`any`) replace the HTTP path-glob rule type (no released data → `rules` schema
+  reset, no migration; `audit_log` gained `operation`/`vars_json`). `policy.Decide` HTTP branch =
+  match + value gating + `NewValues`; the proxy denies unknown templates, proxies allowed ones
+  (injecting the host credential), and on a new `text` value require-approves → approve **extends the
+  value-set** → request proceeds. k8s plane untouched. All green (`-race`, web 19 tests, CGO-free
+  build). ADR-0014.
 
 - **Plan K6 — desktop single-instance + focus-existing.** Only one desktop app runs at a time; a
   second launch foregrounds the running window and exits 0. Pattern mirrors citeck-launcher (chosen

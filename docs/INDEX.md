@@ -38,6 +38,7 @@ Stage: alpha (pre-Plan-1).
   - [`0011-k8s-clusters-ui-kubeconfig-import.md`](architecture/decisions/0011-k8s-clusters-ui-kubeconfig-import.md) — Clusters UI; yaml.v3 kubeconfig parser + idempotent import on unlock; color-scheme:dark form controls; insecure-skip-tls-verify mirrored from the operator kubeconfig (CA wins, warned).
   - [`0012-kubeconfig-import-scan-and-upload.md`](architecture/decisions/0012-kubeconfig-import-scan-and-upload.md) — import lists non-nil ([] not null); auto-import scans all ~/.kube files; file-picker upload (ImportContent); non-kubeconfig skipped on scan / 400 on upload.
   - [`0013-desktop-single-instance.md`](architecture/decisions/0013-desktop-single-instance.md) — single desktop instance via a flock lock + focus hand-off over the unix admin socket (POST /desktop/focus); gate before port-bind; Linux/GTK focus-stealing workaround. Launcher pattern, not Wails-native.
+  - [`0014-operation-access-engine.md`](architecture/decisions/0014-operation-access-engine.md) — HTTP policy = operation templates with typed segment-bounded variables; enforce by parsing the real request + per-variable value-sets; new-value approval extends the set; replaces path-glob (no migration).
 - `modules/` — per-package API docs: `secret`, `store`, `upstream`, `agent`, `authn`,
   `policy`, `approval`, `access`, `mcpsvc`, `mcp`, `audit`, `events`, `proxy`, `daemon`, `client`, `cli`, `version`, `k8s`, `tlsca`, plus `webui` (the `web/` app).
 
