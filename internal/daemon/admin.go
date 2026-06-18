@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -180,10 +181,29 @@ func (d *Daemon) hUpstreamDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// hClustersImport runs the kubeconfig importer over the host's discovered kubeconfig paths and
-// returns the cluster names added/skipped. It requires the vault unlocked (Create encrypts).
-func (d *Daemon) hClustersImport(w http.ResponseWriter, _ *http.Request) {
-	added, skipped, err := d.importer.Import(k8s.DiscoverKubeconfigPaths())
+// maxImportBody caps an uploaded kubeconfig at 1 MiB — far above any real kubeconfig, small
+// enough to reject a runaway upload.
+const maxImportBody = 1 << 20
+
+// hClustersImport imports clusters. When the request carries a body it is treated as an uploaded
+// kubeconfig (the file-picker path) and imported via ImportContent; otherwise it auto-discovers
+// and scans the host's kubeconfig files. Either way it returns the (non-nil) names added/skipped.
+// It requires the vault unlocked (Create encrypts).
+func (d *Daemon) hClustersImport(w http.ResponseWriter, r *http.Request) {
+	body, readErr := io.ReadAll(io.LimitReader(r.Body, maxImportBody))
+	if readErr != nil {
+		adminErr(w, http.StatusBadRequest, "read request body")
+		return
+	}
+
+	var added, skipped []string
+	var err error
+	if len(body) > 0 {
+		// Operator-uploaded kubeconfig: no baseDir (managed configs use inline *-data).
+		added, skipped, err = d.importer.ImportContent(body, "")
+	} else {
+		added, skipped, err = d.importer.Import(k8s.DiscoverKubeconfigPaths())
+	}
 	if err != nil {
 		adminErr(w, http.StatusBadRequest, err.Error())
 		return

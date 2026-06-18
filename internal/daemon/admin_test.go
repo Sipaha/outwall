@@ -21,9 +21,11 @@ import (
 
 func newDaemon(t *testing.T) *Daemon {
 	t.Helper()
-	// Point kubeconfig discovery at a nonexistent path so the unlock auto-import is a
-	// deterministic no-op — tests must not read (or import) the host's real ~/.kube/config.
-	// Tests that exercise auto-import override KUBECONFIG with their own temp file afterward.
+	// Isolate kubeconfig discovery from the host so auto-import is a deterministic no-op: an
+	// empty $HOME means <home>/.kube does not exist (discovery now scans that whole dir), and
+	// $KUBECONFIG points at a nonexistent file. Tests that exercise auto-import override
+	// KUBECONFIG with their own temp file afterward.
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "no-kubeconfig"))
 	d, err := New(Config{
 		DBPath:     filepath.Join(t.TempDir(), "d.db"),
@@ -349,6 +351,45 @@ contexts:
 	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &res2))
 	require.Contains(t, res2.Skipped, "ep-ctx")
 	require.Empty(t, res2.Added)
+
+	// The all-skipped response must encode `added` as an empty JSON array, never `null`:
+	// a nil Go slice serializes to null, and the UI's res.added.length throws on null,
+	// firing a false "Failed to import" toast even though the import succeeded (HTTP 200).
+	require.JSONEq(t, `{"added":[],"skipped":["ep-ctx"]}`, w2.Body.String())
+}
+
+// TestClustersImportFromBody drives POST /clusters/import with an uploaded kubeconfig body (the
+// file-picker path): the cluster in the body registers, and the body takes precedence over the
+// auto-scan.
+func TestClustersImportFromBody(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	body := `
+apiVersion: v1
+kind: Config
+clusters: [{ name: bc, cluster: { server: https://bc.example:6443, insecure-skip-tls-verify: true } }]
+users: [{ name: bu, user: { token: bt } }]
+contexts: [{ name: body-ctx, context: { cluster: bc, user: bu } }]
+`
+	w := req(t, h, "POST", "/clusters/import", body)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var res struct {
+		Added   []string `json:"added"`
+		Skipped []string `json:"skipped"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	require.Equal(t, []string{"body-ctx"}, res.Added)
+
+	// The cluster is now registered.
+	wl := req(t, h, "GET", "/upstreams", "")
+	require.Equal(t, http.StatusOK, wl.Code)
+	require.Contains(t, wl.Body.String(), "body-ctx")
+
+	// A junk body is a 400 (the operator explicitly uploaded a bad file).
+	wbad := req(t, h, "POST", "/clusters/import", "not a kubeconfig: [")
+	require.Equal(t, http.StatusBadRequest, wbad.Code)
 }
 
 func TestAdminAccessRequests(t *testing.T) {

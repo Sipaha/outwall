@@ -133,6 +133,21 @@ export function importClusters(): Promise<ClusterImportResult> {
   return request('POST', '/clusters/import')
 }
 
+/**
+ * Import clusters from an operator-uploaded kubeconfig (the file-picker path). The raw YAML is
+ * the request body — the daemon imports it via ImportContent when the body is non-empty.
+ */
+export async function importKubeconfigContent(content: string): Promise<ClusterImportResult> {
+  const res = await fetchWithTimeout(API_BASE + '/clusters/import', {
+    method: 'POST',
+    headers: { ...CSRF_HEADER, 'Content-Type': 'application/yaml' },
+    body: content,
+  })
+  if (!res.ok) throw await extractApiError(res)
+  const text = await res.text()
+  return (text ? JSON.parse(text) : { added: [], skipped: [] }) as ClusterImportResult
+}
+
 /** Assemble an agent kubeconfig for a cluster (agent token + the local CA). */
 export function getKubeconfig(cluster: string, token: string): Promise<{ kubeconfig: string }> {
   return request('POST', '/kubeconfig', { cluster, token })

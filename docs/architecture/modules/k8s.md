@@ -28,14 +28,25 @@ Kubernetes-specific helpers, with no dependency on `k8s.io/client-go`.
   `tokenFile`) relative to `baseDir`. Unsupported/empty contexts are skipped with a warning, never
   a whole-file error; a YAML parse failure is a real error. Parsed with `gopkg.in/yaml.v3` — **no
   `k8s.io/client-go`**. `cluster.insecure-skip-tls-verify: true` sets `K8sInsecureSkipVerify`, but
-  only when no CA is present (the CA always wins). `DiscoverKubeconfigPaths()` returns `$KUBECONFIG`
-  (split on the OS list separator) else `<home>/.kube/config`.
-- **Importer (K4)** — `Importer{Reg, Log}.Import(paths)` reads each existing path, parses it, and
+  only when no CA is present (the CA always wins). `DiscoverKubeconfigPaths()` returns the
+  `$KUBECONFIG` entries (when set) **plus every regular file directly under `<home>/.kube/`**
+  (subdirs like `cache`/`http-cache` skipped), de-duplicated — a deliberate divergence from
+  kubectl's `$KUBECONFIG`-only precedence so the operator's clusters spread across sibling files
+  (the way Lens aggregates them) all import (K5, ADR-0012). The testable seam is
+  `discoverKubeconfigPathsIn(kubeDir, kubeconfigEnv)`.
+- **Importer (K4/K5)** — `Importer{Reg, Log}.Import(paths)` reads each existing path, parses it, and
   `CreateKind`s every context whose name is not already an upstream (idempotent skip-existing).
-  Needs the vault unlocked (Create encrypts) — a locked vault yields a wrapped `secret.ErrLocked`.
-  Missing paths are skipped. Returns `(added, skipped []string, err)`. It `slog.Warn`s loudly when
+  A discovered file that is **not** a kubeconfig (junk in `~/.kube`) is skipped with a `slog.Warn`,
+  never fatal. Needs the vault unlocked (Create encrypts) — a locked vault yields a wrapped
+  `secret.ErrLocked`. Missing paths are skipped. Returns non-nil `(added, skipped []string, err)`
+  (a nil slice would JSON-encode to `null` and break the UI toast). It `slog.Warn`s loudly when
   registering a cluster whose kubeconfig disabled TLS verification (see ADR-0011). The daemon runs
   it best-effort on vault unlock and via `POST /clusters/import`.
+- **`ImportContent` (K5)** — `Importer.ImportContent(data, baseDir)` parses one operator-uploaded
+  kubeconfig document (the Clusters file-picker) and registers its contexts idempotently. Unlike
+  the auto-scan, a non-kubeconfig upload is a **real error** (the operator explicitly chose the
+  file). `POST /clusters/import` with a non-empty request body imports it; an empty body
+  auto-discovers and scans. Shares the idempotent core with `Import` (see ADR-0012).
 
 ## Public API
 
@@ -48,3 +59,4 @@ Kubernetes-specific helpers, with no dependency on `k8s.io/client-go`.
 - `ParseKubeconfig(data []byte, baseDir string) (clusters []ParsedCluster, warnings []string, err error)`
 - `type Importer struct { Reg *upstream.Registry; Log *slog.Logger }`
 - `(*Importer).Import(paths []string) (added, skipped []string, err error)`
+- `(*Importer).ImportContent(data []byte, baseDir string) (added, skipped []string, err error)`

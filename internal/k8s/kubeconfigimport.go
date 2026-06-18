@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"gopkg.in/yaml.v3"
 
@@ -18,17 +19,61 @@ type ParsedCluster struct {
 	Auth   upstream.AuthConfig // K8sAuth=token|client-cert|exec (+ CABundle / insecure)
 }
 
-// DiscoverKubeconfigPaths returns the kubeconfig files to read: $KUBECONFIG (split on the OS
-// path-list separator) when set, else <home>/.kube/config. The caller skips missing files.
+// DiscoverKubeconfigPaths returns every kubeconfig file to read: the $KUBECONFIG entries (when
+// set) PLUS every regular file directly under <home>/.kube/, de-duplicated. Unlike kubectl —
+// which uses ONLY $KUBECONFIG when it is set — outwall additionally scans ~/.kube so the
+// operator's clusters in sibling files (the way Lens aggregates them) are all imported; this is a
+// deliberate divergence (see ADR-0012). The Importer skips a discovered file that is not a
+// kubeconfig (and missing files), so the extra paths are harmless.
 func DiscoverKubeconfigPaths() []string {
-	if env := os.Getenv("KUBECONFIG"); env != "" {
-		return filepath.SplitList(env)
-	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return nil
+		// No home → fall back to whatever $KUBECONFIG names (possibly none).
+		return discoverKubeconfigPathsIn("", os.Getenv("KUBECONFIG"))
 	}
-	return []string{filepath.Join(home, ".kube", "config")}
+	return discoverKubeconfigPathsIn(filepath.Join(home, ".kube"), os.Getenv("KUBECONFIG"))
+}
+
+// discoverKubeconfigPathsIn returns the $KUBECONFIG entries (from kubeconfigEnv, split on the OS
+// path-list separator; may be empty) followed by every regular file directly under kubeDir
+// (subdirectories like cache/ and http-cache/ are skipped), de-duplicated, in a stable order
+// (env entries first, then the dir files sorted by name). A missing/unreadable kubeDir yields
+// just the env entries. Exposed (lowercase) for tests; DiscoverKubeconfigPaths supplies the real
+// <home>/.kube and env.
+func discoverKubeconfigPathsIn(kubeDir, kubeconfigEnv string) []string {
+	var paths []string
+	seen := map[string]struct{}{}
+	add := func(p string) {
+		if p == "" {
+			return
+		}
+		if _, ok := seen[p]; ok {
+			return
+		}
+		seen[p] = struct{}{}
+		paths = append(paths, p)
+	}
+
+	for _, p := range filepath.SplitList(kubeconfigEnv) {
+		add(p)
+	}
+
+	if kubeDir != "" {
+		if entries, err := os.ReadDir(kubeDir); err == nil {
+			names := make([]string, 0, len(entries))
+			for _, e := range entries {
+				if e.IsDir() {
+					continue // skip cache/, http-cache/, …
+				}
+				names = append(names, e.Name())
+			}
+			sort.Strings(names)
+			for _, n := range names {
+				add(filepath.Join(kubeDir, n))
+			}
+		}
+	}
+	return paths
 }
 
 // --- minimal kubeconfig schema (only the fields we consume) ---
