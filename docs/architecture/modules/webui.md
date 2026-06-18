@@ -48,11 +48,14 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
   - `Upstreams` — `listUpstreams` (filtered to `kind!=="k8s"` — clusters live on Clusters) table +
     "Add upstream" modal whose auth form switches conditional fields by `<Select>` type
     (none/static/basic/oidc-client-credentials); `createUpstream`. Refetch on `upstream.created`.
-  - `Clusters` (K4) — lists kind=k8s upstreams (name + red **"insecure"** badge when
+  - `Clusters` (K4/K5) — lists kind=k8s upstreams (name + red **"insecure"** badge when
     `k8s_insecure`, API URL, auth type). "Add cluster" modal (token/client-cert/exec → `createCluster`
-    with `kind:"k8s"`); "Import from kubeconfig" → `importClusters` toasting added/skipped;
-    per-cluster "Kubeconfig" → pick an agent, paste its token, `getKubeconfig` → show/download YAML;
-    delete → `deleteUpstream`. Refetch on `upstream.created`/`.deleted`.
+    with `kind:"k8s"`); **"Import from kubeconfig"** opens a hidden `<input type="file">` (K5) — on
+    select it reads `file.text()` and posts the body via `importKubeconfigContent`, toasting
+    `added N / skipped M` (null-guarded `(res.added ?? []).length`, so an HTTP-200 all-skipped
+    import never fires a false "Failed to import" toast); per-cluster "Kubeconfig" → pick an agent,
+    paste its token, `getKubeconfig` → show/download YAML; delete → `deleteUpstream`. Refetch on
+    `upstream.created`/`.deleted`.
   - `Agents` — `listAgents` table; row "Detail" modal shows the agent's rules (filtered
     `listRules`) and access requests (filtered `listAccessRequests`), read-only. Refetch on
     `agent.registered`.
@@ -85,9 +88,10 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
 - `pages/Upstreams.test.tsx` — rows render from `listUpstreams`; switching the auth `<Select>`
   reveals the conditional fields; submit calls `createUpstream` with the built auth config.
 - `pages/Clusters.test.tsx` — kind=k8s rows render (and the insecure cluster shows the "insecure"
-  badge) while an http upstream is filtered out; "Import from kubeconfig" calls `importClusters`
-  and toasts added/skipped; the add form reveals exec fields when auth=exec. Also asserts the
-  Upstreams screen no longer lists a kind=k8s row.
+  badge) while an http upstream is filtered out; selecting a file on the hidden import input reads
+  it and calls `importKubeconfigContent`, toasting added/skipped; a backend `added:null` still
+  toasts success (null-guard), never "Failed to import"; the add form reveals exec fields when
+  auth=exec. Also asserts the Upstreams screen no longer lists a kind=k8s row.
 - `pages/Rules.test.tsx` — rows resolve agent/upstream names; the add-rule modal submits
   `createRule` with the default draft; for a `kind:"k8s"` upstream the modal shows
   Namespace/Resource/Verb (and hides Path glob) and submits the tuple.
