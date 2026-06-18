@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
 	resp_bytes    INTEGER NOT NULL DEFAULT 0,
 	decision      TEXT NOT NULL DEFAULT '',
 	rule_id       TEXT NOT NULL DEFAULT '',
+	operation     TEXT NOT NULL DEFAULT '',   -- matched operation path-template (http)
+	vars_json     TEXT NOT NULL DEFAULT '',   -- extracted variable values (http), JSON object
 	headers_json  TEXT NOT NULL DEFAULT '',
 	error         TEXT NOT NULL DEFAULT ''
 );

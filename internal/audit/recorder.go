@@ -41,6 +41,11 @@ type Entry struct {
 	RuleID       string
 	Error        string
 	Headers      map[string]string
+
+	// HTTP operation context (empty for k8s / non-operation entries): the matched operation
+	// path-template and the variable values outwall extracted from the real request (§8).
+	Operation string
+	Vars      map[string]string
 }
 
 // Body is a captured request or response body (Kind: "request" | "response").
@@ -105,14 +110,22 @@ func (r *Recorder) Record(e Entry, bodies ...Body) error {
 		}
 		headersJSON = string(b)
 	}
+	varsJSON := ""
+	if len(e.Vars) > 0 {
+		b, err := json.Marshal(e.Vars)
+		if err != nil {
+			return fmt.Errorf("marshal vars: %w", err)
+		}
+		varsJSON = string(b)
+	}
 	_, err := r.store.DB().Exec(
 		`INSERT INTO audit_log
 			(id, ts, agent_id, agent_name, upstream_id, upstream_name, method, path, query,
-			 status_code, duration_ms, req_bytes, resp_bytes, decision, rule_id, headers_json, error)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 status_code, duration_ms, req_bytes, resp_bytes, decision, rule_id, operation, vars_json, headers_json, error)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.TS.Format(time.RFC3339Nano), e.AgentID, e.AgentName, e.UpstreamID, e.UpstreamName,
 		e.Method, e.Path, e.Query, e.StatusCode, e.DurationMs, e.ReqBytes, e.RespBytes,
-		e.Decision, e.RuleID, headersJSON, e.Error,
+		e.Decision, e.RuleID, e.Operation, varsJSON, headersJSON, e.Error,
 	)
 	if err != nil {
 		return fmt.Errorf("insert audit_log: %w", err)
@@ -140,20 +153,24 @@ func (r *Recorder) Record(e Entry, bodies ...Body) error {
 }
 
 const entryCols = `id, ts, agent_id, agent_name, upstream_id, upstream_name, method, path, query,
-	status_code, duration_ms, req_bytes, resp_bytes, decision, rule_id, headers_json, error`
+	status_code, duration_ms, req_bytes, resp_bytes, decision, rule_id, operation, vars_json, headers_json, error`
 
 func scanEntry(sc interface{ Scan(...any) error }) (Entry, error) {
 	var (
 		e           Entry
 		ts          string
+		varsJSON    string
 		headersJSON string
 	)
 	if err := sc.Scan(&e.ID, &ts, &e.AgentID, &e.AgentName, &e.UpstreamID, &e.UpstreamName,
 		&e.Method, &e.Path, &e.Query, &e.StatusCode, &e.DurationMs, &e.ReqBytes, &e.RespBytes,
-		&e.Decision, &e.RuleID, &headersJSON, &e.Error); err != nil {
+		&e.Decision, &e.RuleID, &e.Operation, &varsJSON, &headersJSON, &e.Error); err != nil {
 		return Entry{}, err
 	}
 	e.TS, _ = time.Parse(time.RFC3339Nano, ts)
+	if varsJSON != "" {
+		_ = json.Unmarshal([]byte(varsJSON), &e.Vars)
+	}
 	if headersJSON != "" {
 		_ = json.Unmarshal([]byte(headersJSON), &e.Headers)
 	}
