@@ -10,14 +10,18 @@ controlled access to Kubernetes clusters (read logs/resources, change workloads,
 same request-rights + approval + audit flow — cluster credentials never reach the agent. Design
 spec: `docs/superpowers/specs/2026-06-18-outwall-k8s-gateway-design.md`; ADR-0008/0009/0010.
 
-**Active: Plan K4 — Clusters UI + kubeconfig auto-import + dark form controls.** Closes the
-"ready product" gaps found in use: no UI to register a k8s cluster (CLI-only), kubeconfigs not
-pulled from `~/.kube`, and native `<select>` rendered light (missing `color-scheme: dark`). Plan:
-`docs/superpowers/plans/2026-06-18-outwall-k8s-k4-ui-kubeconfig-import.md`. ADR-0011.
-
-After K4: no active phase — pick with the user. Candidates below.
+No active phase — pick with the user. Candidates below.
 
 ## Done
+
+- **Plan K4 — Clusters UI + kubeconfig auto-import + dark form controls.** `color-scheme: dark`
+  fixes the light native `<select>`/scrollbars (WebKitGTK UA theming); a `yaml.v3` kubeconfig parser
+  (`internal/k8s/kubeconfigimport.go`, no client-go) + an idempotent skip-existing `Importer` run
+  best-effort on vault unlock + `POST /clusters/import`; a **Clusters** UI screen (register/list/rm,
+  "Import from kubeconfig", show-kubeconfig, red "insecure" badge) with the HTTP **Upstreams** list
+  filtered to `kind=http`; `AuthConfig.K8sInsecureSkipVerify` honored only from an explicit
+  `insecure-skip-tls-verify` in the operator kubeconfig (CA always wins, loud `slog.Warn`). All green
+  (`-race`, web 18 tests + lint, CGO-free + desktop builds). ADR-0011.
 
 - **Plan K3 — k8s exec / attach / cp / port-forward.** `RequestInfo.IsUpgrade()` +
   exec/attach/portforward → RBAC verb `create`; the proxy's upgrade branch reuses
