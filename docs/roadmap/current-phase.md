@@ -10,7 +10,12 @@ controlled access to Kubernetes clusters (read logs/resources, change workloads,
 same request-rights + approval + audit flow — cluster credentials never reach the agent. Design
 spec: `docs/superpowers/specs/2026-06-18-outwall-k8s-gateway-design.md`; ADR-0008/0009/0010.
 
-Next: no active phase — pick with the user. Candidates below.
+**Active: Plan K4 — Clusters UI + kubeconfig auto-import + dark form controls.** Closes the
+"ready product" gaps found in use: no UI to register a k8s cluster (CLI-only), kubeconfigs not
+pulled from `~/.kube`, and native `<select>` rendered light (missing `color-scheme: dark`). Plan:
+`docs/superpowers/plans/2026-06-18-outwall-k8s-k4-ui-kubeconfig-import.md`. ADR-0011.
+
+After K4: no active phase — pick with the user. Candidates below.
 
 ## Done
 
