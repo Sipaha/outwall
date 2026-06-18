@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sipaha/outwall/internal/access"
 	"github.com/Sipaha/outwall/internal/agent"
+	"github.com/Sipaha/outwall/internal/approval"
 	owmcp "github.com/Sipaha/outwall/internal/mcp"
 	"github.com/Sipaha/outwall/internal/mcpsvc"
 	"github.com/Sipaha/outwall/internal/policy"
@@ -34,8 +35,10 @@ func TestMCPWhoamiAndListUpstreams(t *testing.T) {
 	_, err = up.Create("github", "https://api.github.com", upstream.AuthConfig{Type: "none"})
 	require.NoError(t, err)
 
+	svc := mcpsvc.New(ag, up, pol, acc)
+	svc.SetApprovals(approval.NewQueueWithTimeout(2 * time.Second))
 	h, err := owmcp.NewHandler(owmcp.Deps{
-		Svc: mcpsvc.New(ag, up, pol, acc), Agents: ag, Locked: v.Locked,
+		Svc: svc, Agents: ag, Locked: v.Locked,
 	})
 	require.NoError(t, err)
 	ts := httptest.NewServer(h)
@@ -72,26 +75,35 @@ func TestMCPWhoamiAndListUpstreams(t *testing.T) {
 	require.Equal(t, "github", first["name"])
 	require.Equal(t, "needs-request", first["status"])
 
-	// request_access with empty purpose → tool error.
+	// request_host_access with empty purpose → tool error.
 	bad, err := session.CallTool(ctx, &sdkmcp.CallToolParams{
-		Name: "request_access", Arguments: map[string]any{"host": "github"},
+		Name: "request_host_access", Arguments: map[string]any{"host": "github"},
 	})
 	require.NoError(t, err)
 	require.True(t, bad.IsError, "%+v", bad)
 
-	// request_access with a purpose → pending-approval and an intent is logged.
+	// request_host_access with a purpose → pending and an intent is logged.
 	ra, err := session.CallTool(ctx, &sdkmcp.CallToolParams{
-		Name: "request_access", Arguments: map[string]any{"host": "github", "purpose": "triage"},
+		Name: "request_host_access", Arguments: map[string]any{"host": "github", "purpose": "triage"},
 	})
 	require.NoError(t, err)
 	require.False(t, ra.IsError, "%+v", ra)
 	raOut := ra.StructuredContent.(map[string]any)
-	require.Equal(t, "pending-approval", raOut["status"])
+	require.Equal(t, "pending", raOut["status"])
 
 	reqs, err := acc.List()
 	require.NoError(t, err)
 	require.Len(t, reqs, 1)
 	require.Equal(t, "triage", reqs[0].Purpose)
+
+	// request_access (operation) with a malformed template → tool error, no pending.
+	opBad, err := session.CallTool(ctx, &sdkmcp.CallToolParams{
+		Name: "request_access", Arguments: map[string]any{
+			"host": "github", "method": "GET", "path_template": "/repos/{bad", "purpose": "x",
+		},
+	})
+	require.NoError(t, err)
+	require.True(t, opBad.IsError, "%+v", opBad)
 
 	// an agent was registered.
 	agents, _ := ag.List()

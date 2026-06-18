@@ -53,9 +53,25 @@ type listUpstreamsOut struct {
 	Upstreams []mcpsvc.UpstreamInfo `json:"upstreams"`
 }
 
+type requestHostAccessIn struct {
+	Host    string `json:"host" jsonschema:"the host to request access to (e.g. gitlab.example)"`
+	Purpose string `json:"purpose" jsonschema:"why the agent needs this host (required)"`
+}
+
+// requestAccessVariable mirrors mcpsvc.Variable for the SDK schema.
+type requestAccessVariable struct {
+	Name string `json:"name" jsonschema:"the variable name as it appears in the template"`
+	Type string `json:"type" jsonschema:"the variable type: text or date"`
+}
+
 type requestAccessIn struct {
-	Host    string `json:"host" jsonschema:"the upstream name or host to request access to"`
-	Purpose string `json:"purpose" jsonschema:"why the agent needs this access (required)"`
+	Host          string                  `json:"host" jsonschema:"the host the operation targets (must already be host-approved)"`
+	Method        string                  `json:"method" jsonschema:"the HTTP method, e.g. GET"`
+	PathTemplate  string                  `json:"path_template" jsonschema:"the path with {name:type} placeholders, e.g. /api/v4/projects/{project_path:text}/pipelines"`
+	QueryTemplate map[string]string       `json:"query_template" jsonschema:"declared query params, each a literal or a {name:type} placeholder"`
+	Variables     []requestAccessVariable `json:"variables" jsonschema:"the declared typed variables"`
+	Values        map[string]string       `json:"values" jsonschema:"the concrete values the agent intends to use, varName to value"`
+	Purpose       string                  `json:"purpose" jsonschema:"why the agent needs this operation (required)"`
 }
 
 type getAccessIn struct {
@@ -94,7 +110,10 @@ func NewHandler(deps Deps) (http.Handler, error) {
 		&sdkmcp.Tool{Name: "list_upstreams", Description: "List the upstreams outwall knows about and your access status for each."},
 		srv.handleListUpstreams)
 	sdkmcp.AddTool(sdkServer,
-		&sdkmcp.Tool{Name: "request_access", Description: "Request access to an upstream (by name or host), stating your purpose. Logs the intent for the operator."},
+		&sdkmcp.Tool{Name: "request_host_access", Description: "Request access to a HOST (tier 1), stating your purpose. Lazily registers the host; the operator approves it and attaches the credential. Returns granted|pending|denied; on pending, poll get_access."},
+		srv.handleRequestHostAccess)
+	sdkmcp.AddTool(sdkServer,
+		&sdkmcp.Tool{Name: "request_access", Description: "Request access to an OPERATION (tier 2) on an already-approved host: declare method, path/query templates with {name:type} placeholders, the typed variables, the concrete values you intend to use, and a purpose. A malformed template errors. Returns granted|pending|denied; on pending, poll get_access (non-blocking)."},
 		srv.handleRequestAccess)
 	sdkmcp.AddTool(sdkServer,
 		&sdkmcp.Tool{Name: "get_access", Description: "Report your current access status and base path for an upstream."},
@@ -187,6 +206,24 @@ func (s *server) handleListUpstreams(ctx context.Context, req *sdkmcp.CallToolRe
 	return nil, listUpstreamsOut{Upstreams: ups}, nil
 }
 
+func (s *server) handleRequestHostAccess(ctx context.Context, req *sdkmcp.CallToolRequest, in requestHostAccessIn) (*sdkmcp.CallToolResult, mcpsvc.AccessResult, error) {
+	id, err := s.agentFor(req)
+	if err != nil {
+		return nil, mcpsvc.AccessResult{}, err
+	}
+	if strings.TrimSpace(in.Purpose) == "" {
+		return toolError("purpose is required"), mcpsvc.AccessResult{}, nil
+	}
+	if s.locked() {
+		return toolError(lockedMsg), mcpsvc.AccessResult{}, nil
+	}
+	res, err := s.deps.Svc.RequestHostAccess(id.agentID, in.Host, in.Purpose)
+	if err != nil {
+		return toolError(err.Error()), mcpsvc.AccessResult{}, nil
+	}
+	return nil, res, nil
+}
+
 func (s *server) handleRequestAccess(ctx context.Context, req *sdkmcp.CallToolRequest, in requestAccessIn) (*sdkmcp.CallToolResult, mcpsvc.AccessResult, error) {
 	id, err := s.agentFor(req)
 	if err != nil {
@@ -198,9 +235,17 @@ func (s *server) handleRequestAccess(ctx context.Context, req *sdkmcp.CallToolRe
 	if s.locked() {
 		return toolError(lockedMsg), mcpsvc.AccessResult{}, nil
 	}
-	res, err := s.deps.Svc.RequestAccess(id.agentID, in.Host, in.Purpose)
+	vars := make([]mcpsvc.Variable, 0, len(in.Variables))
+	for _, v := range in.Variables {
+		vars = append(vars, mcpsvc.Variable{Name: v.Name, Type: v.Type})
+	}
+	res, err := s.deps.Svc.RequestAccess(id.agentID, mcpsvc.RequestAccessInput{
+		Host: in.Host, Method: in.Method, PathTemplate: in.PathTemplate,
+		QueryTemplate: in.QueryTemplate, Variables: vars, Values: in.Values, Purpose: in.Purpose,
+	})
 	if err != nil {
-		return nil, mcpsvc.AccessResult{}, err
+		// A malformed template (or unwired queue) is a tool error, not a transport error.
+		return toolError(err.Error()), mcpsvc.AccessResult{}, nil
 	}
 	return nil, res, nil
 }

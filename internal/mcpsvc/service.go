@@ -7,14 +7,17 @@
 package mcpsvc
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strings"
 
 	"github.com/Sipaha/outwall/internal/access"
 	"github.com/Sipaha/outwall/internal/agent"
+	"github.com/Sipaha/outwall/internal/approval"
 	"github.com/Sipaha/outwall/internal/events"
 	"github.com/Sipaha/outwall/internal/k8s"
+	"github.com/Sipaha/outwall/internal/optemplate"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/upstream"
 )
@@ -25,6 +28,7 @@ type Service struct {
 	upstreams *upstream.Registry
 	policy    *policy.Registry
 	access    *access.Registry
+	approvals *approval.Queue
 	pub       events.Publisher
 
 	// kubeconfig assembly inputs (set by the daemon via SetKubeconfigParams):
@@ -36,6 +40,12 @@ type Service struct {
 func New(a *agent.Registry, u *upstream.Registry, p *policy.Registry, ac *access.Registry) *Service {
 	return &Service{agents: a, upstreams: u, policy: p, access: ac}
 }
+
+// SetApprovals wires the blocking approval queue the host/operation MCP requests enqueue into.
+// request_host_access / request_access park a Pending on this queue from a background goroutine
+// (so the MCP call returns "pending" immediately, non-blocking); the operator resolves it via the
+// admin API. A nil queue makes those two tools report "operator approval is not wired".
+func (s *Service) SetApprovals(q *approval.Queue) { s.approvals = q }
 
 // SetKubeconfigParams provides the data-plane base URL and local-CA PEM used to assemble
 // agent kubeconfigs in Kubeconfig / get_kubeconfig.
@@ -60,7 +70,7 @@ type UpstreamInfo struct {
 }
 
 // AccessResult is the outcome of request_access / get_access.
-// Status: granted | pending-approval | denied.
+// Status: granted | pending | denied.
 type AccessResult struct {
 	Status   string `json:"status"`
 	BasePath string `json:"base_path"`
@@ -142,7 +152,7 @@ func toAccessResult(internal, upstreamName string, allowing []*policy.Rule) Acce
 		return AccessResult{Status: "denied", Memo: "access denied by an operator rule"}
 	default:
 		return AccessResult{
-			Status: "pending-approval",
+			Status: "pending",
 			Memo:   "no rule grants this yet — the operator has been notified",
 		}
 	}
@@ -219,31 +229,114 @@ func (s *Service) Kubeconfig(cluster, agentToken string) ([]byte, error) {
 	return k8s.Kubeconfig(serverURL, up.Name, s.caPEM, agentToken)
 }
 
-// RequestAccess resolves the upstream, logs the agent's intent (with purpose), and returns the
-// current rule-derived status. An unknown upstream is denied and NOT logged.
-func (s *Service) RequestAccess(agentID, hostOrUpstream, purpose string) (AccessResult, error) {
-	up, err := s.resolveUpstream(hostOrUpstream)
-	if err == upstream.ErrNotFound {
-		return AccessResult{Status: "denied", Memo: "no such upstream — ask the operator to add it"}, nil
+// Variable is a declared typed operation variable in a request_access call (name + "text"/"date").
+type Variable struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// RequestAccessInput is the enriched request_access payload: the operation the agent needs
+// (host + method + path/query templates + typed variables + the concrete values it intends to
+// use) plus the purpose. Enforcement still parses the real request — these values only seed the
+// operator's approval card and the allowed-set.
+type RequestAccessInput struct {
+	Host          string
+	Method        string
+	PathTemplate  string
+	QueryTemplate map[string]string
+	Variables     []Variable
+	Values        map[string]string
+	Purpose       string
+}
+
+// RequestHostAccess is the tier-1 MCP host channel: it lazily registers the host as an upstream
+// (credential-less) and enqueues a host approval carrying the purpose, then reports the current
+// rule-derived status. The MCP call does not block — on "pending" the agent polls get_access.
+func (s *Service) RequestHostAccess(agentID, host, purpose string) (AccessResult, error) {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return AccessResult{}, fmt.Errorf("host is required")
 	}
+	up, _, err := s.upstreams.GetOrCreateByHost(host)
 	if err != nil {
-		return AccessResult{}, err
+		return AccessResult{}, fmt.Errorf("resolve host upstream: %w", err)
 	}
-	rec, err := s.access.Create(agentID, up.ID, purpose)
-	if err != nil {
+	// Log the intent (purpose) for the operator's access-request queue.
+	if _, err := s.access.Create(agentID, up.ID, purpose); err != nil {
 		return AccessResult{}, fmt.Errorf("log access request: %w", err)
-	}
-	if s.pub != nil {
-		s.pub.Publish("access.requested", map[string]any{
-			"id": rec.ID, "agent_id": agentID, "upstream_id": up.ID,
-			"upstream_name": up.Name, "purpose": purpose,
-		})
 	}
 	st, allowing, err := s.statusFor(agentID, up.ID)
 	if err != nil {
 		return AccessResult{}, err
 	}
-	return toAccessResult(st, up.Name, allowing), nil
+	res := toAccessResult(st, up.Name, allowing)
+	// Already open (an allow/approval rule exists) → granted, no need to enqueue a host card.
+	if res.Status == "granted" {
+		return res, nil
+	}
+	if err := s.enqueue(agentID, approval.Pending{
+		Kind: approval.KindHostAccess, AgentID: agentID, UpstreamID: up.ID,
+		Host: up.Name, Purpose: purpose,
+	}); err != nil {
+		return AccessResult{}, err
+	}
+	return res, nil
+}
+
+// RequestAccess is the tier-2 MCP operation channel: it validates the proposed operation template
+// with optemplate.Parse (a malformed template is a tool error, NOT a pending), then enqueues an
+// operation approval carrying the parsed shape + the requested values + purpose. The MCP call does
+// not block — on "pending" the agent polls get_access. The host must already exist (tier-1 first).
+func (s *Service) RequestAccess(agentID string, in RequestAccessInput) (AccessResult, error) {
+	up, err := s.resolveUpstream(in.Host)
+	if err == upstream.ErrNotFound {
+		return AccessResult{Status: "denied", Memo: "no such host — request_host_access first"}, nil
+	}
+	if err != nil {
+		return AccessResult{}, err
+	}
+	// Validate the template up front so a malformed shape errors at the tool boundary rather than
+	// parking an unusable pending. Reparse normalizes to the same identity the H1 rule will use.
+	tmpl, err := optemplate.Parse(in.Method, in.PathTemplate, in.QueryTemplate)
+	if err != nil {
+		return AccessResult{}, fmt.Errorf("invalid operation template: %w", err)
+	}
+	_ = tmpl // parsed only to validate; the rule is (re)created from the raw shape on approve.
+
+	vars := make([]approval.Variable, 0, len(in.Variables))
+	for _, v := range in.Variables {
+		vars = append(vars, approval.Variable{Name: v.Name, Type: v.Type})
+	}
+	if err := s.enqueue(agentID, approval.Pending{
+		Kind: approval.KindOperation, AgentID: agentID, UpstreamID: up.ID, Host: up.Name,
+		Method: in.Method, Path: in.PathTemplate, Purpose: in.Purpose,
+		OpMethod: in.Method, OpPathTemplate: in.PathTemplate, OpQueryTemplate: in.QueryTemplate,
+		OpVariables: vars, OpValues: in.Values,
+	}); err != nil {
+		return AccessResult{}, err
+	}
+	return AccessResult{Status: "pending", BasePath: "/" + up.Name,
+		Memo: "operation submitted for approval — poll get_access"}, nil
+}
+
+// enqueue parks a Pending on the approval queue from a background goroutine so the MCP call
+// returns immediately (the agent polls get_access). The queue must be wired via SetApprovals.
+func (s *Service) enqueue(agentID string, p approval.Pending) error {
+	if s.approvals == nil {
+		return fmt.Errorf("operator approval is not wired")
+	}
+	go func() {
+		// The decision is delivered to the daemon resolve path, which runs the side effects
+		// (credential attach / rule create-extend) before unparking; we discard the bool here.
+		_, _ = s.approvals.Submit(context.Background(), p)
+	}()
+	if s.pub != nil {
+		s.pub.Publish("access.requested", map[string]any{
+			"agent_id": agentID, "upstream_id": p.UpstreamID, "upstream_name": p.Host,
+			"purpose": p.Purpose, "kind": p.Kind,
+		})
+	}
+	return nil
 }
 
 // GetAccess reports the current rule-derived status for an upstream without logging intent.
