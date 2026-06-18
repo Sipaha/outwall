@@ -156,17 +156,52 @@ contexts:
 	require.Empty(t, clusters[0].Auth.CABundle)
 }
 
-func TestDiscoverKubeconfigPaths(t *testing.T) {
-	// $KUBECONFIG with multiple entries splits on the OS path-list separator.
-	a := filepath.Join(t.TempDir(), "a")
-	b := filepath.Join(t.TempDir(), "b")
-	t.Setenv("KUBECONFIG", a+string(os.PathListSeparator)+b)
-	paths := DiscoverKubeconfigPaths()
-	require.Equal(t, []string{a, b}, paths)
+func TestDiscoverKubeconfigPathsInScansWholeDir(t *testing.T) {
+	// A temp dir posing as ~/.kube: three regular files + a subdir (with a file) + nothing else.
+	kubeDir := t.TempDir()
+	cfg := filepath.Join(kubeDir, "config")
+	extra := filepath.Join(kubeDir, "extra.yaml")
+	conf := filepath.Join(kubeDir, "other.conf")
+	for _, p := range []string{cfg, extra, conf} {
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
+	}
+	sub := filepath.Join(kubeDir, "cache")
+	require.NoError(t, os.MkdirAll(sub, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(sub, "inside"), []byte("y"), 0o600))
 
-	// Unset → <home>/.kube/config.
-	t.Setenv("KUBECONFIG", "")
-	home, err := os.UserHomeDir()
-	require.NoError(t, err)
-	require.Equal(t, []string{filepath.Join(home, ".kube", "config")}, DiscoverKubeconfigPaths())
+	// No $KUBECONFIG → every regular file directly under kubeDir, sorted, no subdir entry.
+	got := discoverKubeconfigPathsIn(kubeDir, "")
+	require.Equal(t, []string{cfg, extra, conf}, sortedJoin(kubeDir, "config", "extra.yaml", "other.conf"))
+	require.ElementsMatch(t, []string{cfg, extra, conf}, got)
+	require.NotContains(t, got, filepath.Join(sub, "inside"))
+	require.NotContains(t, got, sub)
+
+	// $KUBECONFIG entries come first and are de-duplicated against the dir scan.
+	ext := filepath.Join(t.TempDir(), "ext")
+	env := ext + string(os.PathListSeparator) + cfg // cfg also lives in kubeDir → must appear once
+	got2 := discoverKubeconfigPathsIn(kubeDir, env)
+	require.Equal(t, ext, got2[0], "$KUBECONFIG entries come first")
+	require.Equal(t, 1, countOccurrences(got2, cfg), "the duplicate path is de-duplicated")
+	require.ElementsMatch(t, []string{ext, cfg, extra, conf}, got2)
+
+	// A nonexistent kubeDir is not fatal: just the env entries (here none).
+	require.Empty(t, discoverKubeconfigPathsIn(filepath.Join(kubeDir, "nope"), ""))
+}
+
+func sortedJoin(dir string, names ...string) []string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = filepath.Join(dir, n)
+	}
+	return out
+}
+
+func countOccurrences(xs []string, want string) int {
+	n := 0
+	for _, x := range xs {
+		if x == want {
+			n++
+		}
+	}
+	return n
 }

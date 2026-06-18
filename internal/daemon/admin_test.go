@@ -21,9 +21,11 @@ import (
 
 func newDaemon(t *testing.T) *Daemon {
 	t.Helper()
-	// Point kubeconfig discovery at a nonexistent path so the unlock auto-import is a
-	// deterministic no-op — tests must not read (or import) the host's real ~/.kube/config.
-	// Tests that exercise auto-import override KUBECONFIG with their own temp file afterward.
+	// Isolate kubeconfig discovery from the host so auto-import is a deterministic no-op: an
+	// empty $HOME means <home>/.kube does not exist (discovery now scans that whole dir), and
+	// $KUBECONFIG points at a nonexistent file. Tests that exercise auto-import override
+	// KUBECONFIG with their own temp file afterward.
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "no-kubeconfig"))
 	d, err := New(Config{
 		DBPath:     filepath.Join(t.TempDir(), "d.db"),

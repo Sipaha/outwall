@@ -117,3 +117,42 @@ func TestImporterLockedVaultErrors(t *testing.T) {
 	require.ErrorIs(t, err, secret.ErrLocked)
 	require.Empty(t, added)
 }
+
+// TestImporterScansKubeDirAndSkipsJunk imports every kubeconfig file in a ~/.kube-like dir: two
+// separate files each carrying a distinct context, plus a non-kubeconfig "junk" file and a subdir
+// — both contexts register, the junk is skipped with no error.
+func TestImporterScansKubeDirAndSkipsJunk(t *testing.T) {
+	_, _, reg := newReg(t)
+	im := &Importer{Reg: reg, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	kubeDir := t.TempDir()
+	cfg := `
+apiVersion: v1
+kind: Config
+clusters: [{ name: c1, cluster: { server: https://one.example:6443, insecure-skip-tls-verify: true } }]
+users: [{ name: u1, user: { token: t1 } }]
+contexts: [{ name: ctx-one, context: { cluster: c1, user: u1 } }]
+`
+	extra := `
+apiVersion: v1
+kind: Config
+clusters: [{ name: c2, cluster: { server: https://two.example:6443, insecure-skip-tls-verify: true } }]
+users: [{ name: u2, user: { token: t2 } }]
+contexts: [{ name: ctx-two, context: { cluster: c2, user: u2 } }]
+`
+	require.NoError(t, os.WriteFile(filepath.Join(kubeDir, "config"), []byte(cfg), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(kubeDir, "extra.yaml"), []byte(extra), 0o600))
+	// Junk: parses as YAML but has no clusters/contexts — skipped, never fatal.
+	require.NoError(t, os.WriteFile(filepath.Join(kubeDir, "notes.txt"), []byte("just some notes\n"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(kubeDir, "cache"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(kubeDir, "cache", "x"), []byte("nope"), 0o600))
+
+	added, skipped, err := im.Import(discoverKubeconfigPathsIn(kubeDir, ""))
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"ctx-one", "ctx-two"}, added)
+	require.Empty(t, skipped)
+
+	ups, err := reg.List()
+	require.NoError(t, err)
+	require.Len(t, ups, 2, "only the two real contexts register; notes.txt and the subdir are ignored")
+}
