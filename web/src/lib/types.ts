@@ -57,16 +57,26 @@ export interface ClusterImportResult {
   skipped: string[]
 }
 
+/** Per-variable value policy on an http operation rule. */
+export interface ValuePolicy {
+  type: string // "text" | "date"
+  mode: string // "set" | "any"
+  values?: string[] // allowed values (text/set)
+}
+
 /**
- * GET /api/rules — policy rules. For http upstreams the rule matches on method+path_glob;
- * for k8s clusters it matches on the RBAC tuple namespace/resource/verb.
+ * GET /api/rules — policy rules. For http upstreams the rule is an operation rule
+ * (op_method + op_path_template + op_query_template + per-variable op_value_policies); for k8s
+ * clusters it matches on the RBAC tuple namespace/resource/verb.
  */
 export interface Rule {
   id: string
   subject_agent_id: string // "" = any agent
   upstream_id: string
-  method: string // "" or "*" = any method (http)
-  path_glob: string // (http)
+  op_method?: string // http method, e.g. "GET" (http rules)
+  op_path_template?: string // http operation path-template (http rules)
+  op_query_template?: Record<string, string> // query param -> literal or "{name:type}"
+  op_value_policies?: Record<string, ValuePolicy> // varName -> value policy
   outcome: string // allow | deny | require-approval
   rate_limit_per_min: number
   namespace?: string // k8s: "", "prod", "prod-*", "*"

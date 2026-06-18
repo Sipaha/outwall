@@ -330,21 +330,27 @@ func (d *Daemon) hRuleCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		SubjectAgentID  string `json:"subject_agent_id"`
 		UpstreamID      string `json:"upstream_id"`
-		Method          string `json:"method"`
-		PathGlob        string `json:"path_glob"`
 		Outcome         string `json:"outcome"`
 		RateLimitPerMin int    `json:"rate_limit_per_min"`
-		Namespace       string `json:"namespace"`
-		Resource        string `json:"resource"`
-		Verb            string `json:"verb"`
+		// HTTP operation rule fields:
+		OpMethod        string                        `json:"op_method"`
+		OpPathTemplate  string                        `json:"op_path_template"`
+		OpQueryTemplate map[string]string             `json:"op_query_template"`
+		OpValuePolicies map[string]policy.ValuePolicy `json:"op_value_policies"`
+		// k8s rule fields:
+		Namespace string `json:"namespace"`
+		Resource  string `json:"resource"`
+		Verb      string `json:"verb"`
 	}
 	if err := decode(r, &body); err != nil {
 		adminErr(w, http.StatusBadRequest, "bad json")
 		return
 	}
 	rule, err := d.policy.Create(policy.Rule{
-		SubjectAgentID: body.SubjectAgentID, UpstreamID: body.UpstreamID, Method: body.Method,
-		PathGlob: body.PathGlob, Outcome: body.Outcome, RateLimitPerMin: body.RateLimitPerMin,
+		SubjectAgentID: body.SubjectAgentID, UpstreamID: body.UpstreamID,
+		Outcome: body.Outcome, RateLimitPerMin: body.RateLimitPerMin,
+		OpMethod: body.OpMethod, OpPathTemplate: body.OpPathTemplate,
+		OpQueryTemplate: body.OpQueryTemplate, OpValuePolicies: body.OpValuePolicies,
 		Namespace: body.Namespace, Resource: body.Resource, Verb: body.Verb,
 	})
 	if err != nil {
@@ -365,9 +371,10 @@ func (d *Daemon) hRuleList(w http.ResponseWriter, _ *http.Request) {
 	for _, rule := range rules {
 		out = append(out, map[string]any{
 			"id": rule.ID, "subject_agent_id": rule.SubjectAgentID, "upstream_id": rule.UpstreamID,
-			"method": rule.Method, "path_glob": rule.PathGlob, "outcome": rule.Outcome,
-			"rate_limit_per_min": rule.RateLimitPerMin,
-			"namespace":          rule.Namespace, "resource": rule.Resource, "verb": rule.Verb,
+			"op_method": rule.OpMethod, "op_path_template": rule.OpPathTemplate,
+			"op_query_template": rule.OpQueryTemplate, "op_value_policies": rule.OpValuePolicies,
+			"outcome": rule.Outcome, "rate_limit_per_min": rule.RateLimitPerMin,
+			"namespace": rule.Namespace, "resource": rule.Resource, "verb": rule.Verb,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -391,6 +398,12 @@ func (d *Daemon) hApprovalList(w http.ResponseWriter, _ *http.Request) {
 			"created_at": p.CreatedAt.Format(time.RFC3339Nano),
 			// k8s tuple (empty for http approvals).
 			"namespace": p.Namespace, "resource": p.Resource, "verb": p.Verb,
+		}
+		// http new-value approval context (empty for k8s approvals).
+		if len(p.NewValues) > 0 {
+			m["new_values"] = p.NewValues
+			m["template"] = p.Template
+			m["rule_id"] = p.RuleID
 		}
 		// Surface the agent-sent patch/apply body with credentials masked. Never the injected
 		// cluster credential — RequestBody is the agent's payload, captured before injection.
@@ -477,6 +490,7 @@ func auditEntryMap(e audit.Entry) map[string]any {
 		"status_code": e.StatusCode, "duration_ms": e.DurationMs,
 		"req_bytes": e.ReqBytes, "resp_bytes": e.RespBytes,
 		"decision": e.Decision, "rule_id": e.RuleID, "error": e.Error,
+		"operation": e.Operation, "vars": e.Vars,
 	}
 }
 

@@ -47,7 +47,7 @@ func TestRequestAccessFlow(t *testing.T) {
 	require.Equal(t, "denied", res.Status)
 
 	// Operator grants via an allow rule → granted with base path.
-	_, err = pol.Create(policy.Rule{UpstreamID: u.ID, Method: "*", PathGlob: "/**", Outcome: policy.Allow})
+	_, err = pol.Create(policy.Rule{UpstreamID: u.ID, OpMethod: "GET", OpPathTemplate: "/repos/{repo:text}", Outcome: policy.Allow})
 	require.NoError(t, err)
 	res, _ = svc.GetAccess(a.ID, "github")
 	require.Equal(t, "granted", res.Status)
@@ -64,7 +64,7 @@ func TestRequestAccessFlow(t *testing.T) {
 	require.Contains(t, id.Accesses, "github")
 
 	// agent-specific deny overrides → denied.
-	_, err = pol.Create(policy.Rule{SubjectAgentID: a.ID, UpstreamID: u.ID, Method: "*", PathGlob: "/**", Outcome: policy.Deny})
+	_, err = pol.Create(policy.Rule{SubjectAgentID: a.ID, UpstreamID: u.ID, OpMethod: "GET", OpPathTemplate: "/repos/{repo:text}", Outcome: policy.Deny})
 	require.NoError(t, err)
 	res, _ = svc.GetAccess(a.ID, "github")
 	require.Equal(t, "denied", res.Status)

@@ -1,14 +1,29 @@
 # module: internal/policy
 
 The default-deny rule engine (replaces Plan 1's `grant` allow-list). A `Rule` binds a subject
-(a specific agent or "any") + upstream + method + path-glob to an outcome
-(`allow`/`deny`/`require-approval`), with a per-rule rate limit. Rules live in the `rules` table.
+(a specific agent or "any") + upstream to an outcome (`allow`/`deny`/`require-approval`), with a
+per-rule rate limit. Rules live in the `rules` table.
 
 `Decide` applies precedence: **agent-specific rules outrank any-subject rules outrank
 default-deny**; within the first non-empty tier, **most-restrictive wins** (deny >
-require-approval > allow). Path globs match the upstream-relative path: `*` within one segment,
-`**` across segments (cached compiled regexps). The `Limiter` is a separate in-memory
-fixed-window-per-minute counter the proxy consults when a matched rule sets a rate limit.
+require-approval > allow). The `Limiter` is a separate in-memory fixed-window-per-minute counter
+the proxy consults when a matched rule sets a rate limit.
+
+**H1 (operation rules — HTTP).** An HTTP rule is an **operation rule**: a `(op_method,
+op_path_template, op_query_template)` parsed by `internal/optemplate` plus a per-variable
+**value policy** (`op_value_policies`: `varName → {type, mode:"set"|"any", values[]}`). The old
+`(method, path_glob)` HTTP rule type is **removed** (no migration — ADR-0014). When
+`Input.Kind != "k8s"`, `Decide` matches the request against each rule's template (cached parse
+by rule ID), extracts the variable values, and gates each **text** value against its set
+(`any` auto-allows; `date` is always allowed — `optemplate.Match` already type-validated it):
+
+- all values allowed → the rule's outcome, with the extracted `Decision.Vars`.
+- a `text` value not in its set → **require-approval** + `Decision.NewValues` (the `(var,value)`
+  pairs). On approve the proxy calls `AddAllowedValue` to **extend** the set; the request proceeds.
+- no template matched → **deny** (default-deny).
+
+`AddAllowedValue(ruleID, var, value)` extends a text variable's allowed-set (idempotent). The
+tier/precedence resolution is unchanged — only the per-rule HTTP predicate changed.
 
 **K1 (k8s clusters).** A `Rule` also carries `Namespace`/`Resource`/`Verb` (globs) for k8s
 clusters, stored in `rules.k8s_namespace`/`k8s_resource`/`k8s_verb`. When `Input.Kind=="k8s"`,
@@ -29,11 +44,14 @@ simply never matches a real request.
 ## Public API
 
 - Outcome consts: `Allow = "allow"`, `Deny = "deny"`, `RequireApproval = "require-approval"`; `ValidOutcome(o string) bool`.
-- `Rule struct { ID, SubjectAgentID, UpstreamID, Method, PathGlob, Outcome string; RateLimitPerMin int; CreatedAt time.Time; Namespace, Resource, Verb string }` (`SubjectAgentID=""` = any agent; `Method=""`/`"*"` = any method; `Namespace`/`Resource`/`Verb` set on k8s rules only).
-- `MatchGlob(pattern, path string) bool`.
+- `Rule struct { ID, SubjectAgentID, UpstreamID, Outcome string; RateLimitPerMin int; CreatedAt time.Time; OpMethod, OpPathTemplate string; OpQueryTemplate map[string]string; OpValuePolicies map[string]ValuePolicy; Namespace, Resource, Verb string }` (`SubjectAgentID=""` = any agent; `Op*` set on HTTP rules; `Namespace`/`Resource`/`Verb` set on k8s rules only).
+- `ValuePolicy struct { Type, Mode string; Values []string }` (`Type`: `"text"|"date"`; `Mode`: `"set"|"any"`).
+- `MatchGlob(pattern, path string) bool` (used by the k8s namespace/resource globs).
 - `NewRegistry(s *store.Store) *Registry`
-- `(*Registry).Create(in Rule) (*Rule, error)` — assigns ID + CreatedAt; validates outcome and `RateLimitPerMin >= 0`; defaults `PathGlob` to `/**`.
+- `(*Registry).Create(in Rule) (*Rule, error)` — assigns ID + CreatedAt; validates outcome and `RateLimitPerMin >= 0`; marshals `OpQueryTemplate`/`OpValuePolicies` to JSON columns.
+- `(*Registry).AddAllowedValue(ruleID, varName, value string) error` — extends a text variable's allowed-set (idempotent on a present value).
 - `(*Registry).List() ([]*Rule, error)`, `(*Registry).Delete(id string) error`, `(*Registry).ForUpstream(upstreamID string) ([]*Rule, error)`.
-- `Input struct { AgentID, UpstreamID, Method, Path string; Kind, Namespace, Resource, Subresource, Verb string }` (set `Kind="k8s"` + the tuple for cluster requests), `Decision struct { Outcome string; Rule *Rule }`.
+- `Input struct { AgentID, UpstreamID, Method, Path string; Query url.Values; Kind, Namespace, Resource, Subresource, Verb string }` (HTTP: set `Method`/`Path`/`Query`; k8s: set `Kind="k8s"` + the tuple).
+- `VarValue struct { Var, Value string }`, `Decision struct { Outcome string; Rule *Rule; Vars map[string]string; NewValues []VarValue }`.
 - `(*Registry).Decide(in Input) (Decision, error)` — `Outcome=Deny, Rule=nil` on default-deny.
 - `NewLimiter() *Limiter`, `(*Limiter).Allow(key string, limitPerMin int, now time.Time) bool` (`limitPerMin<=0` ⇒ always true).
