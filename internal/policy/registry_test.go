@@ -80,3 +80,36 @@ func TestOperationRuleRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"a", "b"}, rules[0].OpValuePolicies["project_path"].Values)
 }
+
+func TestSetVariablePolicy(t *testing.T) {
+	reg := newReg(t)
+	created, err := reg.Create(Rule{
+		UpstreamID:     "u1",
+		OpMethod:       "GET",
+		OpPathTemplate: "/api/v4/projects/{project_path:text}/pipelines",
+		OpValuePolicies: map[string]ValuePolicy{
+			"project_path": {Type: "text", Mode: "set", Values: []string{"a", "b"}},
+		},
+		Outcome: Allow,
+	})
+	require.NoError(t, err)
+
+	// Replace the set (the Operations "remove a value" path: client posts the trimmed set).
+	require.NoError(t, reg.SetVariablePolicy(created.ID, "project_path",
+		ValuePolicy{Mode: "set", Values: []string{"a", "a", "", "c"}}))
+	rules, err := reg.ForUpstream("u1")
+	require.NoError(t, err)
+	// Deduped + empties dropped; declared Type preserved even though the post omitted it.
+	require.Equal(t, ValuePolicy{Type: "text", Mode: "set", Values: []string{"a", "c"}},
+		rules[0].OpValuePolicies["project_path"])
+
+	// Toggle to "any" drops the set.
+	require.NoError(t, reg.SetVariablePolicy(created.ID, "project_path", ValuePolicy{Mode: "any"}))
+	rules, err = reg.ForUpstream("u1")
+	require.NoError(t, err)
+	require.Equal(t, "any", rules[0].OpValuePolicies["project_path"].Mode)
+	require.Nil(t, rules[0].OpValuePolicies["project_path"].Values)
+
+	// An unknown variable is rejected — no silent widening.
+	require.Error(t, reg.SetVariablePolicy(created.ID, "nope", ValuePolicy{Mode: "any"}))
+}

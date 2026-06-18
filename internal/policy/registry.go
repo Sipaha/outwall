@@ -126,6 +126,44 @@ func (r *Registry) SetVariableAny(ruleID, varName string) error {
 	})
 }
 
+// SetVariablePolicy replaces a single variable's value policy on an existing rule (the Operations
+// screen's add/remove-value and trust-any toggle, computed client-side and posted whole). It keeps
+// the variable's declared Type — the operator can change Mode/Values but not retype a slot — and
+// normalises a "set" policy's Values to a deduped, non-nil slice. It rejects an unknown variable so
+// a typo can never silently widen the rule.
+func (r *Registry) SetVariablePolicy(ruleID, varName string, vp ValuePolicy) error {
+	return r.updatePolicies(ruleID, func(policies map[string]ValuePolicy) (bool, error) {
+		cur, ok := policies[varName]
+		if !ok {
+			return false, fmt.Errorf("rule %s has no variable %q", ruleID, varName)
+		}
+		next := ValuePolicy{Type: cur.Type, Mode: vp.Mode}
+		if next.Mode == "any" {
+			next.Values = nil
+		} else {
+			next.Mode = "set"
+			next.Values = dedupe(vp.Values)
+		}
+		policies[varName] = next
+		return true, nil
+	})
+}
+
+// dedupe returns xs with duplicates and empty strings removed, preserving order. A nil/empty input
+// yields an empty (non-nil) slice so a "set" policy with no values marshals as [] not null.
+func dedupe(xs []string) []string {
+	out := make([]string, 0, len(xs))
+	seen := map[string]bool{}
+	for _, x := range xs {
+		if x == "" || seen[x] {
+			continue
+		}
+		seen[x] = true
+		out = append(out, x)
+	}
+	return out
+}
+
 // Delete removes a rule by ID.
 func (r *Registry) Delete(id string) error {
 	_, err := r.store.DB().Exec(`DELETE FROM rules WHERE id=?`, id)

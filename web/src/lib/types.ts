@@ -84,7 +84,26 @@ export interface Rule {
   verb?: string // k8s: get/list/watch/create/update/patch/delete/deletecollection/*
 }
 
-/** GET /api/approvals — in-flight require-approval requests blocking the data plane. */
+/** A declared typed operation variable on a KindOperation approval (mirrors approval.Variable). */
+export interface OpVariable {
+  name: string
+  type: string // "text" | "date"
+}
+
+/** A not-yet-allowed (variable, value) pair on a data-plane new-value approval. */
+export interface NewValue {
+  var: string
+  value: string
+}
+
+/**
+ * GET /api/approvals — in-flight require-approval requests blocking the data plane, plus the MCP
+ * control-plane host/operation cards. `kind` discriminates:
+ *  - "" (empty) → a data-plane new-value approval (has `new_values` + `template`) or a k8s tuple
+ *    approval (has namespace/resource/verb).
+ *  - "host-access" → a tier-1 host card (agent + host + purpose).
+ *  - "operation"   → a tier-2 operation card (the operation shape + declared variables + values).
+ */
 export interface Approval {
   id: string
   agent_id: string
@@ -97,6 +116,28 @@ export interface Approval {
   resource?: string
   verb?: string
   request_body?: string // agent-sent patch/apply body, credentials masked
+  // MCP control-plane context (empty for data-plane / k8s approvals).
+  kind?: string // "host-access" | "operation" | "" (data-plane / k8s)
+  host?: string // the host this approval concerns (host-access / operation)
+  // Operation card (kind === "operation"):
+  op_method?: string
+  op_path_template?: string
+  op_query_template?: Record<string, string>
+  op_variables?: OpVariable[]
+  op_values?: Record<string, string> // varName -> the concrete value the agent intends to use
+  // Data-plane new-value card (kind === ""):
+  new_values?: NewValue[]
+  template?: string // matched operation path-template for display
+  rule_id?: string
+}
+
+/**
+ * Options for POST /api/approvals/{id}/resolve. `auth` attaches a host credential when approving a
+ * host-access card; `trust_any` lists the operation variables flipped to "trust any value".
+ */
+export interface ResolveOptions {
+  auth?: UpstreamAuthConfig
+  trust_any?: string[]
 }
 
 /** GET /api/access-requests — logged access-request intents. */

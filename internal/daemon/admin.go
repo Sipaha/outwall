@@ -33,6 +33,7 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	mux.HandleFunc("POST /upstreams", d.hUpstreamCreate)
 	mux.HandleFunc("GET /upstreams", d.hUpstreamList)
 	mux.HandleFunc("DELETE /upstreams/{name}", d.hUpstreamDelete)
+	mux.HandleFunc("POST /upstreams/{name}/auth", d.hUpstreamSetAuth)
 	mux.HandleFunc("POST /agents/register", d.hAgentRegister)
 	mux.HandleFunc("GET /agents", d.hAgentList)
 	mux.HandleFunc("POST /clusters/import", d.hClustersImport)
@@ -40,6 +41,7 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	mux.HandleFunc("POST /rules", d.hRuleCreate)
 	mux.HandleFunc("GET /rules", d.hRuleList)
 	mux.HandleFunc("DELETE /rules/{id}", d.hRuleDelete)
+	mux.HandleFunc("POST /rules/{id}/value-policy", d.hRuleSetVariablePolicy)
 	mux.HandleFunc("GET /approvals", d.hApprovalList)
 	mux.HandleFunc("POST /approvals/{id}/resolve", d.hApprovalResolve)
 	mux.HandleFunc("GET /access-requests", d.hAccessRequestList)
@@ -194,6 +196,35 @@ func (d *Daemon) hUpstreamDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.publish("upstream.deleted", map[string]any{"name": name})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// hUpstreamSetAuth sets (or replaces) the credential on an existing host upstream — the Hosts
+// screen's "set / replace credential" action (a host registered lazily, or a token rotation). The
+// secret is encrypted server-side and never returned on the list; this is a write-only path.
+func (d *Daemon) hUpstreamSetAuth(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var body struct {
+		Auth upstream.AuthConfig `json:"auth"`
+	}
+	if err := decode(r, &body); err != nil {
+		adminErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	up, err := d.upstreams.GetByName(name)
+	if err != nil {
+		if errors.Is(err, upstream.ErrNotFound) {
+			adminErr(w, http.StatusNotFound, "unknown upstream")
+			return
+		}
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := d.upstreams.SetAuth(up.ID, body.Auth); err != nil {
+		adminErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	d.publish("upstream.updated", map[string]any{"id": up.ID, "name": up.Name})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -387,6 +418,27 @@ func (d *Daemon) hRuleDelete(w http.ResponseWriter, r *http.Request) {
 		adminErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// hRuleSetVariablePolicy replaces a single variable's value policy on an operation rule — the
+// Operations screen's add/remove-value and trust-any toggle. The UI computes the whole policy
+// (set + values, or mode "any") and posts it; the registry keeps the variable's declared Type and
+// rejects an unknown variable so the operator can never widen a rule by typo.
+func (d *Daemon) hRuleSetVariablePolicy(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Var    string             `json:"var"`
+		Policy policy.ValuePolicy `json:"policy"`
+	}
+	if err := decode(r, &body); err != nil {
+		adminErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if err := d.policy.SetVariablePolicy(r.PathValue("id"), body.Var, body.Policy); err != nil {
+		adminErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	d.publish("rule.updated", map[string]any{"id": r.PathValue("id")})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
