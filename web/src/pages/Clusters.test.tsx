@@ -35,11 +35,11 @@ describe('<Clusters>', () => {
     expect(screen.getByText('insecure')).toBeInTheDocument()
   })
 
-  it('imports from kubeconfig and toasts the result', async () => {
+  it('picks a kubeconfig file, uploads its content, and toasts the result', async () => {
     vi.spyOn(api, 'listUpstreams').mockResolvedValue([])
     vi.spyOn(api, 'listAgents').mockResolvedValue([])
     const importSpy = vi
-      .spyOn(api, 'importClusters')
+      .spyOn(api, 'importKubeconfigContent')
       .mockResolvedValue({ added: ['prod', 'staging'], skipped: ['lab'] })
     render(
       <>
@@ -48,18 +48,23 @@ describe('<Clusters>', () => {
       </>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Import from kubeconfig' }))
+    // The "Import from kubeconfig" button triggers a hidden file <input>; selecting a file reads
+    // its text and posts the content.
+    const input = screen.getByLabelText('Import kubeconfig file') as HTMLInputElement
+    const file = new File(['apiVersion: v1\nkind: Config\n'], 'config.yaml', { type: 'text/yaml' })
+    fireEvent.change(input, { target: { files: [file] } })
+
     await waitFor(() => expect(importSpy).toHaveBeenCalled())
-    // a toast summarizing added/skipped appears
+    expect(importSpy.mock.calls[0][0]).toContain('apiVersion: v1')
     expect(await screen.findByText(/added 2/i)).toBeInTheDocument()
   })
 
-  it('shows a success toast (not a false error) when the backend returns added:null', async () => {
+  it('shows a success toast (not a false error) when the upload returns added:null', async () => {
     vi.spyOn(api, 'listUpstreams').mockResolvedValue([])
     vi.spyOn(api, 'listAgents').mockResolvedValue([])
     // The Go daemon used to encode an all-skipped import's nil slice as JSON null; the UI must
     // null-guard so an HTTP-200 import never fires "Failed to import clusters".
-    vi.spyOn(api, 'importClusters').mockResolvedValue({
+    vi.spyOn(api, 'importKubeconfigContent').mockResolvedValue({
       added: null as unknown as string[],
       skipped: ['lab'],
     })
@@ -70,7 +75,10 @@ describe('<Clusters>', () => {
       </>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Import from kubeconfig' }))
+    const input = screen.getByLabelText('Import kubeconfig file') as HTMLInputElement
+    const file = new File(['apiVersion: v1\n'], 'config.yaml', { type: 'text/yaml' })
+    fireEvent.change(input, { target: { files: [file] } })
+
     expect(await screen.findByText(/added 0, skipped 1/i)).toBeInTheDocument()
     expect(screen.queryByText(/Failed to import/i)).not.toBeInTheDocument()
   })

@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   listUpstreams,
   listAgents,
   createCluster,
   deleteUpstream,
-  importClusters,
+  importKubeconfigContent,
   getKubeconfig,
   ApiError,
 } from '../lib/api'
@@ -55,6 +55,7 @@ export function Clusters() {
   const [kcCluster, setKcCluster] = useState<Upstream | null>(null)
   const [kcAgentId, setKcAgentId] = useState('')
   const [kcYaml, setKcYaml] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const push = useToastStore((s) => s.push)
 
   const counter = useEventStore((s) => s.counters['upstream.created'])
@@ -112,10 +113,22 @@ export function Clusters() {
     }
   }
 
-  async function runImport() {
+  // "Import from kubeconfig" opens the OS file picker (the hidden input below); selecting a file
+  // reads its text and uploads it. The operator picks the kubeconfig instead of us re-scanning a
+  // fixed path.
+  function openImportPicker() {
+    fileInputRef.current?.click()
+  }
+
+  async function onImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    // Reset the input so selecting the same file again re-fires change.
+    e.target.value = ''
+    if (!file) return
     setImporting(true)
     try {
-      const res = await importClusters()
+      const content = await file.text()
+      const res = await importKubeconfigContent(content)
       push(
         'success',
         `Imported clusters — added ${(res.added ?? []).length}, skipped ${(res.skipped ?? []).length}`,
@@ -180,8 +193,16 @@ export function Clusters() {
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold">Clusters</h1>
         <div className="flex gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".yaml,.yml,.conf,.config,*"
+            aria-label="Import kubeconfig file"
+            className="hidden"
+            onChange={onImportFile}
+          />
           <button
-            onClick={runImport}
+            onClick={openImportPicker}
             disabled={importing}
             className="rounded border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
           >

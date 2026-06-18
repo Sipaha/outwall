@@ -358,6 +358,40 @@ contexts:
 	require.JSONEq(t, `{"added":[],"skipped":["ep-ctx"]}`, w2.Body.String())
 }
 
+// TestClustersImportFromBody drives POST /clusters/import with an uploaded kubeconfig body (the
+// file-picker path): the cluster in the body registers, and the body takes precedence over the
+// auto-scan.
+func TestClustersImportFromBody(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	body := `
+apiVersion: v1
+kind: Config
+clusters: [{ name: bc, cluster: { server: https://bc.example:6443, insecure-skip-tls-verify: true } }]
+users: [{ name: bu, user: { token: bt } }]
+contexts: [{ name: body-ctx, context: { cluster: bc, user: bu } }]
+`
+	w := req(t, h, "POST", "/clusters/import", body)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var res struct {
+		Added   []string `json:"added"`
+		Skipped []string `json:"skipped"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	require.Equal(t, []string{"body-ctx"}, res.Added)
+
+	// The cluster is now registered.
+	wl := req(t, h, "GET", "/upstreams", "")
+	require.Equal(t, http.StatusOK, wl.Code)
+	require.Contains(t, wl.Body.String(), "body-ctx")
+
+	// A junk body is a 400 (the operator explicitly uploaded a bad file).
+	wbad := req(t, h, "POST", "/clusters/import", "not a kubeconfig: [")
+	require.Equal(t, http.StatusBadRequest, wbad.Code)
+}
+
 func TestAdminAccessRequests(t *testing.T) {
 	d := newDaemon(t)
 	h := d.AdminHandler()

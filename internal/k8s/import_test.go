@@ -156,3 +156,46 @@ contexts: [{ name: ctx-two, context: { cluster: c2, user: u2 } }]
 	require.NoError(t, err)
 	require.Len(t, ups, 2, "only the two real contexts register; notes.txt and the subdir are ignored")
 }
+
+// TestImporterImportContent registers contexts from an uploaded kubeconfig body, idempotently.
+func TestImporterImportContent(t *testing.T) {
+	_, _, reg := newReg(t)
+	im := &Importer{Reg: reg, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	src := `
+apiVersion: v1
+kind: Config
+clusters: [{ name: up-c, cluster: { server: https://up.example:6443, insecure-skip-tls-verify: true } }]
+users: [{ name: up-u, user: { token: up-token } }]
+contexts: [{ name: uploaded-ctx, context: { cluster: up-c, user: up-u } }]
+`
+	added, skipped, err := im.ImportContent([]byte(src), "")
+	require.NoError(t, err)
+	require.Equal(t, []string{"uploaded-ctx"}, added)
+	require.Empty(t, skipped)
+	require.NotNil(t, added)
+	require.NotNil(t, skipped)
+
+	c, err := reg.GetByName("uploaded-ctx")
+	require.NoError(t, err)
+	require.Equal(t, upstream.KindK8s, c.Kind)
+	require.Equal(t, "up-token", c.Auth.Token)
+
+	// Idempotent: a second upload of the same body skips, adds nothing.
+	added2, skipped2, err := im.ImportContent([]byte(src), "")
+	require.NoError(t, err)
+	require.Empty(t, added2)
+	require.Equal(t, []string{"uploaded-ctx"}, skipped2)
+}
+
+// TestImporterImportContentRejectsJunk: an explicitly-uploaded non-kubeconfig is a real error
+// (unlike the auto-scan, which silently skips junk in ~/.kube).
+func TestImporterImportContentRejectsJunk(t *testing.T) {
+	_, _, reg := newReg(t)
+	im := &Importer{Reg: reg, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	added, skipped, err := im.ImportContent([]byte("not a kubeconfig: ["), "")
+	require.Error(t, err)
+	require.Empty(t, added)
+	require.Empty(t, skipped)
+	require.NotNil(t, added)
+}
