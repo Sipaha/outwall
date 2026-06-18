@@ -3,11 +3,14 @@ package mcpsvc
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sipaha/outwall/internal/access"
 	"github.com/Sipaha/outwall/internal/agent"
+	"github.com/Sipaha/outwall/internal/approval"
+	"github.com/Sipaha/outwall/internal/optemplate"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/secret"
 	"github.com/Sipaha/outwall/internal/store"
@@ -28,30 +31,117 @@ func build(t *testing.T) (*Service, *agent.Registry, *upstream.Registry, *policy
 	return New(ag, up, pol, acc), ag, up, pol
 }
 
-func TestRequestAccessFlow(t *testing.T) {
+// buildWithQueue is build plus a fast-timeout approval queue wired into the service, returned so a
+// test can inspect the parked pendings.
+func buildWithQueue(t *testing.T) (*Service, *agent.Registry, *upstream.Registry, *policy.Registry, *approval.Queue) {
 	svc, ag, up, pol := build(t)
-	a, _, _ := ag.Register("claude")
-	u, _ := up.Create("github", "https://api.github.com", upstream.AuthConfig{Type: "none"})
+	q := approval.NewQueueWithTimeout(2 * time.Second)
+	svc.SetApprovals(q)
+	return svc, ag, up, pol, q
+}
 
-	// No rule yet → pending-approval, and an access-request is logged.
-	res, err := svc.RequestAccess(a.ID, "github", "triage issues")
+// waitPending polls the queue until at least one pending appears (the service enqueues from a
+// background goroutine so Submit can park without blocking the MCP call), or fails after a bound.
+func waitPending(t *testing.T, q *approval.Queue) approval.Pending {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ps := q.List(); len(ps) > 0 {
+			return ps[0]
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("no pending approval enqueued")
+	return approval.Pending{}
+}
+
+func mustKey(t *testing.T, method, path string, query map[string]string) string {
+	t.Helper()
+	tmpl, err := optemplate.Parse(method, path, query)
 	require.NoError(t, err)
-	require.Equal(t, "pending-approval", res.Status)
+	return tmpl.Key()
+}
 
-	// Resolving by HOST also works.
-	res, _ = svc.RequestAccess(a.ID, "api.github.com", "via host")
-	require.Equal(t, "pending-approval", res.Status)
+func TestRequestHostAccessEnqueuesHostApproval(t *testing.T) {
+	svc, ag, up, _, q := buildWithQueue(t)
+	a, _, _ := ag.Register("claude")
 
-	// Unknown upstream → denied, no record.
-	res, _ = svc.RequestAccess(a.ID, "nope.example.com", "x")
-	require.Equal(t, "denied", res.Status)
+	res, err := svc.RequestHostAccess(a.ID, "gitlab.example", "check CI state")
+	require.NoError(t, err)
+	require.Equal(t, "pending", res.Status)
 
-	// Operator grants via an allow rule → granted with base path.
+	// The host was lazily created and a host approval is parked carrying it + the purpose.
+	hostUp, err := up.GetByName("gitlab.example")
+	require.NoError(t, err)
+	p := waitPending(t, q)
+	require.Equal(t, approval.KindHostAccess, p.Kind)
+	require.Equal(t, "gitlab.example", p.Host)
+	require.Equal(t, hostUp.ID, p.UpstreamID)
+	require.Equal(t, "check CI state", p.Purpose)
+}
+
+func TestRequestAccessEnqueuesOperationApproval(t *testing.T) {
+	svc, ag, up, _, q := buildWithQueue(t)
+	a, _, _ := ag.Register("claude")
+	// The host must exist (tier-1 host access happens first).
+	_, _, err := up.GetOrCreateByHost("gitlab.example")
+	require.NoError(t, err)
+
+	res, err := svc.RequestAccess(a.ID, RequestAccessInput{
+		Host:          "gitlab.example",
+		Method:        "GET",
+		PathTemplate:  "/api/v4/projects/{project_path:text}/pipelines",
+		QueryTemplate: map[string]string{"updated_after": "{since:date}"},
+		Variables:     []Variable{{Name: "project_path", Type: "text"}, {Name: "since", Type: "date"}},
+		Values:        map[string]string{"project_path": "infra/helm"},
+		Purpose:       "check CI state",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "pending", res.Status)
+
+	p := waitPending(t, q)
+	require.Equal(t, approval.KindOperation, p.Kind)
+	require.Equal(t, "GET", p.OpMethod)
+	require.Equal(t, "/api/v4/projects/{project_path:text}/pipelines", p.OpPathTemplate)
+	require.Equal(t, "infra/helm", p.OpValues["project_path"])
+	require.Equal(t, "check CI state", p.Purpose)
+
+	// The pending's shape reparses to a valid template Key (the H1 rule identity).
+	require.NotEmpty(t, mustKey(t, p.OpMethod, p.OpPathTemplate, p.OpQueryTemplate))
+
+	// A malformed template is a tool error, not a pending.
+	_, err = svc.RequestAccess(a.ID, RequestAccessInput{
+		Host:         "gitlab.example",
+		Method:       "GET",
+		PathTemplate: "/api/v4/projects/{bad", // unterminated placeholder
+		Variables:    []Variable{{Name: "bad", Type: "text"}},
+		Purpose:      "x",
+	})
+	require.Error(t, err)
+}
+
+func TestRequestHostAccessAndStatusFlow(t *testing.T) {
+	svc, ag, up, pol, _ := buildWithQueue(t)
+	a, _, _ := ag.Register("claude")
+
+	// No rule yet → pending, the host is lazily created, and an access-request is logged.
+	res, err := svc.RequestHostAccess(a.ID, "api.github.com", "triage issues")
+	require.NoError(t, err)
+	require.Equal(t, "pending", res.Status)
+	u, err := up.GetByName("api.github.com")
+	require.NoError(t, err)
+
+	// Operator grants via an allow rule → get_access reports granted with base path.
 	_, err = pol.Create(policy.Rule{UpstreamID: u.ID, OpMethod: "GET", OpPathTemplate: "/repos/{repo:text}", Outcome: policy.Allow})
 	require.NoError(t, err)
-	res, _ = svc.GetAccess(a.ID, "github")
+	res, _ = svc.GetAccess(a.ID, "api.github.com")
 	require.Equal(t, "granted", res.Status)
-	require.Equal(t, "/github", res.BasePath)
+	require.Equal(t, "/api.github.com", res.BasePath)
+
+	// Already open → request_host_access short-circuits to granted (no host card).
+	res, err = svc.RequestHostAccess(a.ID, "api.github.com", "again")
+	require.NoError(t, err)
+	require.Equal(t, "granted", res.Status)
 
 	// list_upstreams reflects open status.
 	list, _ := svc.ListUpstreams(a.ID)
@@ -61,12 +151,12 @@ func TestRequestAccessFlow(t *testing.T) {
 	// whoami
 	id, _ := svc.WhoAmI(a.ID)
 	require.Equal(t, a.ID, id.AgentID)
-	require.Contains(t, id.Accesses, "github")
+	require.Contains(t, id.Accesses, "api.github.com")
 
 	// agent-specific deny overrides → denied.
 	_, err = pol.Create(policy.Rule{SubjectAgentID: a.ID, UpstreamID: u.ID, OpMethod: "GET", OpPathTemplate: "/repos/{repo:text}", Outcome: policy.Deny})
 	require.NoError(t, err)
-	res, _ = svc.GetAccess(a.ID, "github")
+	res, _ = svc.GetAccess(a.ID, "api.github.com")
 	require.Equal(t, "denied", res.Status)
 }
 

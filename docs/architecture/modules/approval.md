@@ -15,12 +15,24 @@ mutating-verb approval (see `proxy.md` / ADR-0009). The `approval.enqueued` even
 tuple + a **masked** `request_body` preview (`audit.MaskBody`) — never the injected cluster
 credential.
 
+**H2 (MCP control-plane approvals).** A `Pending` carries a `Kind` discriminator: `KindHostAccess`
+and `KindOperation` are the MCP host/operation cards (`mcpsvc` enqueues them from a background
+goroutine — non-blocking); an **empty** `Kind` is the pre-H2 data-plane new-value / k8s approval,
+resolved by the queue alone. MCP approvals add `Host` and, for `KindOperation`, the operation
+shape (`OpMethod`/`OpPathTemplate`/`OpQueryTemplate`), the declared `OpVariables` (`Variable{Name,
+Type}`), and the requested `OpValues`. The daemon resolve path uses `Get(id)` to inspect a pending
+and run its side effects (host credential attach / rule create-extend) **before** unparking the
+waiter (see `admin.go` / ADR-0015). The blocking `Submit`/`Resolve` mechanism itself is unchanged.
+
 ## Public API
 
 - `DefaultTimeout = 5 * time.Minute`; error `ErrNotFound`.
-- `Pending struct { ID, AgentID, UpstreamID, Method, Path, Purpose string; CreatedAt time.Time; Namespace, Resource, Verb string; RequestBody []byte }` (the k8s fields are empty for http approvals; `RequestBody` is empty for bodyless/read requests).
+- `Kind` consts: `KindHostAccess = "host-access"`, `KindOperation = "operation"` (empty = data-plane/k8s).
+- `NewValue struct { Var, Value string }`; `Variable struct { Name, Type string }`.
+- `Pending struct { ID, AgentID, UpstreamID, Method, Path, Purpose string; CreatedAt time.Time; Kind, Host string; OpMethod, OpPathTemplate string; OpQueryTemplate map[string]string; OpVariables []Variable; OpValues map[string]string; Namespace, Resource, Verb string; RuleID string; NewValues []NewValue; Template string; RequestBody []byte }` (the k8s / op / new-value field groups are empty unless that kind set them).
 - `NewQueue() *Queue` (default timeout) / `NewQueueWithTimeout(d time.Duration) *Queue`.
-- `(*Queue).SetPublisher(p events.Publisher)` — nil-safe; `Submit` then publishes `approval.enqueued` `{id, agent_id, upstream_id, method, path, purpose, namespace, resource, verb[, request_body]}` (k8s tuple + masked body when set) and `Resolve` publishes `approval.resolved` `{id, approved}` (see ADR-0005 / ADR-0009).
+- `(*Queue).SetPublisher(p events.Publisher)` — nil-safe; `Submit` then publishes `approval.enqueued` `{id, agent_id, upstream_id, method, path, purpose, namespace, resource, verb[, new_values, template, rule_id][, request_body]}` and `Resolve` publishes `approval.resolved` `{id, approved}` (see ADR-0005 / ADR-0009).
 - `(*Queue).Submit(ctx context.Context, p Pending) (approved bool, err error)` — generates the entry ID; `false,nil` on timeout, `false,ctx.Err()` on cancel.
 - `(*Queue).List() []Pending` — snapshot of waiting entries.
+- `(*Queue).Get(id string) (Pending, bool)` — snapshot one entry by id (for the resolve path to inspect its `Kind`).
 - `(*Queue).Resolve(id string, approve bool) error` — `ErrNotFound` for an unknown id.

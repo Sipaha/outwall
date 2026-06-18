@@ -25,6 +25,13 @@ by rule ID), extracts the variable values, and gates each **text** value against
 `AddAllowedValue(ruleID, var, value)` extends a text variable's allowed-set (idempotent). The
 tier/precedence resolution is unchanged — only the per-rule HTTP predicate changed.
 
+**H2 (operation approval → create/extend).** The MCP operation approval resolve (in
+`internal/daemon`, ADR-0015) is the other writer of operation rules: it `Create`s an `allow` rule
+for a template the upstream does not yet have (looked up by `optemplate.Template.Key()`), or
+extends an existing one. `SetVariableAny(ruleID, var)` flips a text variable to mode `any` (drops
+its set) for the operator's "trust any value"; both it and `AddAllowedValue` share an internal
+load-mutate-save helper.
+
 **K1 (k8s clusters).** A `Rule` also carries `Namespace`/`Resource`/`Verb` (globs) for k8s
 clusters, stored in `rules.k8s_namespace`/`k8s_resource`/`k8s_verb`. When `Input.Kind=="k8s"`,
 the per-rule match predicate is `verbMatches && nsMatches && resourceMatches` **instead of**
@@ -50,6 +57,7 @@ simply never matches a real request.
 - `NewRegistry(s *store.Store) *Registry`
 - `(*Registry).Create(in Rule) (*Rule, error)` — assigns ID + CreatedAt; validates outcome and `RateLimitPerMin >= 0`; marshals `OpQueryTemplate`/`OpValuePolicies` to JSON columns.
 - `(*Registry).AddAllowedValue(ruleID, varName, value string) error` — extends a text variable's allowed-set (idempotent on a present value).
+- `(*Registry).SetVariableAny(ruleID, varName string) error` — flips a text variable to mode `any`, dropping its set (idempotent).
 - `(*Registry).List() ([]*Rule, error)`, `(*Registry).Delete(id string) error`, `(*Registry).ForUpstream(upstreamID string) ([]*Rule, error)`.
 - `Input struct { AgentID, UpstreamID, Method, Path string; Query url.Values; Kind, Namespace, Resource, Subresource, Verb string }` (HTTP: set `Method`/`Path`/`Query`; k8s: set `Kind="k8s"` + the tuple).
 - `VarValue struct { Var, Value string }`, `Decision struct { Outcome string; Rule *Rule; Vars map[string]string; NewValues []VarValue }`.

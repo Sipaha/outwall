@@ -55,10 +55,9 @@ func (r *Registry) Create(in Rule) (*Rule, error) {
 	return &in, nil
 }
 
-// AddAllowedValue extends a text variable's allowed-set on an existing rule. It is idempotent on
-// a value already present. The proxy/approval path calls it when the operator approves a new
-// value, so the same operation template's set grows rather than spawning a new rule.
-func (r *Registry) AddAllowedValue(ruleID, varName, value string) error {
+// updatePolicies loads a rule's value policies, applies mutate, and persists the result. mutate
+// returns false to signal a no-op (skip the write).
+func (r *Registry) updatePolicies(ruleID string, mutate func(map[string]ValuePolicy) (bool, error)) error {
 	row := r.store.DB().QueryRow(`SELECT op_value_policies FROM rules WHERE id=?`, ruleID)
 	var policiesJSON string
 	if err := row.Scan(&policiesJSON); err != nil {
@@ -68,17 +67,16 @@ func (r *Registry) AddAllowedValue(ruleID, varName, value string) error {
 	if err != nil {
 		return fmt.Errorf("unmarshal op_value_policies: %w", err)
 	}
-	vp, ok := policies[varName]
-	if !ok {
-		return fmt.Errorf("rule %s has no variable %q", ruleID, varName)
+	if policies == nil {
+		policies = map[string]ValuePolicy{}
 	}
-	for _, v := range vp.Values {
-		if v == value {
-			return nil // already present — no-op
-		}
+	changed, err := mutate(policies)
+	if err != nil {
+		return err
 	}
-	vp.Values = append(vp.Values, value)
-	policies[varName] = vp
+	if !changed {
+		return nil
+	}
 	updated, err := marshalValuePolicies(policies)
 	if err != nil {
 		return fmt.Errorf("marshal op_value_policies: %w", err)
@@ -87,6 +85,45 @@ func (r *Registry) AddAllowedValue(ruleID, varName, value string) error {
 		return fmt.Errorf("update rule %s: %w", ruleID, err)
 	}
 	return nil
+}
+
+// AddAllowedValue extends a text variable's allowed-set on an existing rule. It is idempotent on
+// a value already present. The proxy/approval path calls it when the operator approves a new
+// value, so the same operation template's set grows rather than spawning a new rule.
+func (r *Registry) AddAllowedValue(ruleID, varName, value string) error {
+	return r.updatePolicies(ruleID, func(policies map[string]ValuePolicy) (bool, error) {
+		vp, ok := policies[varName]
+		if !ok {
+			return false, fmt.Errorf("rule %s has no variable %q", ruleID, varName)
+		}
+		for _, v := range vp.Values {
+			if v == value {
+				return false, nil // already present — no-op
+			}
+		}
+		vp.Values = append(vp.Values, value)
+		policies[varName] = vp
+		return true, nil
+	})
+}
+
+// SetVariableAny flips a text variable's policy to mode "any" (the operator's "trust any value"),
+// dropping its now-redundant allowed-set. Idempotent when the variable is already "any". Used by
+// the operation-approval resolve path.
+func (r *Registry) SetVariableAny(ruleID, varName string) error {
+	return r.updatePolicies(ruleID, func(policies map[string]ValuePolicy) (bool, error) {
+		vp, ok := policies[varName]
+		if !ok {
+			return false, fmt.Errorf("rule %s has no variable %q", ruleID, varName)
+		}
+		if vp.Mode == "any" && vp.Values == nil {
+			return false, nil // already any — no-op
+		}
+		vp.Mode = "any"
+		vp.Values = nil
+		policies[varName] = vp
+		return true, nil
+	})
 }
 
 // Delete removes a rule by ID.

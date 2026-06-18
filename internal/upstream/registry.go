@@ -115,6 +115,54 @@ func (r *Registry) CreateKind(name, baseURL, kind string, auth AuthConfig) (*Ups
 	return up, nil
 }
 
+// GetOrCreateByHost returns the http upstream for the given host, creating a credential-less one
+// (name = host, BaseURL = "https://<host>", auth type "none") if it does not yet exist. The
+// boolean reports whether it was created. Used by the MCP host-access path: a host is registered
+// lazily the first time an agent requests it; the operator attaches the credential later via
+// SetAuth at host-approval time. Idempotent — a second call for the same host returns the existing
+// upstream with created=false.
+func (r *Registry) GetOrCreateByHost(host string) (*Upstream, bool, error) {
+	up, err := r.GetByName(host)
+	switch {
+	case err == nil:
+		return up, false, nil
+	case errors.Is(err, ErrNotFound):
+		// fall through to create
+	default:
+		return nil, false, err
+	}
+	created, err := r.Create(host, "https://"+host, AuthConfig{Type: "none"})
+	if err != nil {
+		return nil, false, err
+	}
+	return created, true, nil
+}
+
+// SetAuth replaces the (encrypted) auth config of an existing upstream by ID and updates its
+// stored auth_type. Used by the host-approval resolve path to attach the operator-entered
+// credential to a lazily-created host. The token is encrypted via the vault, so it is masked at
+// rest exactly like Create's.
+func (r *Registry) SetAuth(id string, auth AuthConfig) error {
+	raw, err := json.Marshal(auth)
+	if err != nil {
+		return fmt.Errorf("marshal auth: %w", err)
+	}
+	enc, err := r.vault.Encrypt(raw)
+	if err != nil {
+		return fmt.Errorf("encrypt auth: %w", err)
+	}
+	res, err := r.store.DB().Exec(
+		`UPDATE upstreams SET auth_type=?, auth_config=? WHERE id=?`, auth.Type, enc, id)
+	if err != nil {
+		return fmt.Errorf("update upstream auth: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *Registry) scan(row interface{ Scan(...any) error }) (*Upstream, error) {
 	var (
 		up      Upstream

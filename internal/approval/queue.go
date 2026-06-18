@@ -26,6 +26,24 @@ type NewValue struct {
 	Value string `json:"value"`
 }
 
+// Variable is a declared typed operation variable carried on a KindOperation approval (mirrors
+// optemplate.Variable without importing it, so approval stays a leaf package).
+type Variable struct {
+	Name string `json:"name"`
+	Type string `json:"type"` // "text" | "date"
+}
+
+// Kinds of MCP control-plane approval (the discriminator the daemon resolve path switches on).
+// An empty Kind is a pre-H2 data-plane new-value / k8s approval, resolved by the queue alone.
+const (
+	// KindHostAccess is a tier-1 MCP host-access request: on approve the operator attaches the
+	// host credential to the lazily-created host upstream; on deny the host upstream is dropped.
+	KindHostAccess = "host-access"
+	// KindOperation is a tier-2 MCP operation request carrying the parsed operation shape + the
+	// requested values: on approve the resolve path creates/extends the H1 operation rule.
+	KindOperation = "operation"
+)
+
 // Pending describes a request awaiting approval.
 type Pending struct {
 	ID         string
@@ -35,6 +53,25 @@ type Pending struct {
 	Path       string
 	Purpose    string
 	CreatedAt  time.Time
+
+	// Kind discriminates the MCP control-plane approvals (KindHostAccess / KindOperation) from
+	// the pre-H2 data-plane new-value and k8s approvals (empty Kind). The daemon resolve path
+	// uses it to attach a host credential or create/extend an operation rule.
+	Kind string
+
+	// Host is the host whose upstream this approval concerns (set for KindHostAccess /
+	// KindOperation). On a host approve the operator attaches the credential to this host.
+	Host string
+
+	// Operation fields (set for KindOperation): the parsed-and-revalidated operation shape (so
+	// optemplate.Template.Key() identity matches the H1 rule), the declared typed variables, and
+	// the concrete values the agent intends to use (varName -> value). On approve the resolve path
+	// creates the rule for this shape if absent and extends each text variable's allowed-set.
+	OpMethod        string
+	OpPathTemplate  string
+	OpQueryTemplate map[string]string
+	OpVariables     []Variable
+	OpValues        map[string]string
 
 	// k8s display fields (set for k8s-cluster requests; empty otherwise). Used by the UI to
 	// show the parsed tuple. K2 makes mutating verbs actually park here.
@@ -155,6 +192,19 @@ func (q *Queue) List() []Pending {
 		out = append(out, w.p)
 	}
 	return out
+}
+
+// Get returns the pending entry with the given id and whether it was found. The daemon resolve
+// path uses it to inspect a pending's Kind (host / operation) before delivering the decision, so
+// it can attach a host credential or create/extend an operation rule.
+func (q *Queue) Get(id string) (Pending, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	w, ok := q.waiters[id]
+	if !ok {
+		return Pending{}, false
+	}
+	return w.p, true
 }
 
 // Resolve delivers a decision to a waiting Submit.

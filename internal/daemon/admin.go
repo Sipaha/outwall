@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/Sipaha/outwall/internal/approval"
 	"github.com/Sipaha/outwall/internal/audit"
 	"github.com/Sipaha/outwall/internal/k8s"
+	"github.com/Sipaha/outwall/internal/optemplate"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/secret"
 	"github.com/Sipaha/outwall/internal/upstream"
@@ -399,6 +401,18 @@ func (d *Daemon) hApprovalList(w http.ResponseWriter, _ *http.Request) {
 			// k8s tuple (empty for http approvals).
 			"namespace": p.Namespace, "resource": p.Resource, "verb": p.Verb,
 		}
+		// MCP control-plane approval context (empty for data-plane / k8s approvals).
+		if p.Kind != "" {
+			m["kind"] = p.Kind
+			m["host"] = p.Host
+		}
+		if p.Kind == approval.KindOperation {
+			m["op_method"] = p.OpMethod
+			m["op_path_template"] = p.OpPathTemplate
+			m["op_query_template"] = p.OpQueryTemplate
+			m["op_variables"] = p.OpVariables
+			m["op_values"] = p.OpValues
+		}
 		// http new-value approval context (empty for k8s approvals).
 		if len(p.NewValues) > 0 {
 			m["new_values"] = p.NewValues
@@ -418,12 +432,30 @@ func (d *Daemon) hApprovalList(w http.ResponseWriter, _ *http.Request) {
 func (d *Daemon) hApprovalResolve(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Approve bool `json:"approve"`
+		// Auth is the host credential the operator attaches when approving a KindHostAccess
+		// request (optional — the operator may attach it later via the upstreams API).
+		Auth *upstream.AuthConfig `json:"auth"`
+		// TrustAny lists the operation variables the operator chose to trust for ANY value
+		// (per-variable "approve + trust any value"); those flip to mode "any" instead of a set.
+		TrustAny []string `json:"trust_any"`
 	}
 	if err := decode(r, &body); err != nil {
 		adminErr(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	switch err := d.approvals.Resolve(r.PathValue("id"), body.Approve); {
+	id := r.PathValue("id")
+
+	// Inspect the pending so MCP control-plane approvals (host / operation) run their side
+	// effects before we unpark the waiter. Data-plane new-value / k8s approvals have empty Kind
+	// and are resolved by the queue alone (unchanged).
+	if p, ok := d.approvals.Get(id); ok && body.Approve {
+		if err := d.applyApprovalSideEffects(p, body.Auth, body.TrustAny); err != nil {
+			adminErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
+	switch err := d.approvals.Resolve(id, body.Approve); {
 	case err == nil:
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	case errors.Is(err, approval.ErrNotFound):
@@ -431,6 +463,119 @@ func (d *Daemon) hApprovalResolve(w http.ResponseWriter, r *http.Request) {
 	default:
 		adminErr(w, http.StatusInternalServerError, err.Error())
 	}
+}
+
+// applyApprovalSideEffects runs the create/extend/attach work for an approved MCP control-plane
+// approval (host or operation). It is a no-op for empty-Kind approvals (data-plane / k8s), whose
+// side effects already live on the proxy path. Errors are reported before the queue is unparked,
+// so a failed attach/rule-write does not silently approve.
+func (d *Daemon) applyApprovalSideEffects(p approval.Pending, auth *upstream.AuthConfig, trustAny []string) error {
+	switch p.Kind {
+	case approval.KindHostAccess:
+		// Attach the operator-entered credential to the lazily-created host upstream (optional).
+		if auth != nil {
+			if err := d.upstreams.SetAuth(p.UpstreamID, *auth); err != nil {
+				return fmt.Errorf("attach host credential: %w", err)
+			}
+		}
+		return nil
+	case approval.KindOperation:
+		return d.approveOperation(p, trustAny)
+	default:
+		return nil
+	}
+}
+
+// approveOperation creates the H1 operation rule for the pending's template if no rule with the
+// same template Key() exists on the upstream, otherwise extends the existing rule. For each text
+// variable it adds the requested value to the allowed-set, OR flips the variable to mode "any"
+// when it is listed in trustAny; date variables are mode "any". Reuses Registry.AddAllowedValue so
+// approving a new value on an existing template grows that rule's set rather than spawning a new
+// one.
+func (d *Daemon) approveOperation(p approval.Pending, trustAny []string) error {
+	tmpl, err := optemplate.Parse(p.OpMethod, p.OpPathTemplate, p.OpQueryTemplate)
+	if err != nil {
+		return fmt.Errorf("parse operation template: %w", err)
+	}
+	trust := map[string]bool{}
+	for _, v := range trustAny {
+		trust[v] = true
+	}
+
+	rule, err := d.findRuleByTemplateKey(p.UpstreamID, tmpl.Key())
+	if err != nil {
+		return err
+	}
+	if rule == nil {
+		// Create the rule with a value policy per declared variable: date → any; text → any when
+		// trusted, else a set seeded with the requested value (if any).
+		policies := map[string]policy.ValuePolicy{}
+		for _, v := range p.OpVariables {
+			vp := policy.ValuePolicy{Type: v.Type}
+			switch {
+			case v.Type == string(optemplate.Date):
+				vp.Mode = "any"
+			case trust[v.Name]:
+				vp.Mode = "any"
+			default:
+				vp.Mode = "set"
+				if val, ok := p.OpValues[v.Name]; ok && val != "" {
+					vp.Values = []string{val}
+				}
+			}
+			policies[v.Name] = vp
+		}
+		if _, err := d.policy.Create(policy.Rule{
+			UpstreamID: p.UpstreamID, Outcome: policy.Allow,
+			OpMethod: p.OpMethod, OpPathTemplate: p.OpPathTemplate, OpQueryTemplate: p.OpQueryTemplate,
+			OpValuePolicies: policies,
+		}); err != nil {
+			return fmt.Errorf("create operation rule: %w", err)
+		}
+		return nil
+	}
+
+	// Extend the existing rule: flip trusted text vars to any, else add the requested value.
+	for _, v := range p.OpVariables {
+		if v.Type == string(optemplate.Date) {
+			continue // date stays any
+		}
+		if trust[v.Name] {
+			if err := d.policy.SetVariableAny(rule.ID, v.Name); err != nil {
+				return fmt.Errorf("trust-any variable %q: %w", v.Name, err)
+			}
+			continue
+		}
+		if val, ok := p.OpValues[v.Name]; ok && val != "" {
+			if err := d.policy.AddAllowedValue(rule.ID, v.Name, val); err != nil {
+				return fmt.Errorf("extend variable %q: %w", v.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// findRuleByTemplateKey returns the upstream's http operation rule whose template Key() equals
+// key, or nil if none exists. Two requests with the same (method, path-template, query-template)
+// share one rule (the H1 identity), so this is how a re-approval finds the rule to extend.
+func (d *Daemon) findRuleByTemplateKey(upstreamID, key string) (*policy.Rule, error) {
+	rules, err := d.policy.ForUpstream(upstreamID)
+	if err != nil {
+		return nil, fmt.Errorf("load rules: %w", err)
+	}
+	for _, r := range rules {
+		if r.OpPathTemplate == "" {
+			continue // skip k8s rules
+		}
+		t, err := optemplate.Parse(r.OpMethod, r.OpPathTemplate, r.OpQueryTemplate)
+		if err != nil {
+			continue // a malformed stored template never matches
+		}
+		if t.Key() == key {
+			return r, nil
+		}
+	}
+	return nil, nil
 }
 
 func (d *Daemon) hAccessRequestList(w http.ResponseWriter, _ *http.Request) {
