@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+:root {
+  /* Tell the UA to render native form controls (the <select>, its option popup, scrollbars,
+     checkboxes, date pickers) with the dark theme. Without this WebKitGTK paints the native
+     <select> and its option list with the light UA theme regardless of the Tailwind bg-muted
+     class — the unthemed light-popup bug. */
+  color-scheme: dark;
+}
+
 @theme {
   /* Darcula / Lens inspired palette (dark — the only theme in 6A). */
   --color-background: #1e1f22;
@@ -46,6 +54,14 @@ body {
   -moz-osx-font-smoothing: grayscale;
   /* Tabular figures everywhere — live monitoring columns stay rock-steady. */
   font-variant-numeric: tabular-nums;
+  color-scheme: dark;
+}
+
+/* Belt-and-suspenders for the <select> option popup on engines that honor an explicit
+   option background — keeps the dropdown list on the dark surface. */
+option {
+  background-color: var(--color-muted);
+  color: var(--color-foreground);
 }
 
 #root {
