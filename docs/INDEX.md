@@ -47,6 +47,7 @@ Stage: alpha (pre-Plan-1).
   - [`0020-request-body-variables.md`](architecture/decisions/0020-request-body-variables.md) — operation variables extracted from the JSON request body (dotted paths, typed); parse-the-real-body enforcement.
   - [`0021-oidc-authorization-code.md`](architecture/decisions/0021-oidc-authorization-code.md) — OIDC authorization-code browser login (x/oauth2 PKCE), token persist-on-refresh, daemon login + /oauth/callback.
   - [`0022-additive-schema-migrations.md`](architecture/decisions/0022-additive-schema-migrations.md) — idempotent additive `ADD COLUMN` migration so additive schema growth no longer forces a DB reset; model breaks still reset in alpha.
+  - [`0023-versioned-migration-runner.md`](architecture/decisions/0023-versioned-migration-runner.md) — PRAGMA user_version + ordered run-once migration steps (transactional); baseline step folds in the ADR-0022 reconcile; structural changes appended as later steps.
 - `modules/` — per-package API docs: `secret`, `store`, `upstream`, `agent`, `authn`,
   `policy`, `approval`, `access`, `mcpsvc`, `mcp`, `audit`, `events`, `proxy`, `daemon`, `client`, `cli`, `version`, `k8s`, `tlsca`, plus `webui` (the `web/` app).
 

@@ -15,13 +15,16 @@ req_bytes, resp_bytes, decision, rule_id, headers_json, error`, indexed by `ts`)
 `(log_id, kind)`) — bodies live in their own table so the journal lists without reading blobs.
 A `settings(key, value)` KV table backs operator settings (e.g. audit retention — ADR-0018).
 
-**Migrations (ADR-0022).** `migrate` first applies `schema` (`CREATE TABLE IF NOT EXISTS`), then
-`ensureColumns` adds any missing **additive** column from `additiveColumns` via idempotent
-`ALTER TABLE … ADD COLUMN`, so a purely-additive schema growth no longer forces a one-time DB reset.
-This handles ADDITIONS only — a column removal / semantic model change (e.g. path-glob → operation
-rules, ADR-0014) is not migratable this way and still needs a reset in alpha; full migrations are a
-Beta item. `TestSchemaCoversAdditiveColumns` enforces that every `additiveColumns` entry also exists
-in `schema`.
+**Migrations (ADR-0023, building on ADR-0022).** Schema evolution is driven by `PRAGMA user_version`
+and an ordered `migrations` list of run-once steps. `migrate` runs every step with version >
+`user_version`, each in a transaction, stamping `user_version` on success (a failed step rolls back
+and aborts `Open` — fail-closed). **Step 1 (baseline)** applies `schema`
+(`CREATE TABLE IF NOT EXISTS`) + the additive `ensureColumns` reconcile (`additiveColumns` →
+idempotent `ALTER TABLE … ADD COLUMN`), so fresh and pre-versioning DBs both reach version 1 safely.
+**Structural changes** (renames, backfills, drops — beyond additive columns) are appended as steps
+2, 3, …; a released step is never edited or reordered. `TestSchemaCoversAdditiveColumns` keeps
+`additiveColumns` in sync with `schema`; `TestMigrationRunnerAppliesPendingOnce` covers the
+run-once/stamp/no-replay contract.
 
 ## Public API
 

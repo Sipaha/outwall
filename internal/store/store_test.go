@@ -85,6 +85,44 @@ func TestEnsureColumnsUpgradesOldDB(t *testing.T) {
 	require.Equal(t, "{}", body)
 }
 
+func userVersion(t *testing.T, s *Store) int {
+	t.Helper()
+	var v int
+	require.NoError(t, s.DB().QueryRow(`PRAGMA user_version`).Scan(&v))
+	return v
+}
+
+// TestMigrationRunnerAppliesPendingOnce verifies the versioned runner: a fresh DB lands at the
+// baseline version, a newly-appended structural step runs exactly once and bumps user_version, and
+// re-running migrate does not replay it.
+func TestMigrationRunnerAppliesPendingOnce(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "mig.db"))
+	require.NoError(t, err)
+	defer s.Close()
+	require.Equal(t, len(migrations), userVersion(t, s), "fresh DB is stamped at the latest version")
+	baseline := userVersion(t, s)
+
+	// Temporarily append a structural step that does something ensureColumns can't (a rename) and
+	// records that it ran.
+	orig := migrations
+	t.Cleanup(func() { migrations = orig })
+	runs := 0
+	migrations = append(append([]migration{}, orig...), migration{"demo_rename", func(tx *sql.Tx) error {
+		runs++
+		_, err := tx.Exec(`ALTER TABLE settings RENAME TO settings_renamed; ALTER TABLE settings_renamed RENAME TO settings;`)
+		return err
+	}})
+
+	require.NoError(t, migrate(s.DB()))
+	require.Equal(t, 1, runs)
+	require.Equal(t, baseline+1, userVersion(t, s), "the new step bumped the version")
+
+	// Re-running is a no-op: the step is not replayed.
+	require.NoError(t, migrate(s.DB()))
+	require.Equal(t, 1, runs, "an applied migration must not run again")
+	require.Equal(t, baseline+1, userVersion(t, s))
+}
+
 func TestSettingsRoundTrip(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "outwall.db"))
 	require.NoError(t, err)

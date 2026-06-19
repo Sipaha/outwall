@@ -92,12 +92,63 @@ CREATE TABLE IF NOT EXISTS audit_bodies (
 );
 `
 
+// sqlExecQuerier is the subset of *sql.DB / *sql.Tx the migration helpers use, so a step can run
+// its statements inside the migration transaction.
+type sqlExecQuerier interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+// migration is one ordered, run-once schema step. Its 1-based position in `migrations` is its
+// version; `up` runs inside a transaction and may do anything SQL can (create/alter/rename/backfill).
+type migration struct {
+	name string
+	up   func(tx *sql.Tx) error
+}
+
+// migrations is the ordered list of schema steps. The runner applies every step whose version is
+// greater than the database's current `PRAGMA user_version`, each in its own transaction, bumping
+// user_version on success — so a step runs exactly once per database, fresh or upgraded.
+//
+// Step 1 is the **baseline**: the full current `schema` (idempotent `CREATE TABLE IF NOT EXISTS`)
+// plus the additive `ensureColumns` reconcile (ADR-0022). On a fresh DB it builds everything; on a
+// pre-versioning DB (user_version still 0) it is a safe no-op/reconcile and stamps it to version 1.
+// Append later **structural** changes (renames, data backfills, drops — things `ensureColumns`
+// cannot express) as new entries; never edit or reorder a released entry.
+var migrations = []migration{
+	{"baseline", func(tx *sql.Tx) error {
+		if _, err := tx.Exec(schema); err != nil {
+			return fmt.Errorf("baseline schema: %w", err)
+		}
+		return ensureColumns(tx)
+	}},
+}
+
+// migrate brings db up to len(migrations) by running each pending step (version > user_version) in a
+// transaction and stamping user_version. A failed step rolls back and leaves the version unchanged.
 func migrate(db *sql.DB) error {
-	if _, err := db.Exec(schema); err != nil {
-		return fmt.Errorf("apply schema: %w", err)
+	var ver int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&ver); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
 	}
-	if err := ensureColumns(db); err != nil {
-		return err
+	for i := ver; i < len(migrations); i++ {
+		m := migrations[i]
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin migration %d (%s): %w", i+1, m.name, err)
+		}
+		if err := m.up(tx); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("migration %d (%s): %w", i+1, m.name, err)
+		}
+		// user_version takes no bound parameter; i+1 is an int we control (no injection).
+		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", i+1)); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("stamp version %d: %w", i+1, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit migration %d (%s): %w", i+1, m.name, err)
+		}
 	}
 	return nil
 }
@@ -123,9 +174,9 @@ var additiveColumns = []struct{ table, name, ddl string }{
 // ensureColumns brings an older database's tables up to date by adding any missing additive column.
 // It is idempotent: a column that already exists is skipped, so a fresh DB (just built from
 // `schema`) is a no-op.
-func ensureColumns(db *sql.DB) error {
+func ensureColumns(q sqlExecQuerier) error {
 	for _, c := range additiveColumns {
-		has, err := columnExists(db, c.table, c.name)
+		has, err := columnExists(q, c.table, c.name)
 		if err != nil {
 			return err
 		}
@@ -134,7 +185,7 @@ func ensureColumns(db *sql.DB) error {
 		}
 		// Table/column names here are hardcoded constants, not user input — no injection surface
 		// (and PRAGMA / ALTER do not accept bound parameters for identifiers anyway).
-		if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.table, c.name, c.ddl)); err != nil {
+		if _, err := q.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.table, c.name, c.ddl)); err != nil {
 			return fmt.Errorf("add column %s.%s: %w", c.table, c.name, err)
 		}
 	}
@@ -142,8 +193,8 @@ func ensureColumns(db *sql.DB) error {
 }
 
 // columnExists reports whether table has a column named column (via PRAGMA table_info).
-func columnExists(db *sql.DB, table, column string) (bool, error) {
-	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+func columnExists(q sqlExecQuerier, table, column string) (bool, error) {
+	rows, err := q.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
 	if err != nil {
 		return false, fmt.Errorf("table_info %s: %w", table, err)
 	}
