@@ -132,6 +132,12 @@ func (d *Daemon) hVaultInit(w http.ResponseWriter, r *http.Request) {
 		adminErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Init leaves the vault unlocked, so mirror the unlock side effects: announce it and
+	// best-effort auto-import the host's kubeconfig clusters now that the vault can encrypt their
+	// auth. First-run is exactly when there is nothing yet, so this seeds the clusters; a failure
+	// must NEVER fail the init (it is logged only). Further clusters are added manually.
+	d.publish("vault.unlocked", map[string]any{})
+	d.autoImportClusters()
 	writeJSON(w, http.StatusOK, map[string]bool{"initialized": true})
 }
 

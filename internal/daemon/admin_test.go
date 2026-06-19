@@ -429,6 +429,43 @@ contexts:
 	require.Equal(t, 2, count, "auto-import must be idempotent across unlocks")
 }
 
+// TestVaultInitAutoImportsClusters verifies a fresh `vault init` (no lock/unlock cycle) auto-imports
+// the host's kubeconfig clusters — first run is exactly when there is nothing yet.
+func TestVaultInitAutoImportsClusters(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+
+	src := `
+apiVersion: v1
+kind: Config
+clusters:
+  - name: c1
+    cluster: { server: https://c1.example:6443, insecure-skip-tls-verify: true }
+users:
+  - name: u
+    user: { token: t }
+contexts:
+  - name: kc-ctx-1
+    context: { cluster: c1, user: u }
+`
+	kcPath := filepath.Join(t.TempDir(), "config")
+	require.NoError(t, os.WriteFile(kcPath, []byte(src), 0o600))
+	t.Setenv("KUBECONFIG", kcPath)
+
+	// init only — no lock/unlock.
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	wl := req(t, h, "GET", "/upstreams", "")
+	require.Equal(t, http.StatusOK, wl.Code)
+	var ups []map[string]any
+	require.NoError(t, json.Unmarshal(wl.Body.Bytes(), &ups))
+	names := map[string]any{}
+	for _, u := range ups {
+		names[fmt.Sprint(u["name"])] = u["kind"]
+	}
+	require.Equal(t, "k8s", names["kc-ctx-1"], "init must auto-import kubeconfig clusters")
+}
+
 // TestClustersImportEndpoint drives POST /clusters/import directly.
 func TestClustersImportEndpoint(t *testing.T) {
 	d := newDaemon(t)
@@ -449,9 +486,12 @@ contexts:
 `
 	kcPath := filepath.Join(t.TempDir(), "config")
 	require.NoError(t, os.WriteFile(kcPath, []byte(src), 0o600))
-	t.Setenv("KUBECONFIG", kcPath)
 
+	// init while KUBECONFIG still points at newDaemon's nonexistent path, so the init auto-import is
+	// a no-op and this test isolates the explicit import ENDPOINT. Point KUBECONFIG at the source
+	// only afterward.
 	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+	t.Setenv("KUBECONFIG", kcPath)
 	w := req(t, h, "POST", "/clusters/import", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var res struct {

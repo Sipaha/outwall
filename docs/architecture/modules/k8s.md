@@ -41,7 +41,8 @@ Kubernetes-specific helpers, with no dependency on `k8s.io/client-go`.
   `secret.ErrLocked`. Missing paths are skipped. Returns non-nil `(added, skipped []string, err)`
   (a nil slice would JSON-encode to `null` and break the UI toast). It `slog.Warn`s loudly when
   registering a cluster whose kubeconfig disabled TLS verification (see ADR-0011). The daemon runs
-  it best-effort on vault unlock and via `POST /clusters/import`.
+  it best-effort on **vault init** (first run — seeds clusters) and on **vault unlock**, plus via
+  `POST /clusters/import`.
 - **`ImportContent` (K5)** — `Importer.ImportContent(data, baseDir)` parses one operator-uploaded
   kubeconfig document (the Clusters file-picker) and registers its contexts idempotently. Unlike
   the auto-scan, a non-kubeconfig upload is a **real error** (the operator explicitly chose the
