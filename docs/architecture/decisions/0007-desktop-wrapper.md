@@ -99,6 +99,14 @@ reference):
 - **App icon**: a generated flat mark at `cmd/outwall-desktop/logo.png` (embedded as the window
   `Icon` and the tray icon) — a white shield with a cut-out outward arrow on a teal tile (security +
   egress). Produced with PIL (supersampled vector-style render), legible down to ~22 px.
+- **Taskbar/dock icon (Linux/GTK4)**: GTK4 removed `gtk_window_set_icon`, so the embedded window
+  `Icon` does NOT drive the taskbar icon — GTK4 resolves it from a `.desktop` file matched to the
+  window's app_id (Wayland) / WM_CLASS (X11). On launch the wrapper idempotently installs
+  `~/.local/share/icons/hicolor/512x512/apps/org.wails.outwall.png` and
+  `~/.local/share/applications/org.wails.outwall.desktop` (`Icon=org.wails.outwall`,
+  `StartupWMClass=outwall`) via the CGO-free `desktop.InstallLinuxIntegration`, and sets
+  `Options.Linux.ProgramName = "outwall"` so WM_CLASS matches. The tray icon, by contrast, takes the
+  PNG directly — that path was already fine.
 - **OS notifications on access requests**: the desktop wraps the Wails `notifications` service
   (`application.NewService(notifications.New())`) and subscribes **in-process** to the daemon event
   bus (`daemon.Subscribe` → `desktop.Handle.Subscribe`, returning `events.Bus.Subscribe`). On

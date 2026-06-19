@@ -64,6 +64,17 @@ func run() error {
 		return err
 	}
 
+	// On Linux/GTK4 the window's taskbar icon is resolved from a .desktop file by app_id (GTK4
+	// dropped gtk_window_set_icon), so install one + a hicolor icon. Best-effort — a failure must
+	// not block launch. macOS/Windows take the icon from Options.Icon directly.
+	if runtime.GOOS == "linux" {
+		exe, _ := os.Executable()
+		if ierr := desktop.InstallLinuxIntegration(desktop.LinuxDataHome(), "outwall",
+			"Authenticating egress gateway for AI agents", exe, logoPNG); ierr != nil {
+			slog.Warn("install desktop integration (taskbar icon)", "err", ierr)
+		}
+	}
+
 	socketPath := filepath.Join(dir, "outwall.sock")
 
 	// Single-instance gate (ADR-0013): flock FIRST, before the daemon binds any port or the
@@ -133,6 +144,9 @@ func run() error {
 		Services: []application.Service{
 			application.NewService(notifs),
 		},
+		// Sets the X11 WM_CLASS so the .desktop StartupWMClass matches and the taskbar icon
+		// resolves (the GApplication app_id used on Wayland is org.wails.outwall — see linuxicon.go).
+		Linux: application.LinuxOptions{ProgramName: desktop.LinuxWMClass},
 	})
 
 	// The resolved Wails v3 (alpha2.103) WebviewWindowOptions has a `URL` field,
