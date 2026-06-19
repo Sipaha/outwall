@@ -96,5 +96,70 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
 	}
+	if err := ensureColumns(db); err != nil {
+		return err
+	}
 	return nil
+}
+
+// additiveColumns are columns that were ADDED to existing tables in later builds. On a database
+// created by an older build, ensureColumns adds any that are missing (idempotent
+// `ALTER TABLE … ADD COLUMN`), so a purely-additive schema change no longer forces a one-time DB
+// reset.
+//
+// SCOPE: additions only. A column REMOVAL or a semantic model change — e.g. the path-glob →
+// operation rule model that dropped `method`/`path_glob` for `op_*` (ADR-0014) — is NOT migratable
+// this way and still needs a one-time reset in alpha (full migrations are a Beta item). Only list a
+// column here when its absence is a pure addition to an otherwise-current table; every entry MUST
+// also exist in `schema` above (TestSchemaCoversAdditiveColumns enforces this), and the DDL must
+// carry a DEFAULT (SQLite requires one to ADD a NOT NULL column to a non-empty table).
+var additiveColumns = []struct{ table, name, ddl string }{
+	{"audit_log", "operation", "TEXT NOT NULL DEFAULT ''"},
+	{"audit_log", "vars_json", "TEXT NOT NULL DEFAULT ''"},
+	{"rules", "op_body_template", "TEXT NOT NULL DEFAULT '{}'"},
+	{"upstreams", "kind", "TEXT NOT NULL DEFAULT 'http'"},
+}
+
+// ensureColumns brings an older database's tables up to date by adding any missing additive column.
+// It is idempotent: a column that already exists is skipped, so a fresh DB (just built from
+// `schema`) is a no-op.
+func ensureColumns(db *sql.DB) error {
+	for _, c := range additiveColumns {
+		has, err := columnExists(db, c.table, c.name)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		// Table/column names here are hardcoded constants, not user input — no injection surface
+		// (and PRAGMA / ALTER do not accept bound parameters for identifiers anyway).
+		if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.table, c.name, c.ddl)); err != nil {
+			return fmt.Errorf("add column %s.%s: %w", c.table, c.name, err)
+		}
+	}
+	return nil
+}
+
+// columnExists reports whether table has a column named column (via PRAGMA table_info).
+func columnExists(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, fmt.Errorf("table_info %s: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid, notnull, pk int
+			name, ctype      string
+			dflt             sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }

@@ -13,9 +13,19 @@ and an index on `status`. Plan 4 added the audit journal (see ADR-0004): `audit_
 req_bytes, resp_bytes, decision, rule_id, headers_json, error`, indexed by `ts`) and
 `audit_bodies` (`log_id, kind, content_type, size, sha256, truncated, stored`, keyed by
 `(log_id, kind)`) — bodies live in their own table so the journal lists without reading blobs.
+A `settings(key, value)` KV table backs operator settings (e.g. audit retention — ADR-0018).
+
+**Migrations (ADR-0022).** `migrate` first applies `schema` (`CREATE TABLE IF NOT EXISTS`), then
+`ensureColumns` adds any missing **additive** column from `additiveColumns` via idempotent
+`ALTER TABLE … ADD COLUMN`, so a purely-additive schema growth no longer forces a one-time DB reset.
+This handles ADDITIONS only — a column removal / semantic model change (e.g. path-glob → operation
+rules, ADR-0014) is not migratable this way and still needs a reset in alpha; full migrations are a
+Beta item. `TestSchemaCoversAdditiveColumns` enforces that every `additiveColumns` entry also exists
+in `schema`.
 
 ## Public API
 
 - `Open(path string) (*Store, error)` — open/create the DB and run migrations.
 - `(*Store).DB() *sql.DB` — the underlying handle for other packages.
+- `(*Store).GetSetting(key) (string, bool, error)` / `SetSetting(key, value) error` — settings KV.
 - `(*Store).Close() error`.
