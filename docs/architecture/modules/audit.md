@@ -35,6 +35,9 @@ emits the record on session close (see `proxy.md`).
 - `(*Recorder).List(limit int) ([]Entry, error)` — newest first, no bodies (`limit ≤ 0 → 50`).
 - `(*Recorder).Get(id string) (Entry, []Body, error)` — with bodies; `ErrNotFound` if absent.
 - `(*Recorder).Prune(olderThan time.Time) (int64, error)` — delete rows with `ts < olderThan` (+ their bodies); returns count.
+- `(*Recorder).RetentionDays() (int, error)` / `SetRetentionDays(int) error` — the persisted auto-prune retention in days (0 = keep all; stored in the `settings` table). ADR-0018.
+- `(*Recorder).PruneByRetention(now time.Time) (int64, error)` — prune older than the stored retention (no-op when 0).
+- `(*Recorder).RunPruner(ctx context.Context, interval time.Duration)` — periodic background pruner; returns on `ctx.Done()` (run in a goroutine). The daemon starts it in `Serve`.
 - `MaskHeaders(h http.Header) map[string]string`.
 - `NewCapture(src io.ReadCloser, capBytes int, onClose func([]byte, int64, bool)) io.ReadCloser`.
 - `NewCaptureRef(src io.ReadCloser, capBytes int) (io.ReadCloser, *Capture)`; `(*Capture).Captured() ([]byte, int64, bool)`.

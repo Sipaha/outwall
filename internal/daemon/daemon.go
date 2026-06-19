@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/Sipaha/outwall/internal/access"
 	"github.com/Sipaha/outwall/internal/agent"
@@ -39,6 +40,9 @@ const DefaultMCPListen = "127.0.0.1:8181"
 // DefaultUIListen is the default localhost address for the desktop-UI control API + SSE listener.
 const DefaultUIListen = "127.0.0.1:8182"
 
+// DefaultPruneInterval is how often the background audit pruner enforces the retention setting.
+const DefaultPruneInterval = time.Hour
+
 // Config holds daemon paths/addresses.
 type Config struct {
 	DBPath     string
@@ -47,6 +51,10 @@ type Config struct {
 	MCPListen  string // MCP control-plane TCP listen address, e.g. 127.0.0.1:8181
 	UIListen   string // desktop-UI control API + SSE TCP listen address, e.g. 127.0.0.1:8182
 	CADir      string // local-CA dir; defaults to the DB's directory when empty
+
+	// PruneInterval is how often the background audit pruner enforces the stored retention. Zero
+	// uses DefaultPruneInterval; a negative value disables the pruner (tests / keep-all).
+	PruneInterval time.Duration
 
 	// OnFocusRequest, when non-nil, is invoked by the POST /desktop/focus admin route to
 	// raise the desktop window. The desktop wrapper sets it; a headless serve leaves it nil
@@ -171,6 +179,15 @@ func (d *Daemon) Serve(ctx context.Context) error {
 	dataSrv := &http.Server{Addr: d.cfg.Listen, Handler: d.dataPlane, TLSConfig: dataTLS}
 	mcpSrv := &http.Server{Addr: d.cfg.MCPListen, Handler: d.mcp}
 	uiSrv := &http.Server{Addr: d.cfg.UIListen, Handler: d.UIHandler()}
+
+	// Background audit pruner: enforces the stored retention setting until ctx is canceled.
+	pruneInterval := d.cfg.PruneInterval
+	if pruneInterval == 0 {
+		pruneInterval = DefaultPruneInterval
+	}
+	if pruneInterval > 0 {
+		go d.audit.RunPruner(ctx, pruneInterval)
+	}
 
 	errc := make(chan error, 4)
 	go func() { errc <- adminSrv.Serve(ln) }()

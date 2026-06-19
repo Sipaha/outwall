@@ -5,18 +5,24 @@
 package audit
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/Sipaha/outwall/internal/events"
 	"github.com/Sipaha/outwall/internal/store"
 )
+
+// retentionKey is the settings row holding the audit retention, in days. "0"/absent = keep all.
+const retentionKey = "audit_retention_days"
 
 // ErrNotFound is returned when an audit entry does not exist.
 var ErrNotFound = errors.New("audit entry not found")
@@ -232,6 +238,73 @@ func (r *Recorder) Get(id string) (Entry, []Body, error) {
 		return Entry{}, nil, err
 	}
 	return e, bodies, nil
+}
+
+// RetentionDays returns the configured audit retention in days (0 = keep all). A missing/blank or
+// malformed setting reads as 0.
+func (r *Recorder) RetentionDays() (int, error) {
+	v, ok, err := r.store.GetSetting(retentionKey)
+	if err != nil {
+		return 0, err
+	}
+	if !ok || v == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0, nil
+	}
+	return n, nil
+}
+
+// SetRetentionDays persists the audit retention in days. days must be >= 0 (0 = keep all).
+func (r *Recorder) SetRetentionDays(days int) error {
+	if days < 0 {
+		return fmt.Errorf("retention days must be >= 0")
+	}
+	return r.store.SetSetting(retentionKey, strconv.Itoa(days))
+}
+
+// PruneByRetention prunes entries older than the configured retention as of now. With retention 0
+// it is a no-op (returns 0). Used by the background pruner.
+func (r *Recorder) PruneByRetention(now time.Time) (int64, error) {
+	days, err := r.RetentionDays()
+	if err != nil {
+		return 0, err
+	}
+	if days <= 0 {
+		return 0, nil
+	}
+	return r.Prune(now.Add(-time.Duration(days) * 24 * time.Hour))
+}
+
+// RunPruner runs PruneByRetention every interval until ctx is canceled (it returns when ctx is
+// done — start it in a goroutine). interval <= 0 disables it (returns immediately). It runs one
+// pass immediately on start, then on each tick. Errors are logged, not fatal.
+func (r *Recorder) RunPruner(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	prune := func() {
+		n, err := r.PruneByRetention(time.Now().UTC())
+		switch {
+		case err != nil:
+			slog.Warn("audit prune failed", "err", err)
+		case n > 0:
+			slog.Info("audit pruned", "deleted", n)
+		}
+	}
+	prune()
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			prune()
+		}
+	}
 }
 
 // Prune deletes entries with ts < olderThan (and cascades their bodies); returns count.

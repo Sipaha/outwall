@@ -49,6 +49,8 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	mux.HandleFunc("GET /audit", d.hAuditList)
 	mux.HandleFunc("GET /audit/{id}", d.hAuditGet)
 	mux.HandleFunc("POST /audit/prune", d.hAuditPrune)
+	mux.HandleFunc("GET /settings/audit-retention", d.hAuditRetentionGet)
+	mux.HandleFunc("PUT /settings/audit-retention", d.hAuditRetentionSet)
 	mux.HandleFunc("GET /events", sseHandler(d.bus))
 	mux.HandleFunc("POST /desktop/focus", d.hDesktopFocus)
 	return mux
@@ -741,6 +743,34 @@ func (d *Daemon) hAuditGet(w http.ResponseWriter, r *http.Request) {
 	}
 	out["bodies"] = bodyOut
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (d *Daemon) hAuditRetentionGet(w http.ResponseWriter, _ *http.Request) {
+	days, err := d.audit.RetentionDays()
+	if err != nil {
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"days": days})
+}
+
+func (d *Daemon) hAuditRetentionSet(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Days int `json:"days"`
+	}
+	if err := decode(r, &body); err != nil {
+		adminErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if body.Days < 0 {
+		adminErr(w, http.StatusBadRequest, "days must be >= 0")
+		return
+	}
+	if err := d.audit.SetRetentionDays(body.Days); err != nil {
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"days": body.Days})
 }
 
 func (d *Daemon) hAuditPrune(w http.ResponseWriter, r *http.Request) {

@@ -75,6 +75,10 @@ CREATE TABLE IF NOT EXISTS audit_log (
 	error         TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS audit_log_by_ts ON audit_log(ts);
+CREATE TABLE IF NOT EXISTS settings (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS audit_bodies (
 	log_id       TEXT NOT NULL,
 	kind         TEXT NOT NULL,                 -- 'request' | 'response'

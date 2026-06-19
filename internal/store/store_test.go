@@ -29,3 +29,24 @@ func TestOpenAppliesSchemaIdempotently(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s2.Close())
 }
+
+func TestSettingsRoundTrip(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "outwall.db"))
+	require.NoError(t, err)
+	defer s.Close()
+
+	_, ok, err := s.GetSetting("missing")
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	require.NoError(t, s.SetSetting("k", "v1"))
+	v, ok, err := s.GetSetting("k")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "v1", v)
+
+	// Upsert overwrites.
+	require.NoError(t, s.SetSetting("k", "v2"))
+	v, _, _ = s.GetSetting("k")
+	require.Equal(t, "v2", v)
+}

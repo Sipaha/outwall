@@ -36,7 +36,22 @@ Admin endpoints: `POST /vault/init`, `POST /vault/unlock`, `GET /vault/status`,
 `POST /access-requests/{id}/resolve` (`{status}` ∈ granted/denied/dismissed; 404 if absent),
 `GET /audit?limit=N` (journal, newest first, no bodies), `GET /audit/{id}` (entry + masked
 headers + bodies; stored text bodies decoded to a `body` string, non-text → metadata only;
-404 if absent), `POST /audit/prune {older_than_rfc3339}` → `{deleted:N}`.
+404 if absent), `POST /audit/prune {older_than_rfc3339}` → `{deleted:N}`,
+`GET /settings/audit-retention` → `{days:N}`, `PUT /settings/audit-retention {days}` (validated
+≥0; `0` = keep all).
+
+**Background audit pruner.** `Serve` launches `audit.Recorder.RunPruner(ctx, PruneInterval)` in a
+goroutine: every interval (default `DefaultPruneInterval` = 1h) it reads the stored retention and
+deletes entries older than it (no-op when retention is 0). The goroutine exits on `ctx.Done()`.
+`Config.PruneInterval` overrides the cadence; a negative value disables the pruner (tests).
+
+**Headless / server mode.** `outwall serve` (or `make run-server`) runs the full daemon — data
+plane (HTTPS), MCP control plane, UI control-API+SSE listener, and the unix admin socket — with **no
+GUI**. The desktop Wails wrapper (`cmd/outwall-desktop`) is optional: it runs the same daemon
+in-process and renders the embedded UI, and is the only piece that needs CGO/GTK. In headless mode
+`Config.OnFocusRequest` is nil, so `POST /desktop/focus` simply has no window to raise. Unlock the
+vault headlessly with `outwall vault unlock --password-stdin` (ADR-0018). The UI is reachable at
+`http://127.0.0.1:8182/`.
 Resolving an access request only records the operator's decision — granting actual access is
 still done by creating rules via `POST /rules`. The daemon builds one `audit.Recorder` over the
 store and passes it to the proxy (see `audit.md`, ADR-0004).
@@ -44,7 +59,8 @@ store and passes it to the proxy (see `audit.md`, ADR-0004).
 ## Public API
 
 - `DefaultMCPListen = "127.0.0.1:8181"`; `DefaultUIListen = "127.0.0.1:8182"`.
-- `Config struct { DBPath, SocketPath, Listen, MCPListen, UIListen string }` (`MCPListen`/`UIListen` default to their `Default*` consts).
+- `Config struct { DBPath, SocketPath, Listen, MCPListen, UIListen, CADir string; PruneInterval time.Duration; OnFocusRequest func() }` (`MCPListen`/`UIListen` default to their `Default*` consts; `PruneInterval` 0 → `DefaultPruneInterval`, negative disables).
+- `DefaultPruneInterval = time.Hour`.
 - `New(cfg Config) (*Daemon, error)` — opens the store, builds vault + registries + proxy + MCP handler + event bus (no listeners).
 - `(*Daemon).AdminHandler() http.Handler` — the CSRF-free `apiMux` at root (unix socket).
 - `(*Daemon).UIHandler() http.Handler` — embedded SPA at `/` + `apiMux` under `/api` (CSRF-gated,

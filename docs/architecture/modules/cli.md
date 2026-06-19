@@ -4,7 +4,8 @@ The cobra command tree. `serve` runs the daemon; all other commands are thin cli
 admin socket. Persistent flags `--socket`, `--db`, `--listen`, `--mcp-listen` default under the
 user config dir (`--mcp-listen` defaults to `127.0.0.1:8181` and is wired into `daemon.Config`
 by `serve`). `vault init`/`unlock` prompt for the master password via the terminal
-(`golang.org/x/term`).
+(`golang.org/x/term`), or read it from stdin with `--password-stdin` (no TTY needed —
+`printf 'pw' | outwall vault unlock --password-stdin`; ADR-0018).
 
 Commands: `serve`, `vault init|unlock|status`, `upstream add|list`, `agent register|list`,
 `rule add|list|delete`, `approval list|resolve`, `access list|resolve` (`resolve <id>

@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"context"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -49,6 +50,49 @@ func TestRecordGetListPrune(t *testing.T) {
 	require.Equal(t, int64(1), n)
 	list, _ = rec.List(50)
 	require.Empty(t, list)
+}
+
+func TestRetentionAndPruneByRetention(t *testing.T) {
+	rec := newRec(t)
+	now := time.Now().UTC()
+	// One old entry (10 days ago) and one fresh (1h ago).
+	require.NoError(t, rec.Record(Entry{TS: now.Add(-10 * 24 * time.Hour), Path: "/old"}))
+	require.NoError(t, rec.Record(Entry{TS: now.Add(-time.Hour), Path: "/new"}))
+
+	// Retention defaults to 0 (keep all) → no-op.
+	days, err := rec.RetentionDays()
+	require.NoError(t, err)
+	require.Equal(t, 0, days)
+	n, err := rec.PruneByRetention(now)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), n)
+
+	// Set 7-day retention → the 10-day-old entry is pruned, the fresh one stays.
+	require.NoError(t, rec.SetRetentionDays(7))
+	days, err = rec.RetentionDays()
+	require.NoError(t, err)
+	require.Equal(t, 7, days)
+	n, err = rec.PruneByRetention(now)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), n)
+	list, _ := rec.List(50)
+	require.Len(t, list, 1)
+	require.Equal(t, "/new", list[0].Path)
+
+	require.Error(t, rec.SetRetentionDays(-1))
+}
+
+func TestRunPrunerStopsOnContextCancel(t *testing.T) {
+	rec := newRec(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { rec.RunPruner(ctx, 10*time.Millisecond); close(done) }()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunPruner did not exit on context cancel")
+	}
 }
 
 func TestMaskHeaders(t *testing.T) {

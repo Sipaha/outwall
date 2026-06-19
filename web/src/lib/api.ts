@@ -57,7 +57,7 @@ function fetchWithTimeout(url: string, opts?: RequestInit, timeoutMs = 30_000): 
   return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer))
 }
 
-type HttpMethod = 'GET' | 'POST' | 'DELETE'
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
 /**
  * Single transport: prefixes API_BASE, attaches the CSRF header and Content-Type, serializes
@@ -236,4 +236,12 @@ export function getAudit(id: string): Promise<AuditDetail> {
 
 export function pruneAudit(olderThanRFC3339: string): Promise<{ deleted: number }> {
   return request('POST', '/audit/prune', { older_than_rfc3339: olderThanRFC3339 })
+}
+
+export function getAuditRetention(): Promise<{ days: number }> {
+  return request('GET', '/settings/audit-retention')
+}
+
+export function setAuditRetention(days: number): Promise<{ days: number }> {
+  return request('PUT', '/settings/audit-retention', { days })
 }

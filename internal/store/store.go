@@ -35,5 +35,29 @@ func Open(path string) (*Store, error) {
 // DB returns the underlying database handle.
 func (s *Store) DB() *sql.DB { return s.db }
 
+// GetSetting returns the value for key and whether it was present. A missing key returns ("",
+// false, nil) — not an error — so callers can fall back to a default.
+func (s *Store) GetSetting(key string) (string, bool, error) {
+	var v string
+	err := s.db.QueryRow(`SELECT value FROM settings WHERE key=?`, key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("get setting %q: %w", key, err)
+	}
+	return v, true, nil
+}
+
+// SetSetting upserts the value for key.
+func (s *Store) SetSetting(key, value string) error {
+	if _, err := s.db.Exec(
+		`INSERT INTO settings (key, value) VALUES (?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value); err != nil {
+		return fmt.Errorf("set setting %q: %w", key, err)
+	}
+	return nil
+}
+
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }

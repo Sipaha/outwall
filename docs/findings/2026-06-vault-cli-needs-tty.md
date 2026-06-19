@@ -2,6 +2,11 @@
 
 **Date:** 2026-06-17 (Plan 1)
 
+> **RESOLVED 2026-06-19 (Phase 4 P2, ADR-0018).** `vault init` and `vault unlock` now take a
+> `--password-stdin` flag that reads the password from stdin (trimming one trailing newline / CRLF)
+> instead of prompting, e.g. `printf 'pw' | outwall vault unlock --password-stdin`. The interactive
+> `term.ReadPassword` prompt stays the default. The note below is retained for context.
+
 ## What
 
 `outwall vault init` and `outwall vault unlock` read the master password via
