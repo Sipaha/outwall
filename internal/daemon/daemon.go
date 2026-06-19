@@ -61,6 +61,12 @@ type Config struct {
 	// (the route then answers non-2xx — there is no window to focus). Single-instance gate
 	// (ADR-0013): a second launch posts here over the unix socket to focus the running app.
 	OnFocusRequest func()
+
+	// OpenURL, when non-nil, opens a URL in the operator's system browser. The desktop wrapper
+	// sets it (to internal/browser.Open) because the embedded webview drops window.open; the OIDC
+	// login handler uses it so "Log in" works in the desktop app. Nil in browser/headless mode —
+	// there the front-end's window.open reaches the real browser (ADR-0021).
+	OpenURL func(string) error
 }
 
 // Daemon owns the running gateway.

@@ -67,6 +67,29 @@ func TestOAuthCallbackEscapesReflectedError(t *testing.T) {
 	require.Contains(t, body, "&lt;script&gt;")
 }
 
+func TestOAuthLoginOpensSystemBrowserInDesktopMode(t *testing.T) {
+	d := newDaemon(t)
+	require.NoError(t, d.vault.Init("pw"))
+	_, err := d.upstreams.Create("api.test", "https://api.test", upstream.AuthConfig{
+		Type: "oidc-authorization-code", ClientID: "cid",
+		AuthURL: "https://idp.test/authorize", TokenURL: "https://idp.test/token",
+	})
+	require.NoError(t, err)
+
+	var openedURL string
+	d.cfg.OpenURL = func(u string) error { openedURL = u; return nil }
+
+	w := req(t, d.AdminHandler(), "POST", "/upstreams/api.test/oauth/login", "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var lr struct {
+		URL    string `json:"url"`
+		Opened bool   `json:"opened"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &lr))
+	require.True(t, lr.Opened, "desktop mode must report the browser was opened server-side")
+	require.Equal(t, lr.URL, openedURL, "the OpenURL hook receives the authorize URL")
+}
+
 func TestOAuthLoginRejectsNonOIDCUpstream(t *testing.T) {
 	d := newDaemon(t)
 	require.NoError(t, d.vault.Init("pw"))

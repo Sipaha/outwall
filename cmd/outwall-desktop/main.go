@@ -28,6 +28,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
+	"github.com/Sipaha/outwall/internal/browser"
 	"github.com/Sipaha/outwall/internal/config"
 	"github.com/Sipaha/outwall/internal/daemon"
 	"github.com/Sipaha/outwall/internal/desktop"
@@ -92,6 +93,9 @@ func run() error {
 		UIListen:       uiListen,
 		MCPListen:      mcpListen,
 		OnFocusRequest: func() { application.InvokeAsync(raiseToFront) },
+		// The embedded webview drops window.open, so OIDC browser-login URLs are opened in the
+		// operator's real system browser from the Go side (ADR-0021).
+		OpenURL: browser.Open,
 	})
 	if err != nil {
 		return err

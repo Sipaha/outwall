@@ -97,7 +97,18 @@ func (d *Daemon) hOAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	verifier := authn.GenerateVerifier()
 	d.oauthLogins.put(state, oauthLogin{upstreamID: up.ID, verifier: verifier, expiry: time.Now().Add(oauthLoginTTL)})
-	writeJSON(w, http.StatusOK, map[string]string{"url": authn.AuthCodeURL(cfg, state, verifier)})
+	authURL := authn.AuthCodeURL(cfg, state, verifier)
+	// In the desktop app the embedded webview drops window.open, so open the system browser from
+	// here. In browser/headless mode OpenURL is nil and the front-end's window.open does the job.
+	opened := false
+	if d.cfg.OpenURL != nil {
+		if err := d.cfg.OpenURL(authURL); err != nil {
+			slog.Error("oauth: open system browser", "err", err)
+		} else {
+			opened = true
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"url": authURL, "opened": opened})
 }
 
 // hOAuthCallback (GET /oauth/callback) is the IdP redirect target. It exchanges the code (with the

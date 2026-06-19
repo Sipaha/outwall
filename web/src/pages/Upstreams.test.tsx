@@ -96,7 +96,9 @@ describe('<Hosts> (Upstreams.tsx)', () => {
         auth_type: 'oidc-authorization-code',
       },
     ])
-    const loginSpy = vi.spyOn(api, 'oauthLogin').mockResolvedValue({ url: 'https://idp/authorize?x=1' })
+    const loginSpy = vi
+      .spyOn(api, 'oauthLogin')
+      .mockResolvedValue({ url: 'https://idp/authorize?x=1', opened: false })
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
     render(<Upstreams />)
 

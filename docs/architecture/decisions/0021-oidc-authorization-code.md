@@ -35,6 +35,12 @@ direct dependency), with the login flow coordinated by the daemon.
   authorize URL and the exchange.
 - **UI** — the Upstreams auth form gains the type + its fields; a **Log in** button on an
   authorization-code host starts the flow and opens the browser.
+- **Desktop webview caveat** — the embedded WebKitGTK webview (Wails v3 connects no
+  `create`/`decide-policy` signal on Linux) silently drops `window.open` to a new window, so in the
+  desktop app the front-end cannot open the login URL. The new CGO-free `internal/browser.Open`
+  (xdg-open/open/rundll32, http(s)-only) handles it: the desktop wrapper sets `Config.OpenURL =
+  browser.Open`, the login handler opens the system browser server-side and reports `opened:true`,
+  and the front-end only `window.open`s when `opened` is false (browser/headless mode).
 
 ## Alternatives considered
 

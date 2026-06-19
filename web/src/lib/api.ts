@@ -132,7 +132,7 @@ export function setUpstreamAuth(name: string, auth: UpstreamAuthConfig): Promise
  * Start a browser OIDC authorization-code login for an upstream. Returns the IdP authorize URL;
  * the caller opens it in a browser. outwall holds the resulting token — the agent never sees it.
  */
-export function oauthLogin(name: string): Promise<{ url: string }> {
+export function oauthLogin(name: string): Promise<{ url: string; opened: boolean }> {
   return request('POST', `/upstreams/${encodeURIComponent(name)}/oauth/login`)
 }
 

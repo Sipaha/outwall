@@ -343,8 +343,10 @@ export function Upstreams() {
 
   async function startLogin(u: Upstream) {
     try {
-      const { url } = await oauthLogin(u.name)
-      window.open(url, '_blank', 'noopener')
+      const { url, opened } = await oauthLogin(u.name)
+      // In the desktop app the daemon already opened the system browser (opened=true); in the
+      // plain-browser UI we open it here (the webview would drop window.open).
+      if (!opened) window.open(url, '_blank', 'noopener')
       push('success', 'Opened the browser sign-in — complete it, then return here.')
     } catch (err) {
       push('error', err instanceof ApiError ? err.message : 'Failed to start login')
