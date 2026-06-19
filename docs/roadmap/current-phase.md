@@ -28,9 +28,11 @@ draft-cavage HTTP signatures; per-agent rate-limit dashboards; audit size-based 
 
 ## Done
 
-- **Desktop: system tray + minimise-to-tray + app icon** (ADR-0007 addendum). Closing the window
-  hides it (outwall keeps running); a tray icon with left-click→raise and a right-click **Exit**
-  quits. New generated flat app/tray icon (`cmd/outwall-desktop/logo.png`). Also: `vault init` now
+- **Desktop: system tray + minimise-to-tray + app icon + access-request notifications** (ADR-0007
+  addendum). Closing the window hides it (outwall keeps running); a tray icon with left-click→raise
+  and a right-click **Exit** quits. New generated flat app/tray icon (`cmd/outwall-desktop/logo.png`).
+  An **OS notification** fires when an agent requests access (`approval.enqueued`, via in-process
+  `daemon.Subscribe`); clicking it raises the outwall window. Also: `vault init` now
   auto-imports kubeconfig clusters (was unlock-only); store gained a **versioned migration runner**
   (PRAGMA user_version + ordered steps) over the additive `ensureColumns` baseline (ADR-0022/0023);
   OIDC login opens the system browser in the desktop app (webview drops `window.open`).

@@ -148,6 +148,7 @@ func (q *Queue) Submit(ctx context.Context, p Pending) (bool, error) {
 	if pub := q.publisher(); pub != nil {
 		evt := map[string]any{
 			"id": p.ID, "agent_id": p.AgentID, "upstream_id": p.UpstreamID,
+			"host":   p.Host, // set for MCP host/operation approvals; empty for data-plane/k8s
 			"method": p.Method, "path": p.Path, "purpose": p.Purpose,
 			// k8s tuple (empty for http approvals) so the console can render the change target.
 			"namespace": p.Namespace, "resource": p.Resource, "verb": p.Verb,

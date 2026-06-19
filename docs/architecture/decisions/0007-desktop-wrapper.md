@@ -99,3 +99,11 @@ reference):
 - **App icon**: a generated flat mark at `cmd/outwall-desktop/logo.png` (embedded as the window
   `Icon` and the tray icon) — a white shield with a cut-out outward arrow on a teal tile (security +
   egress). Produced with PIL (supersampled vector-style render), legible down to ~22 px.
+- **OS notifications on access requests**: the desktop wraps the Wails `notifications` service
+  (`application.NewService(notifications.New())`) and subscribes **in-process** to the daemon event
+  bus (`daemon.Subscribe` → `desktop.Handle.Subscribe`, returning `events.Bus.Subscribe`). On
+  `approval.enqueued` (an agent requested access → operator decision pending) it raises an OS
+  notification (`SendNotification`); `OnNotificationResponse` raises the window on click — so the
+  operator is prompted even with the window hidden in the tray. The `approval.enqueued` payload
+  gained a `host` field for the message. In-process subscription (not the SSE HTTP stream) keeps it
+  independent of the webview lifecycle.

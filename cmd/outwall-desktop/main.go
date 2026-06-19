@@ -24,11 +24,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
+	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 
 	"github.com/Sipaha/outwall/internal/browser"
 	"github.com/Sipaha/outwall/internal/config"
@@ -119,11 +121,18 @@ func run() error {
 	}
 	defer stopDaemon()
 
+	// Desktop OS notifications: raised when an agent requests access (approval.enqueued). The
+	// service must be registered with the app; clicking a notification raises the window.
+	notifs := notifications.New()
+
 	app := application.New(application.Options{
 		Name:        "outwall",
 		Description: "Authenticating egress gateway for AI agents",
 		Icon:        logoPNG,
 		OnShutdown:  stopDaemon,
+		Services: []application.Service{
+			application.NewService(notifs),
+		},
 	})
 
 	// The resolved Wails v3 (alpha2.103) WebviewWindowOptions has a `URL` field,
@@ -170,6 +179,31 @@ func run() error {
 	tray.SetMenu(trayMenu)
 	tray.OnClick(func() { application.InvokeAsync(raiseToFront) })
 
+	// Clicking an OS notification raises the outwall window (even when minimised to the tray).
+	notifs.OnNotificationResponse(func(notifications.NotificationResult) {
+		application.InvokeAsync(raiseToFront)
+	})
+
+	// Raise an OS notification whenever an agent requests access (an approval is enqueued), so the
+	// operator is prompted even with the window hidden in the tray. Subscribes to the in-process
+	// daemon event bus; the goroutine ends when the process exits.
+	go func() {
+		evCh, cancelSub := h.Subscribe()
+		defer cancelSub()
+		for ev := range evCh {
+			if ev.Type != "approval.enqueued" {
+				continue
+			}
+			data, _ := ev.Data.(map[string]any)
+			title, body := approvalNotice(data)
+			if err := notifs.SendNotification(notifications.NotificationOptions{
+				ID: notifID(data), Title: title, Body: body,
+			}); err != nil {
+				slog.Warn("send access-request notification", "err", err)
+			}
+		}
+	}()
+
 	// SIGINT/SIGTERM → app.Quit() (Wails' clean shutdown: tears down the window
 	// and the event loop, then fires OnShutdown which stops the daemon). A bare
 	// ctx cancel would stop the daemon but leave the Wails loop running, hanging
@@ -192,6 +226,41 @@ func run() error {
 		return runErr
 	}
 	return nil
+}
+
+// approvalNotice builds the OS-notification title/body for an approval.enqueued event. It uses the
+// human-readable host when present, else the HTTP method+path or the k8s resource, plus the purpose.
+func approvalNotice(data map[string]any) (title, body string) {
+	title = "outwall — access request"
+	subject := str(data["host"])
+	if subject == "" {
+		subject = strings.TrimSpace(str(data["method"]) + " " + str(data["path"]))
+	}
+	if subject == "" {
+		subject = str(data["resource"])
+	}
+	if subject == "" {
+		subject = "an external resource"
+	}
+	body = "An agent requested access to " + subject
+	if p := str(data["purpose"]); p != "" {
+		body += " — " + p
+	}
+	return title, body
+}
+
+// notifID returns a stable notification id from the approval id, falling back to a constant.
+func notifID(data map[string]any) string {
+	if id := str(data["id"]); id != "" {
+		return "approval-" + id
+	}
+	return "approval"
+}
+
+// str returns v as a string, or "" if it is nil/not a string.
+func str(v any) string {
+	s, _ := v.(string)
+	return s
 }
 
 // dataDir resolves (and creates) the outwall data directory ($HOME/.spk/outwall).

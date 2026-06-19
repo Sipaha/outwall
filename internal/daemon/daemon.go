@@ -161,6 +161,11 @@ func New(cfg Config) (*Daemon, error) {
 // Close releases resources.
 func (d *Daemon) Close() error { return d.store.Close() }
 
+// Subscribe returns a channel of domain events plus a cancel func (see events.Bus.Subscribe). The
+// desktop wrapper uses it in-process to raise OS notifications (e.g. on approval.enqueued) without
+// going through the SSE HTTP stream.
+func (d *Daemon) Subscribe() (<-chan events.Event, func()) { return d.bus.Subscribe() }
+
 // CAPEM returns the local CA certificate (PEM) the data plane is served with.
 func (d *Daemon) CAPEM() []byte { return d.ca.CAPEM() }
 

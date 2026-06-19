@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Sipaha/outwall/internal/daemon"
+	"github.com/Sipaha/outwall/internal/events"
 )
 
 // readyTimeout bounds how long Run waits for the UIListen bind to answer 200
@@ -116,6 +117,10 @@ func waitReady(uiURL string, serveErr <-chan error) error {
 		time.Sleep(pollInterval)
 	}
 }
+
+// Subscribe returns a channel of the in-process daemon's domain events plus a cancel func, so the
+// desktop wrapper can raise OS notifications (e.g. on approval.enqueued) directly.
+func (h *Handle) Subscribe() (<-chan events.Event, func()) { return h.d.Subscribe() }
 
 // Stop cancels the daemon context, waits (bounded by ctx) for Serve to return,
 // and closes the store. It is safe — and idempotent — to call more than once:
