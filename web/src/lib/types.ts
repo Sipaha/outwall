@@ -16,7 +16,7 @@ export interface Agent {
 
 /** Upstream auth config (secrets omitted on list responses; used on create). */
 export interface UpstreamAuthConfig {
-  type: string // none | static | basic | oidc-client-credentials
+  type: string // none | static | basic | oidc-client-credentials | mtls | sigv4 | hmac
   header?: string
   token?: string
   username?: string
@@ -25,6 +25,19 @@ export interface UpstreamAuthConfig {
   client_id?: string
   client_secret?: string
   scope?: string
+  // mTLS (client certificate presented to the upstream):
+  client_cert?: string
+  client_key?: string
+  ca_bundle?: string
+  // AWS Signature V4:
+  aws_access_key_id?: string
+  aws_secret_access_key?: string
+  aws_region?: string
+  aws_service?: string
+  // HMAC request signature:
+  hmac_secret?: string
+  hmac_header?: string
+  hmac_algo?: string // sha256 (default) | sha512
 }
 
 /** GET /api/upstreams — secrets intentionally omitted by the daemon. */

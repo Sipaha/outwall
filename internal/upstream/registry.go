@@ -19,7 +19,7 @@ var ErrNotFound = errors.New("upstream not found")
 
 // AuthConfig is the (encrypted-at-rest) credential material for an upstream.
 type AuthConfig struct {
-	Type     string `json:"type"` // none | static | basic | oidc-client-credentials
+	Type     string `json:"type"` // none | static | basic | oidc-client-credentials | mtls | sigv4 | hmac
 	Header   string `json:"header,omitempty"`
 	Token    string `json:"token,omitempty"`
 	Username string `json:"username,omitempty"`
@@ -30,6 +30,20 @@ type AuthConfig struct {
 	ClientID     string `json:"client_id,omitempty"`
 	ClientSecret string `json:"client_secret,omitempty"`
 	Scope        string `json:"scope,omitempty"`
+
+	// AWS Signature V4 (type "sigv4"). The request is signed with these static credentials.
+	AWSAccessKeyID     string `json:"aws_access_key_id,omitempty"`
+	AWSSecretAccessKey string `json:"aws_secret_access_key,omitempty"`
+	AWSRegion          string `json:"aws_region,omitempty"`
+	AWSService         string `json:"aws_service,omitempty"`
+
+	// HMAC request signature (type "hmac"). See ADR-0019 for the canonical-string scheme.
+	HMACSecret string `json:"hmac_secret,omitempty"`
+	HMACHeader string `json:"hmac_header,omitempty"` // header to carry the signature, e.g. X-Signature
+	HMACAlgo   string `json:"hmac_algo,omitempty"`   // sha256 (default) | sha512
+
+	// mTLS (type "mtls") reuses ClientCert/ClientKey (+ optional CABundle) below for an http
+	// upstream — the client certificate is presented to the upstream over TLS.
 
 	// Kubernetes cluster connection (when the owning upstream Kind=="k8s"):
 	CABundle    string            `json:"ca_bundle,omitempty"`    // PEM, trusts the API server

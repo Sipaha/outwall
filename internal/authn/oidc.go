@@ -108,6 +108,8 @@ func NewManager(hc *http.Client) *Manager {
 func fingerprint(kind string, c upstream.AuthConfig) string {
 	return strings.Join([]string{kind, c.Type, c.Header, c.Token, c.Username, c.Password,
 		c.TokenURL, c.ClientID, c.ClientSecret, c.Scope,
+		c.AWSAccessKeyID, c.AWSSecretAccessKey, c.AWSRegion, c.AWSService,
+		c.HMACSecret, c.HMACHeader, c.HMACAlgo,
 		c.CABundle, c.K8sAuth, c.ClientCert, c.ClientKey, c.ExecCommand,
 		strings.Join(c.ExecArgs, "\x01"), execEnvFingerprint(c.ExecEnv)}, "\x00")
 }
@@ -189,6 +191,14 @@ func (mgr *Manager) build(kind string, cfg upstream.AuthConfig) (Authenticator, 
 		return &oidcClientCreds{hc: mgr.hc, tokenURL: cfg.TokenURL, clientID: cfg.ClientID,
 			secret: cfg.ClientSecret, scope: cfg.Scope}, nil, nil
 	}
-	a, err := For(cfg) // stateless types
+	if cfg.Type == "mtls" {
+		// mTLS needs a per-upstream TLS transport (client cert); the authenticator is a no-op.
+		tr, err := mtlsTransport(cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		return noneAuth{}, tr, nil
+	}
+	a, err := For(cfg) // stateless types (incl. sigv4/hmac, which need no transport)
 	return a, nil, err
 }

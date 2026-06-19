@@ -38,6 +38,9 @@ function AuthFields({ auth, setAuth }: AuthFieldsProps) {
             { value: 'static', label: 'Static header / API key' },
             { value: 'basic', label: 'Basic' },
             { value: 'oidc-client-credentials', label: 'OIDC client-credentials' },
+            { value: 'mtls', label: 'mTLS (client certificate)' },
+            { value: 'sigv4', label: 'AWS SigV4' },
+            { value: 'hmac', label: 'HMAC signature' },
           ]}
         />
       </FormField>
@@ -118,6 +121,108 @@ function AuthFields({ auth, setAuth }: AuthFieldsProps) {
               value={auth.scope ?? ''}
               onChange={(e) => setAuth({ ...auth, scope: e.target.value })}
               aria-label="Scope"
+            />
+          </FormField>
+        </>
+      )}
+      {auth.type === 'mtls' && (
+        <>
+          <FormField label="Client certificate (PEM)">
+            <textarea
+              className={fieldControlClass}
+              rows={3}
+              value={auth.client_cert ?? ''}
+              onChange={(e) => setAuth({ ...auth, client_cert: e.target.value })}
+              aria-label="Client certificate"
+            />
+          </FormField>
+          <FormField label="Client key (PEM)">
+            <textarea
+              className={fieldControlClass}
+              rows={3}
+              value={auth.client_key ?? ''}
+              onChange={(e) => setAuth({ ...auth, client_key: e.target.value })}
+              aria-label="Client key"
+            />
+          </FormField>
+          <FormField label="CA bundle (PEM, optional)">
+            <textarea
+              className={fieldControlClass}
+              rows={2}
+              value={auth.ca_bundle ?? ''}
+              onChange={(e) => setAuth({ ...auth, ca_bundle: e.target.value })}
+              aria-label="CA bundle"
+            />
+          </FormField>
+        </>
+      )}
+      {auth.type === 'sigv4' && (
+        <>
+          <FormField label="AWS access key ID">
+            <input
+              className={fieldControlClass}
+              value={auth.aws_access_key_id ?? ''}
+              onChange={(e) => setAuth({ ...auth, aws_access_key_id: e.target.value })}
+              aria-label="AWS access key ID"
+            />
+          </FormField>
+          <FormField label="AWS secret access key">
+            <input
+              className={fieldControlClass}
+              type="password"
+              value={auth.aws_secret_access_key ?? ''}
+              onChange={(e) => setAuth({ ...auth, aws_secret_access_key: e.target.value })}
+              aria-label="AWS secret access key"
+            />
+          </FormField>
+          <FormField label="Region">
+            <input
+              className={fieldControlClass}
+              value={auth.aws_region ?? ''}
+              onChange={(e) => setAuth({ ...auth, aws_region: e.target.value })}
+              placeholder="us-east-1"
+              aria-label="AWS region"
+            />
+          </FormField>
+          <FormField label="Service">
+            <input
+              className={fieldControlClass}
+              value={auth.aws_service ?? ''}
+              onChange={(e) => setAuth({ ...auth, aws_service: e.target.value })}
+              placeholder="execute-api"
+              aria-label="AWS service"
+            />
+          </FormField>
+        </>
+      )}
+      {auth.type === 'hmac' && (
+        <>
+          <FormField label="Secret">
+            <input
+              className={fieldControlClass}
+              type="password"
+              value={auth.hmac_secret ?? ''}
+              onChange={(e) => setAuth({ ...auth, hmac_secret: e.target.value })}
+              aria-label="HMAC secret"
+            />
+          </FormField>
+          <FormField label="Signature header">
+            <input
+              className={fieldControlClass}
+              value={auth.hmac_header ?? ''}
+              onChange={(e) => setAuth({ ...auth, hmac_header: e.target.value })}
+              placeholder="X-Signature"
+              aria-label="HMAC header"
+            />
+          </FormField>
+          <FormField label="Algorithm">
+            <Select
+              value={auth.hmac_algo ?? 'sha256'}
+              onChange={(v) => setAuth({ ...auth, hmac_algo: v })}
+              options={[
+                { value: 'sha256', label: 'SHA-256' },
+                { value: 'sha512', label: 'SHA-512' },
+              ]}
             />
           </FormField>
         </>

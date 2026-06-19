@@ -24,7 +24,7 @@ blob (so the token is masked at rest exactly like `Create`). See ADR-0015.
 ## Public API
 
 - `KindHTTP = "http"`, `KindK8s = "k8s"`.
-- `AuthConfig struct { Type, Header, Token, Username, Password, TokenURL, ClientID, ClientSecret, Scope string; CABundle, K8sAuth, ClientCert, ClientKey, ExecCommand string; ExecArgs []string; ExecEnv map[string]string; K8sInsecureSkipVerify bool }`.
+- `AuthConfig struct { Type, Header, Token, Username, Password, TokenURL, ClientID, ClientSecret, Scope string; AWSAccessKeyID, AWSSecretAccessKey, AWSRegion, AWSService string (sigv4); HMACSecret, HMACHeader, HMACAlgo string (hmac); CABundle, K8sAuth, ClientCert, ClientKey, ExecCommand string (ClientCert/ClientKey/CABundle also back http mtls — ADR-0019); ExecArgs []string; ExecEnv map[string]string; K8sInsecureSkipVerify bool }`.
 - `Upstream struct { ID, Name, BaseURL, Kind, AuthType string; Auth AuthConfig; CreatedAt time.Time }`
 - `NewRegistry(s *store.Store, v *secret.Vault) *Registry`
 - `(*Registry).Create(name, baseURL string, auth AuthConfig) (*Upstream, error)` — http kind; delegates to `CreateKind`.

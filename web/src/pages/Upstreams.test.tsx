@@ -86,4 +86,31 @@ describe('<Hosts> (Upstreams.tsx)', () => {
       }),
     )
   })
+
+  it('shows sigv4 fields and submits them', async () => {
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([])
+    const createSpy = vi.spyOn(api, 'createUpstream').mockResolvedValue({ id: 'new' })
+    render(<Upstreams />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add host' }))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'aws' } })
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://api.aws' } })
+    fireEvent.change(screen.getByDisplayValue('None'), { target: { value: 'sigv4' } })
+
+    fireEvent.change(await screen.findByLabelText('AWS access key ID'), { target: { value: 'AKID' } })
+    fireEvent.change(screen.getByLabelText('AWS secret access key'), { target: { value: 'SECRET' } })
+    fireEvent.change(screen.getByLabelText('AWS region'), { target: { value: 'us-east-1' } })
+    fireEvent.change(screen.getByLabelText('AWS service'), { target: { value: 'execute-api' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+    await waitFor(() =>
+      expect(createSpy).toHaveBeenCalledWith('aws', 'https://api.aws', {
+        type: 'sigv4',
+        aws_access_key_id: 'AKID',
+        aws_secret_access_key: 'SECRET',
+        aws_region: 'us-east-1',
+        aws_service: 'execute-api',
+      }),
+    )
+  })
 })

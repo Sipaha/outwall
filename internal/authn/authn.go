@@ -34,6 +34,14 @@ func For(cfg upstream.AuthConfig) (Authenticator, error) {
 		// A fresh, non-shared instance: caching across requests happens only via Manager.
 		return &oidcClientCreds{hc: http.DefaultClient, tokenURL: cfg.TokenURL,
 			clientID: cfg.ClientID, secret: cfg.ClientSecret, scope: cfg.Scope}, nil
+	case "mtls":
+		// mTLS injects no header — the credential is the client cert presented by the transport
+		// (built in Manager.build). For standalone callers it is a no-op header authenticator.
+		return noneAuth{}, nil
+	case "sigv4":
+		return newSigV4Auth(cfg)
+	case "hmac":
+		return newHMACAuth(cfg)
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnsupported, cfg.Type)
 	}
