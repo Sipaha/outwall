@@ -13,9 +13,11 @@ regardless of whether the id exists; a missing id returns `ErrNotFound`.
 
 - `ErrNotFound`.
 - Status consts: `StatusPending = "pending"`, `StatusGranted = "granted"`, `StatusDenied = "denied"`, `StatusDismissed = "dismissed"`.
-- `Request struct { ID, AgentID, UpstreamID, Purpose, Status string; CreatedAt time.Time; ResolvedAt string }`.
+- `Request struct { ID, AgentID, UpstreamID, Purpose, Status, Reason string; CreatedAt time.Time; ResolvedAt string }` (`Reason` = operator deny reason, ADR-0024).
 - `NewRegistry(s *store.Store) *Registry`.
 - `(*Registry).Create(agentID, upstreamID, purpose string) (*Request, error)` — logs a new intent with status `pending`.
 - `(*Registry).List() ([]*Request, error)` — newest first.
 - `(*Registry).Pending() ([]*Request, error)` — status `pending`, newest first.
 - `(*Registry).Resolve(id, status string) error` — records the decision (`granted`/`denied`/`dismissed`) + `resolved_at=now`; validates status; `ErrNotFound` if absent.
+- `(*Registry).DenyLatest(agentID, upstreamID, reason string) (bool, error)` — marks the latest *pending* request for the pair denied + reason; reports whether a row matched (ADR-0024).
+- `(*Registry).Latest(agentID, upstreamID string) (*Request, bool, error)` — the most recent request for the pair; `get_access` consults it to surface a denial + reason.

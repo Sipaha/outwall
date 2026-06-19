@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS access_requests (
 	upstream_id TEXT NOT NULL,
 	purpose     TEXT NOT NULL DEFAULT '',
 	status      TEXT NOT NULL DEFAULT 'pending',   -- pending | granted | denied | dismissed
+	reason      TEXT NOT NULL DEFAULT '',          -- operator's deny reason, surfaced to the agent
 	created_at  TEXT NOT NULL,
 	resolved_at TEXT NOT NULL DEFAULT ''
 );
@@ -169,6 +170,7 @@ var additiveColumns = []struct{ table, name, ddl string }{
 	{"audit_log", "vars_json", "TEXT NOT NULL DEFAULT ''"},
 	{"rules", "op_body_template", "TEXT NOT NULL DEFAULT '{}'"},
 	{"upstreams", "kind", "TEXT NOT NULL DEFAULT 'http'"},
+	{"access_requests", "reason", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // ensureColumns brings an older database's tables up to date by adding any missing additive column.

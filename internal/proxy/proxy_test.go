@@ -133,7 +133,7 @@ func TestProxyOperationEnforcement(t *testing.T) {
 	// (2) a new value blocks on approval; once approved the set is extended and it proceeds.
 	go func() {
 		require.Eventually(t, func() bool { return len(appr.List()) == 1 }, time.Second, 10*time.Millisecond)
-		_ = appr.Resolve(appr.List()[0].ID, true)
+		_ = appr.Resolve(appr.List()[0].ID, true, "")
 	}()
 	w = do(t, h, http.MethodGet, "/example.test/projects/b/pipelines", token)
 	require.Equal(t, http.StatusOK, w.Code, "new value approved → proceeds")
@@ -150,7 +150,7 @@ func TestProxyOperationEnforcement(t *testing.T) {
 	// A denied new-value approval returns 403.
 	go func() {
 		require.Eventually(t, func() bool { return len(appr.List()) == 1 }, time.Second, 10*time.Millisecond)
-		_ = appr.Resolve(appr.List()[0].ID, false)
+		_ = appr.Resolve(appr.List()[0].ID, false, "")
 	}()
 	w = do(t, h, http.MethodGet, "/example.test/projects/c/pipelines", token)
 	require.Equal(t, http.StatusForbidden, w.Code, "denied new value → 403")
@@ -230,7 +230,7 @@ func TestProxyRequireApprovalBlocksUntilResolved(t *testing.T) {
 
 	go func() {
 		require.Eventually(t, func() bool { return len(appr.List()) == 1 }, time.Second, 10*time.Millisecond)
-		_ = appr.Resolve(appr.List()[0].ID, true)
+		_ = appr.Resolve(appr.List()[0].ID, true, "")
 	}()
 	w := do(t, h, http.MethodGet, "/be/x", token)
 	require.Equal(t, http.StatusOK, w.Code)

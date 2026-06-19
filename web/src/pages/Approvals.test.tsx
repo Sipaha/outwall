@@ -31,6 +31,36 @@ describe('<Approvals>', () => {
     await waitFor(() => expect(resolveSpy).toHaveBeenCalledWith('p1', true))
   })
 
+  it('denies with a reason (opens the modal, sends reason)', async () => {
+    vi.spyOn(api, 'listApprovals').mockResolvedValue([
+      {
+        id: 'p1',
+        agent_id: 'agent-1234',
+        upstream_id: 'up-1234',
+        method: 'GET',
+        path: '/repos',
+        purpose: 'fetch repos',
+        created_at: '2026-06-17T10:00:00Z',
+      },
+    ])
+    vi.spyOn(api, 'listAccessRequests').mockResolvedValue([])
+    const resolveSpy = vi.spyOn(api, 'resolveApproval').mockResolvedValue({ ok: true })
+
+    render(<Approvals />)
+
+    // Clicking Deny opens the reason modal rather than resolving immediately.
+    fireEvent.click(await screen.findByRole('button', { name: 'Deny' }))
+    const reason = await screen.findByLabelText('Deny reason')
+    fireEvent.change(reason, { target: { value: 'not on prod' } })
+    // The modal's Deny (submit) button — there are now two "Deny" buttons; pick the last (modal).
+    const denyButtons = screen.getAllByRole('button', { name: 'Deny' })
+    fireEvent.click(denyButtons[denyButtons.length - 1])
+
+    await waitFor(() =>
+      expect(resolveSpy).toHaveBeenCalledWith('p1', false, { reason: 'not on prod' }),
+    )
+  })
+
   it('renders the k8s tuple and the patch body for a k8s approval', async () => {
     vi.spyOn(api, 'listApprovals').mockResolvedValue([
       {

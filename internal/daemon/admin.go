@@ -501,6 +501,9 @@ func (d *Daemon) hApprovalList(w http.ResponseWriter, _ *http.Request) {
 func (d *Daemon) hApprovalResolve(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Approve bool `json:"approve"`
+		// Reason is the operator's optional explanation when denying — surfaced to the agent
+		// (the blocked data-plane response, or get_access for an MCP request). Ignored on approve.
+		Reason string `json:"reason"`
 		// Auth is the host credential the operator attaches when approving a KindHostAccess
 		// request (optional — the operator may attach it later via the upstreams API).
 		Auth *upstream.AuthConfig `json:"auth"`
@@ -517,14 +520,22 @@ func (d *Daemon) hApprovalResolve(w http.ResponseWriter, r *http.Request) {
 	// Inspect the pending so MCP control-plane approvals (host / operation) run their side
 	// effects before we unpark the waiter. Data-plane new-value / k8s approvals have empty Kind
 	// and are resolved by the queue alone (unchanged).
-	if p, ok := d.approvals.Get(id); ok && body.Approve {
-		if err := d.applyApprovalSideEffects(p, body.Auth, body.TrustAny); err != nil {
-			adminErr(w, http.StatusBadRequest, err.Error())
-			return
+	if p, ok := d.approvals.Get(id); ok {
+		if body.Approve {
+			if err := d.applyApprovalSideEffects(p, body.Auth, body.TrustAny); err != nil {
+				adminErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		} else if p.Kind != "" && body.Reason != "" {
+			// MCP host/operation deny: persist the reason on the agent's access-request log so the
+			// agent learns WHY when it polls get_access (the data-plane path gets it via the queue).
+			if _, derr := d.access.DenyLatest(p.AgentID, p.UpstreamID, body.Reason); derr != nil {
+				slog.Warn("record deny reason", "err", derr)
+			}
 		}
 	}
 
-	switch err := d.approvals.Resolve(id, body.Approve); {
+	switch err := d.approvals.Resolve(id, body.Approve, body.Reason); {
 	case err == nil:
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	case errors.Is(err, approval.ErrNotFound):
@@ -675,7 +686,7 @@ func (d *Daemon) hAccessRequestList(w http.ResponseWriter, _ *http.Request) {
 		out = append(out, map[string]string{
 			"id": req.ID, "agent_id": req.AgentID, "agent_name": agentNames[req.AgentID],
 			"upstream_id": req.UpstreamID, "upstream_name": upstreamNames[req.UpstreamID],
-			"purpose": req.Purpose, "status": req.Status,
+			"purpose": req.Purpose, "status": req.Status, "reason": req.Reason,
 			"created_at": req.CreatedAt.Format(time.RFC3339Nano), "resolved_at": req.ResolvedAt,
 		})
 	}

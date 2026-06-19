@@ -31,8 +31,9 @@ waiter (see `admin.go` / ADR-0015). The blocking `Submit`/`Resolve` mechanism it
 - `NewValue struct { Var, Value string }`; `Variable struct { Name, Type string }`.
 - `Pending struct { ID, AgentID, UpstreamID, Method, Path, Purpose string; CreatedAt time.Time; Kind, Host string; OpMethod, OpPathTemplate string; OpQueryTemplate map[string]string; OpVariables []Variable; OpValues map[string]string; Namespace, Resource, Verb string; RuleID string; NewValues []NewValue; Template string; RequestBody []byte }` (the k8s / op / new-value field groups are empty unless that kind set them).
 - `NewQueue() *Queue` (default timeout) / `NewQueueWithTimeout(d time.Duration) *Queue`.
-- `(*Queue).SetPublisher(p events.Publisher)` — nil-safe; `Submit` then publishes `approval.enqueued` `{id, agent_id, upstream_id, method, path, purpose, namespace, resource, verb[, new_values, template, rule_id][, request_body]}` and `Resolve` publishes `approval.resolved` `{id, approved}` (see ADR-0005 / ADR-0009).
-- `(*Queue).Submit(ctx context.Context, p Pending) (approved bool, err error)` — generates the entry ID; `false,nil` on timeout, `false,ctx.Err()` on cancel.
+- `(*Queue).SetPublisher(p events.Publisher)` — nil-safe; `Submit` then publishes `approval.enqueued` `{id, agent_id, upstream_id, host, method, path, purpose, namespace, resource, verb[, new_values, template, rule_id][, request_body]}` and `Resolve` publishes `approval.resolved` `{id, approved, reason}` (see ADR-0005 / ADR-0009 / ADR-0024).
+- `Decision struct { Approved bool; Reason string }` — the operator's verdict; `Reason` is the optional deny explanation surfaced to the agent (ADR-0024).
+- `(*Queue).Submit(ctx context.Context, p Pending) (Decision, error)` — generates the entry ID; a timeout/cancel yields a non-approved `Decision{}` (timeout → `nil` err, cancel → `ctx.Err()`).
 - `(*Queue).List() []Pending` — snapshot of waiting entries.
 - `(*Queue).Get(id string) (Pending, bool)` — snapshot one entry by id (for the resolve path to inspect its `Kind`).
-- `(*Queue).Resolve(id string, approve bool) error` — `ErrNotFound` for an unknown id.
+- `(*Queue).Resolve(id string, approve bool, reason string) error` — `ErrNotFound` for an unknown id; `reason` is delivered on deny (ignored on approve).

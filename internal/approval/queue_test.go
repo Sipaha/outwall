@@ -40,7 +40,7 @@ func TestResolvePublishesResolved(t *testing.T) {
 		close(done)
 	}()
 	require.Eventually(t, func() bool { return len(q.List()) == 1 }, time.Second, 10*time.Millisecond)
-	require.NoError(t, q.Resolve(q.List()[0].ID, true))
+	require.NoError(t, q.Resolve(q.List()[0].ID, true, ""))
 	<-done
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
@@ -51,27 +51,46 @@ func TestSubmitApprove(t *testing.T) {
 	q := NewQueueWithTimeout(2 * time.Second)
 	done := make(chan bool, 1)
 	go func() {
-		ok, err := q.Submit(context.Background(), Pending{AgentID: "a1", UpstreamID: "u1", Method: "DELETE", Path: "/x", Purpose: "cleanup"})
+		d, err := q.Submit(context.Background(), Pending{AgentID: "a1", UpstreamID: "u1", Method: "DELETE", Path: "/x", Purpose: "cleanup"})
 		require.NoError(t, err)
-		done <- ok
+		done <- d.Approved
 	}()
 
 	// Wait for it to appear in the queue, then approve it.
 	require.Eventually(t, func() bool { return len(q.List()) == 1 }, time.Second, 10*time.Millisecond)
 	id := q.List()[0].ID
-	require.NoError(t, q.Resolve(id, true))
+	require.NoError(t, q.Resolve(id, true, ""))
 	require.True(t, <-done)
 	require.Empty(t, q.List()) // removed after resolve
 }
 
 func TestSubmitTimeout(t *testing.T) {
 	q := NewQueueWithTimeout(100 * time.Millisecond)
-	ok, err := q.Submit(context.Background(), Pending{AgentID: "a1", UpstreamID: "u1"})
+	d, err := q.Submit(context.Background(), Pending{AgentID: "a1", UpstreamID: "u1"})
 	require.NoError(t, err)
-	require.False(t, ok) // timed out → denied
+	require.False(t, d.Approved) // timed out → denied
+}
+
+func TestResolveDeliversDenyReason(t *testing.T) {
+	q := NewQueueWithTimeout(2 * time.Second)
+	type res struct {
+		d   Decision
+		err error
+	}
+	done := make(chan res, 1)
+	go func() {
+		d, err := q.Submit(context.Background(), Pending{AgentID: "a1", UpstreamID: "u1"})
+		done <- res{d, err}
+	}()
+	require.Eventually(t, func() bool { return len(q.List()) == 1 }, time.Second, 10*time.Millisecond)
+	require.NoError(t, q.Resolve(q.List()[0].ID, false, "not on prod"))
+	got := <-done
+	require.NoError(t, got.err)
+	require.False(t, got.d.Approved)
+	require.Equal(t, "not on prod", got.d.Reason)
 }
 
 func TestResolveUnknown(t *testing.T) {
 	q := NewQueue()
-	require.ErrorIs(t, q.Resolve("nope", true), ErrNotFound)
+	require.ErrorIs(t, q.Resolve("nope", true, ""), ErrNotFound)
 }

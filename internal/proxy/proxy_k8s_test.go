@@ -194,7 +194,7 @@ func TestK8sApprovalPatchProceedsOnApprove(t *testing.T) {
 	go func() {
 		require.Eventually(t, func() bool { return len(appr.List()) == 1 }, time.Second, 10*time.Millisecond)
 		pend = appr.List()[0]
-		_ = appr.Resolve(pend.ID, true)
+		_ = appr.Resolve(pend.ID, true, "")
 	}()
 
 	w := doBody(t, h, http.MethodPatch, patchPath, token, "application/merge-patch+json", patchBody)
@@ -215,7 +215,7 @@ func TestK8sApprovalPatchDeniedReturns403AndDoesNotCallUpstream(t *testing.T) {
 
 	go func() {
 		require.Eventually(t, func() bool { return len(appr.List()) == 1 }, time.Second, 10*time.Millisecond)
-		_ = appr.Resolve(appr.List()[0].ID, false)
+		_ = appr.Resolve(appr.List()[0].ID, false, "")
 	}()
 
 	w := doBody(t, h, http.MethodPatch, patchPath, token, "application/merge-patch+json", patchBody)

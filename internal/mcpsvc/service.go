@@ -304,6 +304,12 @@ func (s *Service) RequestAccess(agentID string, in RequestAccessInput) (AccessRe
 	}
 	_ = tmpl // parsed only to validate; the rule is (re)created from the raw shape on approve.
 
+	// Log the intent so an operator deny (with a reason) has a request row to mark, which
+	// get_access then surfaces back to this agent.
+	if _, err := s.access.Create(agentID, up.ID, in.Purpose); err != nil {
+		return AccessResult{}, fmt.Errorf("log access request: %w", err)
+	}
+
 	vars := make([]approval.Variable, 0, len(in.Variables))
 	for _, v := range in.Variables {
 		vars = append(vars, approval.Variable{Name: v.Name, Type: v.Type})
@@ -354,7 +360,20 @@ func (s *Service) GetAccess(agentID, upstreamName string) (AccessResult, error) 
 	if err != nil {
 		return AccessResult{}, err
 	}
-	return toAccessResult(st, up.Name, allowing), nil
+	res := toAccessResult(st, up.Name, allowing)
+	// No granting rule yet: if the agent's most recent request was denied by the operator, surface
+	// that (with the reason) instead of a bare "pending", so the agent stops polling and learns why.
+	if res.Status != "granted" {
+		if req, ok, lerr := s.access.Latest(agentID, up.ID); lerr == nil && ok && req.Status == "denied" {
+			res.Status = "denied"
+			if req.Reason != "" {
+				res.Memo = "denied by the operator: " + req.Reason
+			} else {
+				res.Memo = "denied by the operator"
+			}
+		}
+	}
+	return res, nil
 }
 
 // WhoAmI returns the agent's own identity and the upstreams it currently has open.

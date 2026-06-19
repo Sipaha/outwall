@@ -31,6 +31,7 @@ type Request struct {
 	UpstreamID string
 	Purpose    string
 	Status     string
+	Reason     string // operator's deny reason (when Status == denied), surfaced to the agent
 	CreatedAt  time.Time
 	ResolvedAt string
 }
@@ -69,7 +70,7 @@ func (r *Registry) Create(agentID, upstreamID, purpose string) (*Request, error)
 	return req, nil
 }
 
-const reqCols = `id, agent_id, upstream_id, purpose, status, created_at, resolved_at`
+const reqCols = `id, agent_id, upstream_id, purpose, status, reason, created_at, resolved_at`
 
 func (r *Registry) scanRows(query string, args ...any) ([]*Request, error) {
 	rows, err := r.store.DB().Query(query, args...)
@@ -84,7 +85,7 @@ func (r *Registry) scanRows(query string, args ...any) ([]*Request, error) {
 			created string
 		)
 		if err := rows.Scan(&req.ID, &req.AgentID, &req.UpstreamID, &req.Purpose,
-			&req.Status, &created, &req.ResolvedAt); err != nil {
+			&req.Status, &req.Reason, &created, &req.ResolvedAt); err != nil {
 			return nil, err
 		}
 		req.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
@@ -104,6 +105,42 @@ func (r *Registry) Pending() ([]*Request, error) {
 		`SELECT `+reqCols+` FROM access_requests WHERE status=? ORDER BY created_at DESC`,
 		StatusPending,
 	)
+}
+
+// DenyLatest marks the most recent PENDING request for (agentID, upstreamID) as denied with the
+// given reason, stamping resolved_at. It reports whether a row was updated (false when the agent has
+// no pending request for that upstream). Used by the approval-resolve path so an MCP agent learns
+// WHY when it polls get_access.
+func (r *Registry) DenyLatest(agentID, upstreamID, reason string) (bool, error) {
+	res, err := r.store.DB().Exec(
+		`UPDATE access_requests SET status=?, reason=?, resolved_at=?
+		 WHERE id = (SELECT id FROM access_requests
+		             WHERE agent_id=? AND upstream_id=? AND status=?
+		             ORDER BY created_at DESC LIMIT 1)`,
+		StatusDenied, reason, time.Now().UTC().Format(time.RFC3339Nano),
+		agentID, upstreamID, StatusPending,
+	)
+	if err != nil {
+		return false, fmt.Errorf("deny latest access request: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// Latest returns the most recent access request for (agentID, upstreamID), or (nil,false) if none.
+// get_access consults it so a just-denied request surfaces its status + reason to the agent.
+func (r *Registry) Latest(agentID, upstreamID string) (*Request, bool, error) {
+	reqs, err := r.scanRows(
+		`SELECT `+reqCols+` FROM access_requests WHERE agent_id=? AND upstream_id=? ORDER BY created_at DESC LIMIT 1`,
+		agentID, upstreamID,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(reqs) == 0 {
+		return nil, false, nil
+	}
+	return reqs[0], true, nil
 }
 
 // Resolve records the operator's decision (granted/denied/dismissed) and stamps resolved_at.

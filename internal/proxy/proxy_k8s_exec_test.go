@@ -191,7 +191,7 @@ func TestK8sExecUpgradeApprovalBlocksUntilApproved(t *testing.T) {
 	// Resolve the approval (allow) once it parks.
 	go func() {
 		require.Eventually(t, func() bool { return len(appr.List()) == 1 }, 3*time.Second, 10*time.Millisecond)
-		_ = appr.Resolve(appr.List()[0].ID, true)
+		_ = appr.Resolve(appr.List()[0].ID, true, "")
 	}()
 
 	conn, br, resp := dialUpgrade(t, srv.URL, execPath, token)

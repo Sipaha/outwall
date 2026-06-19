@@ -9,6 +9,7 @@ import {
 import type { Approval, AccessRequest, ResolveOptions, UpstreamAuthConfig } from '../lib/types'
 import { useEventStore } from '../lib/events'
 import { DataTable } from '../components/DataTable'
+import { Modal } from '../components/Modal'
 import { StatusBadge } from '../components/StatusBadge'
 import { FormField, fieldControlClass } from '../components/FormField'
 import { Select } from '../components/Select'
@@ -372,6 +373,9 @@ function ApprovalCard(props: CardProps) {
 export function Approvals() {
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [requests, setRequests] = useState<AccessRequest[]>([])
+  // Deny-with-reason: clicking Deny opens this modal; the (optional) reason is sent to the agent.
+  const [denyId, setDenyId] = useState<string | null>(null)
+  const [denyReason, setDenyReason] = useState('')
   const push = useToastStore((s) => s.push)
 
   const counters = useEventStore((s) => s.counters)
@@ -404,6 +408,19 @@ export function Approvals() {
     }
   }
 
+  // openDeny is passed to cards in place of an immediate deny: it opens the reason modal.
+  function openDeny(id: string) {
+    setDenyId(id)
+    setDenyReason('')
+  }
+
+  function confirmDeny(e?: React.FormEvent) {
+    e?.preventDefault()
+    const id = denyId
+    setDenyId(null)
+    if (id) void decide(id, false, denyReason.trim() ? { reason: denyReason.trim() } : undefined)
+  }
+
   async function resolveAccess(id: string, status: string) {
     try {
       await resolveAccessRequest(id, status)
@@ -427,7 +444,15 @@ export function Approvals() {
         ) : (
           <div className="space-y-2">
             {approvals.map((a) => (
-              <ApprovalCard key={a.id} approval={a} onResolve={decide} />
+              <ApprovalCard
+                key={a.id}
+                approval={a}
+                onResolve={(id, approve, opts) => {
+                  // Deny routes through the reason modal; approve goes straight through.
+                  if (!approve) openDeny(id)
+                  else void decide(id, true, opts)
+                }}
+              />
             ))}
           </div>
         )}
@@ -448,7 +473,17 @@ export function Approvals() {
             { header: 'Agent', cell: (r) => r.agent_name || shortId(r.agent_id) },
             { header: 'Upstream', cell: (r) => r.upstream_name || shortId(r.upstream_id) },
             { header: 'Purpose', cell: (r) => r.purpose },
-            { header: 'Status', cell: (r) => <StatusBadge status={r.status} /> },
+            {
+              header: 'Status',
+              cell: (r) => (
+                <div className="space-y-0.5">
+                  <StatusBadge status={r.status} />
+                  {r.status === 'denied' && r.reason && (
+                    <div className="text-[11px] text-muted-foreground italic">{r.reason}</div>
+                  )}
+                </div>
+              ),
+            },
             { header: 'When', cell: (r) => fmtTime(r.created_at), className: 'text-muted-foreground' },
             {
               header: '',
@@ -479,6 +514,39 @@ export function Approvals() {
           ]}
         />
       </section>
+
+      <Modal
+        open={denyId !== null}
+        title="Deny request"
+        onClose={() => setDenyId(null)}
+        onSubmit={confirmDeny}
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setDenyId(null)}
+              className="rounded bg-muted px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+            <button type="submit" className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-white hover:opacity-90">
+              Deny
+            </button>
+          </>
+        }
+      >
+        <FormField label="Reason (optional — shown to the agent)">
+          <textarea
+            className={fieldControlClass}
+            rows={3}
+            value={denyReason}
+            onChange={(e) => setDenyReason(e.target.value)}
+            placeholder="e.g. not allowed on production"
+            aria-label="Deny reason"
+            autoFocus
+          />
+        </FormField>
+      </Modal>
     </div>
   )
 }

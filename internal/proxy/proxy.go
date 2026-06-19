@@ -194,14 +194,19 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "access denied")
 		return
 	case policy.RequireApproval:
-		ok, err := h.Approvals.Submit(r.Context(), pending)
+		verdict, err := h.Approvals.Submit(r.Context(), pending)
 		if err != nil {
 			writeErr(w, http.StatusGatewayTimeout, "approval wait canceled")
 			return
 		}
-		if !ok {
-			h.recordOutcome(r, ag, up, relPath, http.StatusForbidden, "require-approval", dec.Rule, "request not approved")
-			writeErr(w, http.StatusForbidden, "request not approved")
+		if !verdict.Approved {
+			// Surface the operator's deny reason (if any) to the agent and the audit record.
+			msg := "request not approved"
+			if verdict.Reason != "" {
+				msg += ": " + verdict.Reason
+			}
+			h.recordOutcome(r, ag, up, relPath, http.StatusForbidden, "require-approval", dec.Rule, msg)
+			writeErr(w, http.StatusForbidden, msg)
 			return
 		}
 		// An approved http new-value request extends the matched rule's value-sets so the same

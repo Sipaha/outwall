@@ -157,6 +157,7 @@ export interface Approval {
 export interface ResolveOptions {
   auth?: UpstreamAuthConfig
   trust_any?: string[]
+  reason?: string // operator's explanation on deny, surfaced to the agent
 }
 
 /** GET /api/access-requests — logged access-request intents. */
@@ -168,6 +169,7 @@ export interface AccessRequest {
   upstream_name: string
   purpose: string
   status: string // pending | granted | denied | dismissed
+  reason?: string // operator's deny reason (when denied)
   created_at: string
   resolved_at: string
 }

@@ -28,6 +28,11 @@ draft-cavage HTTP signatures; per-agent rate-limit dashboards; audit size-based 
 
 ## Done
 
+- **Deny with a reason** (ADR-0024). The operator can attach a reason when denying; it reaches the
+  agent on the blocking data-plane 403 and via MCP `get_access` (`access_requests.reason` +
+  `DenyLatest`/`Latest`), and is recorded (audit error / `approval.resolved`). Approval queue now
+  carries `Decision{Approved,Reason}`; Approvals UI has a reason modal + shows it on denied rows.
+
 - **Desktop: system tray + minimise-to-tray + app icon + access-request notifications** (ADR-0007
   addendum). Closing the window hides it (outwall keeps running); a tray icon with left-click→raise
   and a right-click **Exit** quits. New generated flat app/tray icon (`cmd/outwall-desktop/logo.png`).

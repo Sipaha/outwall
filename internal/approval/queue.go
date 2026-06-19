@@ -95,9 +95,16 @@ type Pending struct {
 	RequestBody []byte
 }
 
+// Decision is the operator's verdict on a pending approval. Reason is an optional human-readable
+// explanation the operator may attach when denying (surfaced to the agent — see ADR addendum).
+type Decision struct {
+	Approved bool
+	Reason   string
+}
+
 type waiter struct {
 	p  Pending
-	ch chan bool
+	ch chan Decision
 }
 
 // Queue holds in-flight approval waiters.
@@ -136,11 +143,12 @@ func newID() string {
 	return hex.EncodeToString(b)
 }
 
-// Submit parks until Resolve, timeout, or ctx cancellation.
-func (q *Queue) Submit(ctx context.Context, p Pending) (bool, error) {
+// Submit parks until Resolve, timeout, or ctx cancellation, returning the operator's Decision (a
+// timeout or cancellation yields a non-approved Decision with no reason).
+func (q *Queue) Submit(ctx context.Context, p Pending) (Decision, error) {
 	p.ID = newID()
 	p.CreatedAt = time.Now().UTC()
-	w := &waiter{p: p, ch: make(chan bool, 1)}
+	w := &waiter{p: p, ch: make(chan Decision, 1)}
 	q.mu.Lock()
 	q.waiters[p.ID] = w
 	q.mu.Unlock()
@@ -176,12 +184,12 @@ func (q *Queue) Submit(ctx context.Context, p Pending) (bool, error) {
 	timer := time.NewTimer(q.timeout)
 	defer timer.Stop()
 	select {
-	case ok := <-w.ch:
-		return ok, nil
+	case d := <-w.ch:
+		return d, nil
 	case <-timer.C:
-		return false, nil
+		return Decision{}, nil
 	case <-ctx.Done():
-		return false, ctx.Err()
+		return Decision{}, ctx.Err()
 	}
 }
 
@@ -209,17 +217,21 @@ func (q *Queue) Get(id string) (Pending, bool) {
 	return w.p, true
 }
 
-// Resolve delivers a decision to a waiting Submit.
-func (q *Queue) Resolve(id string, approve bool) error {
+// Resolve delivers a decision to a waiting Submit. reason is an optional operator explanation,
+// surfaced to the agent on deny; it is ignored on approve.
+func (q *Queue) Resolve(id string, approve bool, reason string) error {
 	q.mu.Lock()
 	w, ok := q.waiters[id]
 	q.mu.Unlock()
 	if !ok {
 		return ErrNotFound
 	}
-	w.ch <- approve
+	if approve {
+		reason = ""
+	}
+	w.ch <- Decision{Approved: approve, Reason: reason}
 	if pub := q.publisher(); pub != nil {
-		pub.Publish("approval.resolved", map[string]any{"id": id, "approved": approve})
+		pub.Publish("approval.resolved", map[string]any{"id": id, "approved": approve, "reason": reason})
 	}
 	return nil
 }
