@@ -28,6 +28,13 @@ draft-cavage HTTP signatures; per-agent rate-limit dashboards; audit size-based 
 
 ## Done
 
+- **Desktop: system tray + minimise-to-tray + app icon** (ADR-0007 addendum). Closing the window
+  hides it (outwall keeps running); a tray icon with left-click→raise and a right-click **Exit**
+  quits. New generated flat app/tray icon (`cmd/outwall-desktop/logo.png`). Also: `vault init` now
+  auto-imports kubeconfig clusters (was unlock-only); store gained a **versioned migration runner**
+  (PRAGMA user_version + ordered steps) over the additive `ensureColumns` baseline (ADR-0022/0023);
+  OIDC login opens the system browser in the desktop app (webview drops `window.open`).
+
 - **Phase 4 — Feature expansion (P1–P5).** Five independent features.
   - **P1 number/enum variable types** (ADR-0017): `optemplate` number(`IsNumber`)/enum placeholders;
     `policy` number-range gate + enum closed-set **hard-deny** (text still grows via approval);

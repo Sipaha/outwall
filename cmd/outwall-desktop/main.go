@@ -23,10 +23,12 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"github.com/Sipaha/outwall/internal/browser"
 	"github.com/Sipaha/outwall/internal/config"
@@ -140,6 +142,33 @@ func run() error {
 			"F12": func(w application.Window) { w.OpenDevTools() },
 		},
 	})
+
+	// Minimise-to-tray: closing the window (the X button) HIDES it instead of quitting — outwall
+	// keeps running in the background so agents and the data plane stay up. The WindowClosing hook
+	// runs before the built-in destroy listener and cancels it (HandleWindowEvent stops dispatching
+	// once a hook cancels), mirroring citeck-launcher. The only real quit is the tray's Exit item.
+	mainWindow.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		mainWindow.Hide()
+		e.Cancel()
+	})
+
+	// System tray: keeps outwall reachable while the window is hidden. Left-click raises the window;
+	// right-click opens the menu (Open / Exit). Tray callbacks may fire off the UI thread, so window
+	// calls are marshalled onto it via InvokeAsync (off-thread Wails calls deadlock GTK).
+	tray := app.SystemTray.New()
+	tray.SetLabel("outwall")
+	tray.SetTooltip("outwall — egress gateway")
+	if runtime.GOOS == "darwin" {
+		tray.SetTemplateIcon(logoPNG)
+	} else {
+		tray.SetIcon(logoPNG)
+	}
+	trayMenu := app.NewMenu()
+	trayMenu.Add("Open").OnClick(func(_ *application.Context) { application.InvokeAsync(raiseToFront) })
+	trayMenu.AddSeparator()
+	trayMenu.Add("Exit").OnClick(func(_ *application.Context) { app.Quit() })
+	tray.SetMenu(trayMenu)
+	tray.OnClick(func() { application.InvokeAsync(raiseToFront) })
 
 	// SIGINT/SIGTERM → app.Quit() (Wails' clean shutdown: tears down the window
 	// and the event loop, then fires OnShutdown which stops the daemon). A bare

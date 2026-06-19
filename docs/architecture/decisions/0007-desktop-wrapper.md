@@ -77,3 +77,25 @@ forces: no Docker, no zero-downtime-upgrade contract, no binary-selection/rollba
 - Wails churn is contained to `cmd/outwall-desktop/main.go`. A future Wails upgrade re-confirms
   the API there (`go doc github.com/wailsapp/wails/v3/pkg/application`) and touches nothing else.
 - Resolved dependency: `github.com/wailsapp/wails/v3 v3.0.0-alpha2.103`.
+
+## Addendum (2026-06-19): system tray + minimise-to-close + app icon
+
+The desktop app now lives in the **system tray** and treats the window's close button as
+**minimise-to-tray**, not quit — outwall keeps running (data plane, MCP, UI) in the background so
+agents stay served while the window is hidden. Pattern mirrors citeck-launcher (the working Wails v3
+reference):
+
+- A `WindowClosing` **hook** (`mainWindow.RegisterHook(events.Common.WindowClosing, …)`) calls
+  `Hide()` then `e.Cancel()`. Hooks run before listeners in `HandleWindowEvent`, and a cancel stops
+  dispatch — so the built-in destroy listener (registered in `NewWithOptions`) is skipped and the
+  window only hides. `app.Quit()` is unaffected: `app.cleanup()` nils the window list and calls
+  `postQuit()` regardless of the per-window cancel, so **Exit** still quits cleanly (firing
+  `OnShutdown` → daemon stop).
+- A `SystemTray` (`app.SystemTray.New()`) with the app icon, tooltip, **left-click → raise window**
+  (`raiseToFront`, which `Show()`s a hidden window then does the ADR-0013 keep-above raise), and a
+  right-click **menu**: *Open* (raise) + *Exit* (`app.Quit()`). Tray callbacks are marshalled onto
+  the UI thread via `InvokeAsync` (off-thread Wails calls deadlock GTK). `SetTemplateIcon` on macOS,
+  `SetIcon` elsewhere.
+- **App icon**: a generated flat mark at `cmd/outwall-desktop/logo.png` (embedded as the window
+  `Icon` and the tray icon) — a white shield with a cut-out outward arrow on a teal tile (security +
+  egress). Produced with PIL (supersampled vector-style render), legible down to ~22 px.
