@@ -128,6 +128,14 @@ export function setUpstreamAuth(name: string, auth: UpstreamAuthConfig): Promise
   return request('POST', `/upstreams/${encodeURIComponent(name)}/auth`, { auth })
 }
 
+/**
+ * Start a browser OIDC authorization-code login for an upstream. Returns the IdP authorize URL;
+ * the caller opens it in a browser. outwall holds the resulting token — the agent never sees it.
+ */
+export function oauthLogin(name: string): Promise<{ url: string }> {
+  return request('POST', `/upstreams/${encodeURIComponent(name)}/oauth/login`)
+}
+
 // --- Clusters (kind=k8s upstreams) ---
 
 /** Create a kind=k8s cluster. Reuses POST /upstreams with kind:"k8s". */

@@ -45,6 +45,13 @@ goroutine: every interval (default `DefaultPruneInterval` = 1h) it reads the sto
 deletes entries older than it (no-op when retention is 0). The goroutine exits on `ctx.Done()`.
 `Config.PruneInterval` overrides the cadence; a negative value disables the pruner (tests).
 
+**OIDC browser login (ADR-0021).** `POST /upstreams/{name}/oauth/login` starts an
+authorization-code login (mints a CSRF `state` + PKCE verifier, returns the IdP authorize URL).
+`GET /oauth/callback` is served **top-level on the UI listener** (not under `/api`, CSRF-exempt —
+a browser redirect; the random state is the binding) and exchanges the code for tokens, persisting
+them encrypted on the upstream. The daemon wires `authn.Manager.SetOAuthPersister` so refreshed
+tokens are written back.
+
 **Headless / server mode.** `outwall serve` (or `make run-server`) runs the full daemon — data
 plane (HTTPS), MCP control plane, UI control-API+SSE listener, and the unix admin socket — with **no
 GUI**. The desktop Wails wrapper (`cmd/outwall-desktop`) is optional: it runs the same daemon

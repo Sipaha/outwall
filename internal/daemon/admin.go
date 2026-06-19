@@ -34,6 +34,7 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	mux.HandleFunc("GET /upstreams", d.hUpstreamList)
 	mux.HandleFunc("DELETE /upstreams/{name}", d.hUpstreamDelete)
 	mux.HandleFunc("POST /upstreams/{name}/auth", d.hUpstreamSetAuth)
+	mux.HandleFunc("POST /upstreams/{name}/oauth/login", d.hOAuthLogin)
 	mux.HandleFunc("POST /agents/register", d.hAgentRegister)
 	mux.HandleFunc("GET /agents", d.hAgentList)
 	mux.HandleFunc("POST /clusters/import", d.hClustersImport)
@@ -79,6 +80,10 @@ func (d *Daemon) AdminHandler() http.Handler { return d.apiMux() }
 func (d *Daemon) UIHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/api/", http.StripPrefix("/api", csrfMiddleware(d.apiMux())))
+	// The OIDC browser-login redirect target is served top-level (not under /api) and is
+	// CSRF-exempt: a redirect cannot carry X-Outwall-CSRF, and the random state ties it to a
+	// login this daemon started (see oauth.go).
+	mux.HandleFunc("/oauth/callback", d.hOAuthCallback)
 	mux.Handle("/", staticUI())
 	return mux
 }

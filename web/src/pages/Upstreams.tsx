@@ -4,6 +4,7 @@ import {
   createUpstream,
   setUpstreamAuth,
   deleteUpstream,
+  oauthLogin,
   ApiError,
 } from '../lib/api'
 import type { Upstream, UpstreamAuthConfig } from '../lib/types'
@@ -38,6 +39,7 @@ function AuthFields({ auth, setAuth }: AuthFieldsProps) {
             { value: 'static', label: 'Static header / API key' },
             { value: 'basic', label: 'Basic' },
             { value: 'oidc-client-credentials', label: 'OIDC client-credentials' },
+            { value: 'oidc-authorization-code', label: 'OIDC authorization-code (browser login)' },
             { value: 'mtls', label: 'mTLS (client certificate)' },
             { value: 'sigv4', label: 'AWS SigV4' },
             { value: 'hmac', label: 'HMAC signature' },
@@ -123,6 +125,57 @@ function AuthFields({ auth, setAuth }: AuthFieldsProps) {
               aria-label="Scope"
             />
           </FormField>
+        </>
+      )}
+      {auth.type === 'oidc-authorization-code' && (
+        <>
+          <FormField label="Authorization URL">
+            <input
+              className={fieldControlClass}
+              value={auth.auth_url ?? ''}
+              onChange={(e) => setAuth({ ...auth, auth_url: e.target.value })}
+              placeholder="https://idp/authorize"
+              aria-label="Authorization URL"
+            />
+          </FormField>
+          <FormField label="Token URL">
+            <input
+              className={fieldControlClass}
+              value={auth.token_url ?? ''}
+              onChange={(e) => setAuth({ ...auth, token_url: e.target.value })}
+              aria-label="Token URL (auth-code)"
+            />
+          </FormField>
+          <FormField label="Client ID">
+            <input
+              className={fieldControlClass}
+              value={auth.client_id ?? ''}
+              onChange={(e) => setAuth({ ...auth, client_id: e.target.value })}
+              aria-label="Client ID (auth-code)"
+            />
+          </FormField>
+          <FormField label="Client secret (optional for PKCE)">
+            <input
+              className={fieldControlClass}
+              type="password"
+              value={auth.client_secret ?? ''}
+              onChange={(e) => setAuth({ ...auth, client_secret: e.target.value })}
+              aria-label="Client secret (auth-code)"
+            />
+          </FormField>
+          <FormField label="Scope">
+            <input
+              className={fieldControlClass}
+              value={auth.scope ?? ''}
+              onChange={(e) => setAuth({ ...auth, scope: e.target.value })}
+              placeholder="openid profile"
+              aria-label="Scope (auth-code)"
+            />
+          </FormField>
+          <p className="text-[11px] text-muted-foreground">
+            After saving, use <span className="font-medium">Log in</span> on the host to open the
+            browser sign-in. outwall stores the token — the agent never sees it.
+          </p>
         </>
       )}
       {auth.type === 'mtls' && (
@@ -288,6 +341,16 @@ export function Upstreams() {
     setCredAuth({ type: 'static' })
   }
 
+  async function startLogin(u: Upstream) {
+    try {
+      const { url } = await oauthLogin(u.name)
+      window.open(url, '_blank', 'noopener')
+      push('success', 'Opened the browser sign-in — complete it, then return here.')
+    } catch (err) {
+      push('error', err instanceof ApiError ? err.message : 'Failed to start login')
+    }
+  }
+
   async function submitCred(e: React.FormEvent) {
     e.preventDefault()
     if (!credFor) return
@@ -356,6 +419,15 @@ export function Upstreams() {
               header: '',
               cell: (u) => (
                 <div className="flex justify-end gap-1.5">
+                  {u.auth_type === 'oidc-authorization-code' && (
+                    <button
+                      onClick={() => startLogin(u)}
+                      aria-label={`Log in to ${u.name}`}
+                      className="rounded bg-success/15 px-2 py-0.5 text-[11px] font-medium text-success hover:bg-success/25"
+                    >
+                      Log in
+                    </button>
+                  )}
                   <button
                     onClick={() => openCred(u)}
                     aria-label={`Set credential for ${u.name}`}

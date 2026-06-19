@@ -86,9 +86,19 @@ func (o *oidcClientCreds) fetch(ctx context.Context) (string, error) {
 
 // Manager caches one Authenticator per upstream so OIDC tokens persist across requests.
 type Manager struct {
-	hc *http.Client
-	mu sync.Mutex
-	m  map[string]managed
+	hc      *http.Client
+	mu      sync.Mutex
+	m       map[string]managed
+	persist func(upstreamID string, t Tokens) // optional; persists refreshed oidc-ac tokens
+}
+
+// SetOAuthPersister registers a callback invoked when an oidc-authorization-code upstream's token is
+// refreshed, so the rotated refresh token can be written back (encrypted) and survive a restart.
+// The daemon wires this to upstream.Registry.SetAuth. Nil ⇒ refreshed tokens are kept in memory only.
+func (mgr *Manager) SetOAuthPersister(p func(upstreamID string, t Tokens)) {
+	mgr.mu.Lock()
+	mgr.persist = p
+	mgr.mu.Unlock()
 }
 
 type managed struct {
@@ -108,6 +118,7 @@ func NewManager(hc *http.Client) *Manager {
 func fingerprint(kind string, c upstream.AuthConfig) string {
 	return strings.Join([]string{kind, c.Type, c.Header, c.Token, c.Username, c.Password,
 		c.TokenURL, c.ClientID, c.ClientSecret, c.Scope,
+		c.AuthURL, c.RedirectURL, c.AccessToken, c.RefreshToken, c.TokenExpiry,
 		c.AWSAccessKeyID, c.AWSSecretAccessKey, c.AWSRegion, c.AWSService,
 		c.HMACSecret, c.HMACHeader, c.HMACAlgo,
 		c.CABundle, c.K8sAuth, c.ClientCert, c.ClientKey, c.ExecCommand,
@@ -141,7 +152,7 @@ func (mgr *Manager) managedFor(up *upstream.Upstream) (managed, error) {
 	if cur, ok := mgr.m[up.ID]; ok && cur.fingerprint == fp {
 		return cur, nil
 	}
-	a, tr, err := mgr.build(up.Kind, up.Auth)
+	a, tr, err := mgr.build(up)
 	if err != nil {
 		return managed{}, err
 	}
@@ -172,7 +183,8 @@ func (mgr *Manager) Transport(up *upstream.Upstream) (http.RoundTripper, error) 
 	return entry.transport, nil
 }
 
-func (mgr *Manager) build(kind string, cfg upstream.AuthConfig) (Authenticator, http.RoundTripper, error) {
+func (mgr *Manager) build(up *upstream.Upstream) (Authenticator, http.RoundTripper, error) {
+	kind, cfg := up.Kind, up.Auth
 	if kind == upstream.KindK8s {
 		a, err := buildK8sAuth(cfg)
 		if err != nil {
@@ -190,6 +202,21 @@ func (mgr *Manager) build(kind string, cfg upstream.AuthConfig) (Authenticator, 
 		}
 		return &oidcClientCreds{hc: mgr.hc, tokenURL: cfg.TokenURL, clientID: cfg.ClientID,
 			secret: cfg.ClientSecret, scope: cfg.Scope}, nil, nil
+	}
+	if cfg.Type == "oidc-authorization-code" {
+		if cfg.TokenURL == "" || cfg.ClientID == "" {
+			return nil, nil, fmt.Errorf("oidc-authorization-code: token_url and client_id required")
+		}
+		if cfg.AccessToken == "" && cfg.RefreshToken == "" {
+			return nil, nil, fmt.Errorf("oidc-authorization-code: not logged in (no token) — run the browser login")
+		}
+		var persist func(Tokens)
+		if mgr.persist != nil {
+			id := up.ID
+			save := mgr.persist
+			persist = func(t Tokens) { save(id, t) }
+		}
+		return newOIDCAuthCode(cfg, persist), nil, nil
 	}
 	if cfg.Type == "mtls" {
 		// mTLS needs a per-upstream TLS transport (client cert); the authenticator is a no-op.

@@ -32,6 +32,10 @@ default, never agent-settable — see ADR-0011); the importer warns and the UI b
   `AWSRegion`/`AWSService`. `sigv4.go`.
 - `hmac` — outwall canonical-string HMAC: `"{METHOD}\n{request-uri}\n{unix-ts}"`, hex signature in
   `HMACHeader`, timestamp in `X-Timestamp`; `sha256`(default)/`sha512`. `hmac.go`.
+- `oidc-authorization-code` — browser login (`x/oauth2`, PKCE). `oidcAuthCode` wraps a
+  `ReuseTokenSource` that auto-refreshes; a refresh calls the `Manager` persister so a rotated
+  refresh token is written back. Pure helpers `OAuthConfig`/`AuthCodeURL`/`ExchangeCode`/
+  `GenerateVerifier` + `Tokens`; the daemon drives the login + callback (ADR-0021). `oidc_authcode.go`.
 
 ## Public API
 
@@ -40,4 +44,6 @@ default, never agent-settable — see ADR-0011); the importer warns and the UI b
 - `NewManager(hc *http.Client) *Manager` (nil ⇒ `http.DefaultClient`).
 - `(*Manager).Authenticator(up *upstream.Upstream) (Authenticator, error)` — cached per upstream ID.
 - `(*Manager).Transport(up *upstream.Upstream) (http.RoundTripper, error)` — k8s cluster transport or http `mtls` transport; `nil` for plain http.
+- `(*Manager).SetOAuthPersister(func(upstreamID string, t Tokens))` — write-back hook for refreshed oidc-authorization-code tokens.
+- `Tokens struct { AccessToken, RefreshToken string; Expiry time.Time }`; `OAuthConfig`, `AuthCodeURL`, `ExchangeCode`, `GenerateVerifier` (ADR-0021).
 - Error: `ErrUnsupported`.

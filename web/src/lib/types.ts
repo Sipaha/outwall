@@ -25,6 +25,9 @@ export interface UpstreamAuthConfig {
   client_id?: string
   client_secret?: string
   scope?: string
+  // OIDC authorization-code (browser login). Tokens are server-managed (never sent from the form).
+  auth_url?: string
+  redirect_url?: string
   // mTLS (client certificate presented to the upstream):
   client_cert?: string
   client_key?: string

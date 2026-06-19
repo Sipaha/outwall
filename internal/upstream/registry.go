@@ -25,11 +25,19 @@ type AuthConfig struct {
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
 
-	// OIDC client-credentials:
+	// OIDC client-credentials (and shared by oidc-authorization-code):
 	TokenURL     string `json:"token_url,omitempty"`
 	ClientID     string `json:"client_id,omitempty"`
 	ClientSecret string `json:"client_secret,omitempty"`
 	Scope        string `json:"scope,omitempty"`
+
+	// OIDC authorization-code (browser login). AuthURL/RedirectURL configure the flow; the
+	// token fields are populated by the login callback and refreshed in place (encrypted at rest).
+	AuthURL      string `json:"auth_url,omitempty"`
+	RedirectURL  string `json:"redirect_url,omitempty"`
+	AccessToken  string `json:"access_token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	TokenExpiry  string `json:"token_expiry,omitempty"` // RFC3339
 
 	// AWS Signature V4 (type "sigv4"). The request is signed with these static credentials.
 	AWSAccessKeyID     string `json:"aws_access_key_id,omitempty"`
@@ -208,6 +216,20 @@ func (r *Registry) DeleteByName(name string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// GetByID returns the upstream with the given ID.
+func (r *Registry) GetByID(id string) (*Upstream, error) {
+	row := r.store.DB().QueryRow(
+		`SELECT id, name, base_url, kind, auth_type, auth_config, created_at FROM upstreams WHERE id=?`, id)
+	up, err := r.scan(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return up, nil
 }
 
 // GetByName returns the upstream with the given name.

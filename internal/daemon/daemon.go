@@ -65,20 +65,22 @@ type Config struct {
 
 // Daemon owns the running gateway.
 type Daemon struct {
-	cfg       Config
-	store     *store.Store
-	vault     *secret.Vault
-	agents    *agent.Registry
-	upstreams *upstream.Registry
-	policy    *policy.Registry
-	access    *access.Registry
-	approvals *approval.Queue
-	audit     *audit.Recorder
-	bus       *events.Bus
-	ca        *tlsca.CA
-	importer  *k8s.Importer
-	dataPlane http.Handler
-	mcp       http.Handler
+	cfg         Config
+	store       *store.Store
+	vault       *secret.Vault
+	agents      *agent.Registry
+	upstreams   *upstream.Registry
+	policy      *policy.Registry
+	access      *access.Registry
+	approvals   *approval.Queue
+	audit       *audit.Recorder
+	bus         *events.Bus
+	ca          *tlsca.CA
+	importer    *k8s.Importer
+	authManager *authn.Manager
+	oauthLogins *oauthLogins
+	dataPlane   http.Handler
+	mcp         http.Handler
 }
 
 // publish emits a domain event onto the daemon bus (nil-safe).
@@ -131,16 +133,22 @@ func New(cfg Config) (*Daemon, error) {
 		_ = s.Close()
 		return nil, fmt.Errorf("build mcp handler: %w", err)
 	}
+	authMgr := authn.NewManager(nil)
 	d := &Daemon{
 		cfg: cfg, store: s, vault: v, agents: ag, upstreams: up, policy: pol, access: acc,
 		approvals: appr, audit: aud, bus: bus, ca: ca,
-		importer: &k8s.Importer{Reg: up, Log: slog.Default()},
+		importer:    &k8s.Importer{Reg: up, Log: slog.Default()},
+		authManager: authMgr,
+		oauthLogins: newOAuthLogins(),
 		dataPlane: proxy.New(proxy.Deps{
 			Agents: ag, Upstreams: up, Policy: pol, Limiter: policy.NewLimiter(),
-			Approvals: appr, AuthManager: authn.NewManager(nil), Vault: v, Audit: aud,
+			Approvals: appr, AuthManager: authMgr, Vault: v, Audit: aud,
 		}),
 		mcp: mcpHandler,
 	}
+	// Persist refreshed oidc-authorization-code tokens back to the vault so a rotated refresh
+	// token survives a restart (the agent never sees any of this).
+	authMgr.SetOAuthPersister(d.persistOAuthTokens)
 	return d, nil
 }
 

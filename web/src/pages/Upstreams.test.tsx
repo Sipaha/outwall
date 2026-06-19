@@ -87,6 +87,24 @@ describe('<Hosts> (Upstreams.tsx)', () => {
     )
   })
 
+  it('starts an OIDC browser login from the host row', async () => {
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([
+      {
+        id: 'o1',
+        name: 'oidc.test',
+        base_url: 'https://oidc.test',
+        auth_type: 'oidc-authorization-code',
+      },
+    ])
+    const loginSpy = vi.spyOn(api, 'oauthLogin').mockResolvedValue({ url: 'https://idp/authorize?x=1' })
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    render(<Upstreams />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Log in to oidc.test' }))
+    await waitFor(() => expect(loginSpy).toHaveBeenCalledWith('oidc.test'))
+    await waitFor(() => expect(openSpy).toHaveBeenCalledWith('https://idp/authorize?x=1', '_blank', 'noopener'))
+  })
+
   it('shows sigv4 fields and submits them', async () => {
     vi.spyOn(api, 'listUpstreams').mockResolvedValue([])
     const createSpy = vi.spyOn(api, 'createUpstream').mockResolvedValue({ id: 'new' })
