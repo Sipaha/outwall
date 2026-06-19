@@ -57,6 +57,16 @@ func TestOAuthLoginAndCallbackStoresTokens(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, cb2.Code)
 }
 
+func TestOAuthCallbackEscapesReflectedError(t *testing.T) {
+	d := newDaemon(t)
+	cb := httptest.NewRecorder()
+	d.hOAuthCallback(cb, httptest.NewRequest("GET", "/oauth/callback?error=<script>alert(1)</script>", nil))
+	require.Equal(t, http.StatusBadRequest, cb.Code)
+	body := cb.Body.String()
+	require.NotContains(t, body, "<script>", "reflected error must be HTML-escaped")
+	require.Contains(t, body, "&lt;script&gt;")
+}
+
 func TestOAuthLoginRejectsNonOIDCUpstream(t *testing.T) {
 	d := newDaemon(t)
 	require.NoError(t, d.vault.Init("pw"))

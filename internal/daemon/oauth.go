@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"html"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -154,6 +156,9 @@ func (d *Daemon) persistOAuthTokens(upstreamID string, t authn.Tokens) {
 
 func oauthResultPage(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
 	w.WriteHeader(code)
-	_, _ = w.Write([]byte("<!doctype html><html><body style=\"font-family:sans-serif;background:#1e1f22;color:#ddd;padding:2rem\"><h2>outwall</h2><p>" + msg + "</p></body></html>"))
+	// msg can include attacker-influenced text (the IdP `error` param echoed on the redirect), so
+	// HTML-escape it before reflecting it into the page (reflected-XSS guard).
+	_, _ = io.WriteString(w, "<!doctype html><html><body style=\"font-family:sans-serif;background:#1e1f22;color:#ddd;padding:2rem\"><h2>outwall</h2><p>"+html.EscapeString(msg)+"</p></body></html>")
 }
