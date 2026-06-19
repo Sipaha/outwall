@@ -41,6 +41,11 @@ Stage: alpha (pre-Plan-1).
   - [`0014-operation-access-engine.md`](architecture/decisions/0014-operation-access-engine.md) — HTTP policy = operation templates with typed segment-bounded variables; enforce by parsing the real request + per-variable value-sets; new-value approval extends the set; replaces path-glob (no migration).
   - [`0015-operation-access-mcp-approval.md`](architecture/decisions/0015-operation-access-mcp-approval.md) — lazy host upstream + credential attach; MCP request_host_access + typed request_access (non-blocking, poll get_access); approval resolve creates/extends the operation rule + trust-any.
   - [`0016-operation-access-ui.md`](architecture/decisions/0016-operation-access-ui.md) — host/operation/new-value approval cards (example URL, trust-any, broad-placeholder warning); Operations + Hosts screens; POST /upstreams/{name}/auth + /rules/{id}/value-policy.
+  - [`0017-number-enum-variable-types.md`](architecture/decisions/0017-number-enum-variable-types.md) — number (range) + enum (closed-set) operation-variable types; enum/number violation = hard deny vs text new-value = require-approval.
+  - [`0018-audit-auto-prune-operational.md`](architecture/decisions/0018-audit-auto-prune-operational.md) — settings KV table + persisted audit retention + hourly background pruner; vault --password-stdin; headless mode documented.
+  - [`0019-additional-auth-schemes.md`](architecture/decisions/0019-additional-auth-schemes.md) — mTLS (transport seam), AWS SigV4 (aws-sdk-go-v2, CGO-free), HMAC (documented canonical string) upstream auth.
+  - [`0020-request-body-variables.md`](architecture/decisions/0020-request-body-variables.md) — operation variables extracted from the JSON request body (dotted paths, typed); parse-the-real-body enforcement.
+  - [`0021-oidc-authorization-code.md`](architecture/decisions/0021-oidc-authorization-code.md) — OIDC authorization-code browser login (x/oauth2 PKCE), token persist-on-refresh, daemon login + /oauth/callback.
 - `modules/` — per-package API docs: `secret`, `store`, `upstream`, `agent`, `authn`,
   `policy`, `approval`, `access`, `mcpsvc`, `mcp`, `audit`, `events`, `proxy`, `daemon`, `client`, `cli`, `version`, `k8s`, `tlsca`, plus `webui` (the `web/` app).
 

@@ -16,15 +16,36 @@ agent needs (host=upstream, approve-on-request, typed-variable value-sets), enfo
 real request. Spec: `docs/superpowers/specs/2026-06-18-outwall-operation-access-design.md`;
 ADR-0014/0015/0016.
 
-**Phase 4 — Feature expansion: ACTIVE.** Shipping the queued candidate features in two waves.
-Wave 1 (parallel, independent packages): **P1** number/enum variable types (optemplate/policy/mcp/UI);
-**P2** operational hardening (audit auto-prune + `vault --password-stdin` + documented headless mode);
-**P3** additional upstream auth schemes (mTLS / AWS SigV4 / HMAC). Wave 2 (after Wave 1 merges):
-**P4** request-body variables (parse typed vars out of the JSON request body, builds on P1's type
-system); **P5** OIDC authorization-code / browser login (builds on P3's authn surface). ADRs
-0017 (P1), 0018 (P2), 0019 (P3), 0020 (P4), 0021 (P5).
+**Phase 4 — Feature expansion: COMPLETE.** All five queued candidate features shipped, merged, and
+pushed: **P1** number/enum variable types (ADR-0017), **P2** audit auto-prune + `vault
+--password-stdin` + headless docs (ADR-0018), **P3** mTLS / AWS SigV4 / HMAC upstream auth
+(ADR-0019), **P4** request-body operation variables (ADR-0020), **P5** OIDC authorization-code /
+browser login (ADR-0021).
+
+No active phase — pick with the user. Remaining candidates: live end-to-end test of the GitLab
+pipeline scenario through outwall (never run live); additional variable types (regex/cidr); SigV4a /
+draft-cavage HTTP signatures; per-agent rate-limit dashboards; audit size-based caps.
 
 ## Done
+
+- **Phase 4 — Feature expansion (P1–P5).** Five independent features.
+  - **P1 number/enum variable types** (ADR-0017): `optemplate` number(`IsNumber`)/enum placeholders;
+    `policy` number-range gate + enum closed-set **hard-deny** (text still grows via approval);
+    Operations UI range/enum editors.
+  - **P2 operational hardening** (ADR-0018): `settings` KV table + persisted audit retention; an
+    hourly ctx-bound background pruner; `GET/PUT /settings/audit-retention` + Settings UI;
+    `vault init/unlock --password-stdin` (resolves the TTY finding); headless mode documented.
+  - **P3 auth schemes** (ADR-0019): `mtls` (client-cert transport via the seam), `sigv4`
+    (aws-sdk-go-v2 signer, CGO-free, body-preserving), `hmac` (documented canonical string);
+    AuthConfig fields + fingerprint extended; Upstreams UI forms.
+  - **P4 request-body variables** (ADR-0020): `optemplate.ParseWithBody`/`ExtractBody` (dotted JSON
+    paths, typed); `policy` `OpBodyTemplate` + `Input.Body`; proxy reads+restores the body for
+    POST/PUT/PATCH/DELETE; threaded through MCP/approval; Operations UI shows the body shape.
+  - **P5 OIDC authorization-code** (ADR-0021): `x/oauth2` PKCE login; `oidcAuthCode` auto-refresh +
+    persist-on-refresh; daemon login store + `POST /upstreams/{name}/oauth/login` + `GET
+    /oauth/callback`; Upstreams UI auth-code form + **Log in** button.
+  All green each milestone (`go ./... -race`, web vitest+lint, CGO-free + web builds). New deps:
+  `aws-sdk-go-v2`, `smithy-go`, `golang.org/x/oauth2` (all pure Go).
 
 - **Plan H3 — operation-access UI (Phase 3).** Approval cards: **host** (with a credential field),
   **operation** (fixed-vs-`{var:type}` segments, a concrete **example URL**, per-text-variable
