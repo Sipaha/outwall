@@ -189,6 +189,31 @@ func TestKeyStable(t *testing.T) {
 	require.NotEqual(t, a.Key(), d.Key())
 }
 
+func TestIsNumber(t *testing.T) {
+	good := []string{"0", "42", "-3", "3.14", "-0.5", "1e3"}
+	for _, s := range good {
+		require.True(t, IsNumber(s), "expected %q to be a number", s)
+	}
+	bad := []string{"", "abc", "1.2.3", "0x1f", "12px"}
+	for _, s := range bad {
+		require.False(t, IsNumber(s), "expected %q to NOT be a number", s)
+	}
+}
+
+func TestMatchNumberAndEnum(t *testing.T) {
+	tmpl, err := Parse("GET", "/items/{id:number}", map[string]string{"sort": "{order:enum}"})
+	require.NoError(t, err)
+
+	// number segment + enum query → extracted; enum accepts any value structurally
+	vars, ok := tmpl.Match("GET", "/items/42", url.Values{"sort": {"sideways"}})
+	require.True(t, ok)
+	require.Equal(t, map[string]string{"id": "42", "order": "sideways"}, vars)
+
+	// a non-numeric number segment → no structural match
+	_, ok = tmpl.Match("GET", "/items/abc", url.Values{"sort": {"asc"}})
+	require.False(t, ok)
+}
+
 func TestIsDate(t *testing.T) {
 	good := []string{
 		"2026-06-01",

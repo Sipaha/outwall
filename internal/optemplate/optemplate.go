@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -16,11 +17,15 @@ import (
 // VarType is a typed placeholder kind.
 type VarType string
 
-// Supported placeholder types (§5 of the design). text is gated by value; date auto-allows but
-// the extracted value must parse as a date.
+// Supported placeholder types (§5 of the design). text is gated by an allowed-set that grows via
+// approval; date auto-allows but the extracted value must parse as a date; number requires the
+// value to parse as a number (gated by a range in policy); enum extracts any value but is gated by
+// a CLOSED allowed-set in policy (an out-of-set value is denied, not approved).
 const (
-	Text VarType = "text"
-	Date VarType = "date"
+	Text   VarType = "text"
+	Date   VarType = "date"
+	Number VarType = "number"
+	Enum   VarType = "enum"
 )
 
 // Variable is a typed placeholder declared in a template.
@@ -135,7 +140,7 @@ func parsePlaceholder(s string) (Variable, bool, error) {
 		return Variable{}, false, fmt.Errorf("optemplate: placeholder %q has empty name", s)
 	}
 	vt := VarType(typ)
-	if vt != Text && vt != Date {
+	if vt != Text && vt != Date && vt != Number && vt != Enum {
 		return Variable{}, false, fmt.Errorf("optemplate: unknown variable type %q in %q", typ, s)
 	}
 	return Variable{Name: name, Type: vt}, true, nil
@@ -199,7 +204,7 @@ func (t Template) Match(method, path string, query url.Values) (vars map[string]
 		if err != nil {
 			return nil, false
 		}
-		if seg.placeholder.Type == Date && !IsDate(val) {
+		if !typeValid(seg.placeholder.Type, val) {
 			return nil, false
 		}
 		out[seg.placeholder.Name] = val
@@ -220,7 +225,7 @@ func (t Template) Match(method, path string, query url.Values) (vars map[string]
 			}
 			continue
 		}
-		if qp.placeholder.Type == Date && !IsDate(val) {
+		if !typeValid(qp.placeholder.Type, val) {
 			return nil, false
 		}
 		out[qp.placeholder.Name] = val
@@ -247,6 +252,31 @@ var dateLayouts = []string{
 	"2006-01-02",
 	"2006-01-02 15:04:05",
 	"2006-01-02T15:04:05",
+}
+
+// typeValid reports whether a raw extracted value is admissible for the placeholder type at the
+// STRUCTURAL level (Match's job). text/enum accept any value (their value gate is policy's job);
+// date must parse as a date; number must parse as a number. A type-invalid value makes the request
+// not match the template (it then falls through to default-deny — never a silent grant).
+func typeValid(t VarType, val string) bool {
+	switch t {
+	case Date:
+		return IsDate(val)
+	case Number:
+		return IsNumber(val)
+	default: // Text, Enum
+		return true
+	}
+}
+
+// IsNumber reports whether s parses as an integer or a floating-point number. Exposed for policy +
+// tests. Rejects empty and non-numeric strings.
+func IsNumber(s string) bool {
+	if s == "" {
+		return false
+	}
+	_, err := strconv.ParseFloat(s, 64)
+	return err == nil
 }
 
 // IsDate reports whether s parses as a supported date/datetime. Exposed for policy + tests.

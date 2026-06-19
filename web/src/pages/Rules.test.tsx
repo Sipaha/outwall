@@ -50,6 +50,51 @@ describe('<Operations> (Rules.tsx)', () => {
     expect(screen.getByText(/auto/i)).toBeInTheDocument()
   })
 
+  it('edits number (range) and enum (closed-set) variables', async () => {
+    const rule = {
+      id: 'r2',
+      subject_agent_id: '',
+      upstream_id: 'u1',
+      op_method: 'GET',
+      op_path_template: '/items/{id:number}',
+      op_query_template: { sort: '{order:enum}' },
+      op_value_policies: {
+        id: { type: 'number', mode: 'range', min: 1, max: 100 },
+        order: { type: 'enum', mode: 'set', values: ['asc'] },
+      },
+      outcome: 'allow',
+      rate_limit_per_min: 0,
+    }
+    vi.spyOn(api, 'listRules').mockResolvedValue([rule])
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([githubUpstream])
+    vi.spyOn(api, 'listAgents').mockResolvedValue([])
+    const setSpy = vi.spyOn(api, 'setRuleVariablePolicy').mockResolvedValue({ ok: true })
+
+    render(<Rules />)
+    await screen.findByText('github')
+
+    expect(screen.getByText(/Closed domain/i)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Value to add for order'), { target: { value: 'desc' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add value for order' }))
+    await waitFor(() =>
+      expect(setSpy).toHaveBeenCalledWith('r2', 'order', {
+        type: 'enum',
+        mode: 'set',
+        values: ['asc', 'desc'],
+      }),
+    )
+
+    fireEvent.blur(screen.getByLabelText('Maximum for id'), { target: { value: '50' } })
+    await waitFor(() =>
+      expect(setSpy).toHaveBeenCalledWith('r2', 'id', {
+        type: 'number',
+        mode: 'range',
+        min: 1,
+        max: 50,
+      }),
+    )
+  })
+
   it('adds a value to a text variable (posts the grown set)', async () => {
     vi.spyOn(api, 'listRules').mockResolvedValue([operationRule()])
     vi.spyOn(api, 'listUpstreams').mockResolvedValue([githubUpstream])

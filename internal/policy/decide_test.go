@@ -53,6 +53,52 @@ func TestDecideHTTPOperation(t *testing.T) {
 	require.Equal(t, Deny, d.Outcome)
 }
 
+func TestDecideNumberAndEnum(t *testing.T) {
+	reg := newReg(t)
+	min, max := 1.0, 100.0
+	mk(t, reg, Rule{
+		UpstreamID:      "u1",
+		OpMethod:        "GET",
+		OpPathTemplate:  "/items/{id:number}",
+		OpQueryTemplate: map[string]string{"sort": "{order:enum}", "limit": "{n:number}"},
+		OpValuePolicies: map[string]ValuePolicy{
+			"id":    {Type: "number", Mode: "any"},
+			"order": {Type: "enum", Mode: "set", Values: []string{"asc", "desc"}},
+			"n":     {Type: "number", Mode: "range", Min: &min, Max: &max},
+		},
+		Outcome: Allow,
+	})
+
+	in := func(path, query string) Input {
+		q, err := url.ParseQuery(query)
+		require.NoError(t, err)
+		return Input{AgentID: "a1", UpstreamID: "u1", Method: "GET", Path: path, Query: q}
+	}
+
+	// enum in-set + number in-range → allow
+	d, err := reg.Decide(in("/items/42", "sort=asc&limit=10"))
+	require.NoError(t, err)
+	require.Equal(t, Allow, d.Outcome)
+	require.Equal(t, "42", d.Vars["id"])
+
+	// enum out-of-set → HARD deny (no approval, no NewValues)
+	d, err = reg.Decide(in("/items/42", "sort=sideways&limit=10"))
+	require.NoError(t, err)
+	require.Equal(t, Deny, d.Outcome)
+	require.Empty(t, d.NewValues)
+
+	// number out-of-range → hard deny
+	d, err = reg.Decide(in("/items/42", "sort=asc&limit=9999"))
+	require.NoError(t, err)
+	require.Equal(t, Deny, d.Outcome)
+
+	// non-numeric path segment for a number var → no structural match → default-deny
+	d, err = reg.Decide(in("/items/abc", "sort=asc&limit=10"))
+	require.NoError(t, err)
+	require.Equal(t, Deny, d.Outcome)
+	require.Nil(t, d.Rule)
+}
+
 func TestDecideHTTPTierPrecedence(t *testing.T) {
 	reg := newReg(t)
 	tmpl := func() (string, string, map[string]string, map[string]ValuePolicy) {

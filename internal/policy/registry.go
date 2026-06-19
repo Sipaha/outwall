@@ -137,10 +137,15 @@ func (r *Registry) SetVariablePolicy(ruleID, varName string, vp ValuePolicy) err
 		if !ok {
 			return false, fmt.Errorf("rule %s has no variable %q", ruleID, varName)
 		}
+		// Keep the declared type — the operator can change Mode/Values/range but not retype a slot.
 		next := ValuePolicy{Type: cur.Type, Mode: vp.Mode}
-		if next.Mode == "any" {
-			next.Values = nil
-		} else {
+		switch {
+		case next.Mode == "any":
+			// any: drop set + bounds.
+		case cur.Type == "number":
+			next.Mode = "range"
+			next.Min, next.Max = vp.Min, vp.Max
+		default: // text / enum
 			next.Mode = "set"
 			next.Values = dedupe(vp.Values)
 		}

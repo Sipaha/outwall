@@ -2,6 +2,7 @@ package policy
 
 import (
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -158,14 +159,47 @@ func (r *Registry) evalHTTPRule(rule *Rule, in Input) (candidate, bool, error) {
 		if vp.Type == "date" || vp.Mode == "any" {
 			continue // date is type-validated by Match; any auto-allows
 		}
-		if !inSet(vp.Values, val) {
-			c.newValues = append(c.newValues, VarValue{Var: v, Value: val})
+		switch vp.Type {
+		case "enum":
+			// Closed domain: an out-of-set value is a hard deny (the set does NOT grow).
+			if !inSet(vp.Values, val) {
+				c.outcome = Deny
+				return c, true, nil
+			}
+		case "number":
+			// Range gate: an out-of-range value is a hard deny.
+			if !inNumberRange(val, vp.Min, vp.Max) {
+				c.outcome = Deny
+				return c, true, nil
+			}
+		default: // "text" with mode "set": an unknown value requests approval (the set grows).
+			if !inSet(vp.Values, val) {
+				c.newValues = append(c.newValues, VarValue{Var: v, Value: val})
+			}
 		}
 	}
 	if len(c.newValues) > 0 {
 		c.outcome = RequireApproval
 	}
 	return c, true, nil
+}
+
+// inNumberRange reports whether val (parsed as a float) lies within [min,max] inclusive; a nil
+// bound is unbounded on that side. A value that does not parse as a number is out of range (it
+// should not reach here — optemplate.Match already type-validates number vars — but never grant on
+// a parse failure).
+func inNumberRange(val string, min, max *float64) bool {
+	n, err := strconv.ParseFloat(val, 64)
+	if err != nil {
+		return false
+	}
+	if min != nil && n < *min {
+		return false
+	}
+	if max != nil && n > *max {
+		return false
+	}
+	return true
 }
 
 func inSet(set []string, v string) bool {

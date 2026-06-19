@@ -41,13 +41,20 @@ type Rule struct {
 	Verb      string // "", "*", or one verb: get/list/watch/create/update/patch/delete/deletecollection
 }
 
-// ValuePolicy is the per-variable gating policy on an operation rule. Mode "any" auto-allows any
-// extracted value (used for date vars and operator-trusted text vars); Mode "set" gates a text
-// var against the explicit Values allow-list.
+// ValuePolicy is the per-variable gating policy on an operation rule. Behaviour by Type:
+//   - "text": Mode "set" gates against Values; a value NOT in the set → require-approval (the set
+//     GROWS on approval). Mode "any" auto-allows.
+//   - "date": auto-allowed (the value is type-validated as a date by optemplate.Match).
+//   - "number": Mode "range" gates against [Min,Max] inclusive (a nil bound = unbounded that side);
+//     a value outside the range → hard DENY. Mode "any" auto-allows any number.
+//   - "enum": Mode "set" gates against a CLOSED set Values; a value NOT in the set → hard DENY (an
+//     enum is a fixed domain, so the set does NOT auto-grow — unlike text).
 type ValuePolicy struct {
-	Type   string   `json:"type"`   // "text" | "date"
-	Mode   string   `json:"mode"`   // "set" | "any"
-	Values []string `json:"values"` // allowed values (text/set)
+	Type   string   `json:"type"`          // "text" | "date" | "number" | "enum"
+	Mode   string   `json:"mode"`          // "set" | "any" | "range"
+	Values []string `json:"values"`        // allowed values (text/set, enum/set)
+	Min    *float64 `json:"min,omitempty"` // number/range lower bound (inclusive); nil = unbounded
+	Max    *float64 `json:"max,omitempty"` // number/range upper bound (inclusive); nil = unbounded
 }
 
 // ValidOutcome reports whether o is a known outcome.

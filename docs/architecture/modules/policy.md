@@ -11,7 +11,8 @@ the proxy consults when a matched rule sets a rate limit.
 
 **H1 (operation rules — HTTP).** An HTTP rule is an **operation rule**: a `(op_method,
 op_path_template, op_query_template)` parsed by `internal/optemplate` plus a per-variable
-**value policy** (`op_value_policies`: `varName → {type, mode:"set"|"any", values[]}`). The old
+**value policy** (`op_value_policies`: `varName → {type, mode:"set"|"any"|"range", values[], min,
+max}`). The old
 `(method, path_glob)` HTTP rule type is **removed** (no migration — ADR-0014). When
 `Input.Kind != "k8s"`, `Decide` matches the request against each rule's template (cached parse
 by rule ID), extracts the variable values, and gates each **text** value against its set
@@ -20,6 +21,9 @@ by rule ID), extracts the variable values, and gates each **text** value against
 - all values allowed → the rule's outcome, with the extracted `Decision.Vars`.
 - a `text` value not in its set → **require-approval** + `Decision.NewValues` (the `(var,value)`
   pairs). On approve the proxy calls `AddAllowedValue` to **extend** the set; the request proceeds.
+- an `enum` value not in its CLOSED set, or a `number` value outside its `[min,max]` range →
+  **hard deny** (the set/range does NOT grow on request — ADR-0017). `number` `mode:"any"` allows
+  any number; `number` is type-validated by `optemplate.Match`.
 - no template matched → **deny** (default-deny).
 
 `AddAllowedValue(ruleID, var, value)` extends a text variable's allowed-set (idempotent). The

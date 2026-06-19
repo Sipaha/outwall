@@ -8,7 +8,8 @@ the package checks structure + variable types; the per-variable *value* policy (
 `any`) is `internal/policy`'s job.
 
 **Placeholders.** A path template uses `{name:type}` placeholders, each binding **exactly one**
-path segment (no `/`). Types are `text` and `date`. A literal segment matches itself. A
+path segment (no `/`). Types are `text`, `date`, `number`, and `enum`. A literal segment matches
+itself. A
 query-template maps a param name to either a literal value or a `{name:type}` placeholder.
 
 **Matching rules.** `Match(method, path, query)` fails (so the request does not match this
@@ -22,7 +23,10 @@ template, and policy treats that as a non-match) when:
   `page`/`per_page`/`pagination` — are tolerated; they are scope-neutral pagination and are still
   audited by the caller);
 - a `date`-typed placeholder's extracted value fails `IsDate` (so a scope-bearing value cannot
-  ride a `date` slot).
+  ride a `date` slot);
+- a `number`-typed placeholder's extracted value fails `IsNumber` (int or float). `enum` extracts
+  any value structurally — its CLOSED-set check is `policy`'s job (an out-of-set value is denied,
+  see ADR-0017).
 
 Each path segment is decoded per-segment (`url.PathUnescape`) so a GitLab `%2F` inside one
 segment is preserved as the value (`infra%2Fhelm` → `infra/helm`), not split into two segments —
@@ -33,7 +37,8 @@ two requests with the same shape map to one rule.
 
 ## Public API
 
-- `VarType` with consts `Text = "text"`, `Date = "date"`.
+- `VarType` with consts `Text = "text"`, `Date = "date"`, `Number = "number"`, `Enum = "enum"`.
+- `IsNumber(s string) bool` — parses an int/float (mirrors `IsDate`).
 - `Variable struct { Name string; Type VarType }`.
 - `Template` (opaque parsed form).
 - `ExemptQueryParams map[string]struct{}` — scope-neutral query params tolerated when undeclared.

@@ -567,9 +567,14 @@ func (d *Daemon) approveOperation(p approval.Pending, trustAny []string) error {
 			switch {
 			case v.Type == string(optemplate.Date):
 				vp.Mode = "any"
+			case v.Type == string(optemplate.Number):
+				// Default to any number; the operator tightens it to a [min,max] range in the UI.
+				vp.Mode = "any"
 			case trust[v.Name]:
 				vp.Mode = "any"
 			default:
+				// text / enum: a set seeded with the requested value. For enum this set is CLOSED
+				// (an out-of-set value is denied); for text it grows on later approvals.
 				vp.Mode = "set"
 				if val, ok := p.OpValues[v.Name]; ok && val != "" {
 					vp.Values = []string{val}
@@ -589,8 +594,8 @@ func (d *Daemon) approveOperation(p approval.Pending, trustAny []string) error {
 
 	// Extend the existing rule: flip trusted text vars to any, else add the requested value.
 	for _, v := range p.OpVariables {
-		if v.Type == string(optemplate.Date) {
-			continue // date stays any
+		if v.Type == string(optemplate.Date) || v.Type == string(optemplate.Number) {
+			continue // date stays any; number range is operator-managed (values don't gate it)
 		}
 		if trust[v.Name] {
 			if err := d.policy.SetVariableAny(rule.ID, v.Name); err != nil {

@@ -59,9 +59,11 @@ export interface ClusterImportResult {
 
 /** Per-variable value policy on an http operation rule. */
 export interface ValuePolicy {
-  type: string // "text" | "date"
-  mode: string // "set" | "any"
-  values?: string[] // allowed values (text/set)
+  type: string // "text" | "date" | "number" | "enum"
+  mode: string // "set" | "any" | "range"
+  values?: string[] // allowed values (text/set, enum/set)
+  min?: number // number/range lower bound (inclusive)
+  max?: number // number/range upper bound (inclusive)
 }
 
 /**
