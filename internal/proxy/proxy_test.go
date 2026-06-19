@@ -156,6 +156,45 @@ func TestProxyOperationEnforcement(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, w.Code, "denied new value → 403")
 }
 
+func TestProxyBodyVariableEnforcement(t *testing.T) {
+	var gotBody string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer backend.Close()
+
+	h, ag, up, pol, _, _ := build(t)
+	_, token, _ := ag.Register("claude")
+	u, err := up.Create("example.test", backend.URL, upstream.AuthConfig{Type: "none"})
+	require.NoError(t, err)
+	_, err = pol.Create(policy.Rule{
+		UpstreamID: u.ID, OpMethod: "POST", OpPathTemplate: "/widgets",
+		OpBodyTemplate:  map[string]string{"name": "{name:text}"},
+		OpValuePolicies: map[string]policy.ValuePolicy{"name": {Type: "text", Mode: "set", Values: []string{"alpha"}}},
+		Outcome:         policy.Allow,
+	})
+	require.NoError(t, err)
+
+	post := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/example.test/widgets", strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+
+	// (1) allowed body value proxies through AND the upstream receives the original body intact.
+	w := post(`{"name":"alpha"}`)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, `{"name":"alpha"}`, gotBody, "the body must be restored for the upstream")
+
+	// (2) a body missing the declared field matches no template → 403.
+	w = post(`{"other":"x"}`)
+	require.Equal(t, http.StatusForbidden, w.Code)
+}
+
 func TestProxyGuards(t *testing.T) {
 	h, ag, up, pol, _, v := build(t)
 	_, token, _ := ag.Register("claude")

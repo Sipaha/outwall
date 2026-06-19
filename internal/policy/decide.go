@@ -16,6 +16,10 @@ type Input struct {
 	// HTTP request query (used for operation-template matching when Kind != "k8s").
 	Query url.Values
 
+	// Body is the raw HTTP request body (used for body-variable extraction when Kind != "k8s").
+	// nil/empty when the request has no body or the proxy did not capture it.
+	Body []byte
+
 	// k8s request tuple (used when Kind=="k8s"):
 	Kind        string // "" / "http" = http path matching; "k8s" = (namespace, resource, verb)
 	Namespace   string
@@ -147,6 +151,15 @@ func (r *Registry) evalHTTPRule(rule *Rule, in Input) (candidate, bool, error) {
 	if !ok {
 		return candidate{}, false, nil
 	}
+	// Body variables are extracted from the real request body and merged into the variable set.
+	// A declared body var that is absent / wrong-typed makes the request not match this template.
+	if bodyVars, ok := tmpl.ExtractBody(in.Body); ok {
+		for k, v := range bodyVars {
+			vars[k] = v
+		}
+	} else {
+		return candidate{}, false, nil
+	}
 	c := candidate{rule: rule, outcome: rule.Outcome, vars: vars}
 	if rule.Outcome == Deny {
 		return c, true, nil
@@ -226,7 +239,7 @@ func (r *Registry) templateFor(rule *Rule) (optemplate.Template, error) {
 	if ok {
 		return t, nil
 	}
-	t, err := optemplate.Parse(rule.OpMethod, rule.OpPathTemplate, rule.OpQueryTemplate)
+	t, err := optemplate.ParseWithBody(rule.OpMethod, rule.OpPathTemplate, rule.OpQueryTemplate, rule.OpBodyTemplate)
 	if err != nil {
 		return optemplate.Template{}, err
 	}

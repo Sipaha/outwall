@@ -371,6 +371,7 @@ func (d *Daemon) hRuleCreate(w http.ResponseWriter, r *http.Request) {
 		OpMethod        string                        `json:"op_method"`
 		OpPathTemplate  string                        `json:"op_path_template"`
 		OpQueryTemplate map[string]string             `json:"op_query_template"`
+		OpBodyTemplate  map[string]string             `json:"op_body_template"`
 		OpValuePolicies map[string]policy.ValuePolicy `json:"op_value_policies"`
 		// k8s rule fields:
 		Namespace string `json:"namespace"`
@@ -385,8 +386,9 @@ func (d *Daemon) hRuleCreate(w http.ResponseWriter, r *http.Request) {
 		SubjectAgentID: body.SubjectAgentID, UpstreamID: body.UpstreamID,
 		Outcome: body.Outcome, RateLimitPerMin: body.RateLimitPerMin,
 		OpMethod: body.OpMethod, OpPathTemplate: body.OpPathTemplate,
-		OpQueryTemplate: body.OpQueryTemplate, OpValuePolicies: body.OpValuePolicies,
-		Namespace: body.Namespace, Resource: body.Resource, Verb: body.Verb,
+		OpQueryTemplate: body.OpQueryTemplate, OpBodyTemplate: body.OpBodyTemplate,
+		OpValuePolicies: body.OpValuePolicies,
+		Namespace:       body.Namespace, Resource: body.Resource, Verb: body.Verb,
 	})
 	if err != nil {
 		adminErr(w, http.StatusBadRequest, err.Error())
@@ -407,8 +409,9 @@ func (d *Daemon) hRuleList(w http.ResponseWriter, _ *http.Request) {
 		out = append(out, map[string]any{
 			"id": rule.ID, "subject_agent_id": rule.SubjectAgentID, "upstream_id": rule.UpstreamID,
 			"op_method": rule.OpMethod, "op_path_template": rule.OpPathTemplate,
-			"op_query_template": rule.OpQueryTemplate, "op_value_policies": rule.OpValuePolicies,
-			"outcome": rule.Outcome, "rate_limit_per_min": rule.RateLimitPerMin,
+			"op_query_template": rule.OpQueryTemplate, "op_body_template": rule.OpBodyTemplate,
+			"op_value_policies": rule.OpValuePolicies,
+			"outcome":           rule.Outcome, "rate_limit_per_min": rule.RateLimitPerMin,
 			"namespace": rule.Namespace, "resource": rule.Resource, "verb": rule.Verb,
 		})
 	}
@@ -464,6 +467,7 @@ func (d *Daemon) hApprovalList(w http.ResponseWriter, _ *http.Request) {
 			m["op_method"] = p.OpMethod
 			m["op_path_template"] = p.OpPathTemplate
 			m["op_query_template"] = p.OpQueryTemplate
+			m["op_body_template"] = p.OpBodyTemplate
 			m["op_variables"] = p.OpVariables
 			m["op_values"] = p.OpValues
 		}
@@ -547,7 +551,7 @@ func (d *Daemon) applyApprovalSideEffects(p approval.Pending, auth *upstream.Aut
 // approving a new value on an existing template grows that rule's set rather than spawning a new
 // one.
 func (d *Daemon) approveOperation(p approval.Pending, trustAny []string) error {
-	tmpl, err := optemplate.Parse(p.OpMethod, p.OpPathTemplate, p.OpQueryTemplate)
+	tmpl, err := optemplate.ParseWithBody(p.OpMethod, p.OpPathTemplate, p.OpQueryTemplate, p.OpBodyTemplate)
 	if err != nil {
 		return fmt.Errorf("parse operation template: %w", err)
 	}
@@ -587,7 +591,7 @@ func (d *Daemon) approveOperation(p approval.Pending, trustAny []string) error {
 		if _, err := d.policy.Create(policy.Rule{
 			UpstreamID: p.UpstreamID, Outcome: policy.Allow,
 			OpMethod: p.OpMethod, OpPathTemplate: p.OpPathTemplate, OpQueryTemplate: p.OpQueryTemplate,
-			OpValuePolicies: policies,
+			OpBodyTemplate: p.OpBodyTemplate, OpValuePolicies: policies,
 		}); err != nil {
 			return fmt.Errorf("create operation rule: %w", err)
 		}

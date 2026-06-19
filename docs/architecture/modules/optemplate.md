@@ -39,6 +39,12 @@ two requests with the same shape map to one rule.
 
 - `VarType` with consts `Text = "text"`, `Date = "date"`, `Number = "number"`, `Enum = "enum"`.
 - `IsNumber(s string) bool` — parses an int/float (mirrors `IsDate`).
+- `ParseWithBody(method, path string, query, body map[string]string) (Template, error)` — like
+  `Parse` plus a **body template** (dotted JSON path → literal or `{name:type}`). `Parse` delegates
+  with a nil body. (ADR-0020.)
+- `(Template).ExtractBody(raw []byte) (map[string]string, bool)` — extracts the declared body vars
+  from a JSON body; no body params ⇒ accepts any body; a missing path / wrong-typed scalar / invalid
+  JSON ⇒ `ok=false`. Dotted paths into nested objects only (no arrays).
 - `Variable struct { Name string; Type VarType }`.
 - `Template` (opaque parsed form).
 - `ExemptQueryParams map[string]struct{}` — scope-neutral query params tolerated when undeclared.

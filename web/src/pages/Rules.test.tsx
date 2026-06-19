@@ -58,6 +58,7 @@ describe('<Operations> (Rules.tsx)', () => {
       op_method: 'GET',
       op_path_template: '/items/{id:number}',
       op_query_template: { sort: '{order:enum}' },
+      op_body_template: { name: '{label:text}' },
       op_value_policies: {
         id: { type: 'number', mode: 'range', min: 1, max: 100 },
         order: { type: 'enum', mode: 'set', values: ['asc'] },
@@ -73,6 +74,8 @@ describe('<Operations> (Rules.tsx)', () => {
     render(<Rules />)
     await screen.findByText('github')
 
+    // the body template is shown
+    expect(screen.getByText(/body:/)).toBeInTheDocument()
     expect(screen.getByText(/Closed domain/i)).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Value to add for order'), { target: { value: 'desc' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add value for order' }))

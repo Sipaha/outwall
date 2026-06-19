@@ -70,6 +70,7 @@ type Pending struct {
 	OpMethod        string
 	OpPathTemplate  string
 	OpQueryTemplate map[string]string
+	OpBodyTemplate  map[string]string
 	OpVariables     []Variable
 	OpValues        map[string]string
 

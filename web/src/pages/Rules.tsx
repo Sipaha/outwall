@@ -513,6 +513,18 @@ export function Rules() {
                           </span>
                         ))}
                       </div>
+                      {Object.keys(r.op_body_template ?? {}).length > 0 && (
+                        <div className="font-mono text-[11px] text-muted-foreground">
+                          body:{' '}
+                          {Object.entries(r.op_body_template ?? {}).map(([path, v], i) => (
+                            <span key={path}>
+                              {i > 0 && ', '}
+                              {path}=
+                              <span className="rounded bg-primary/15 px-1 text-primary">{v}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <StatusBadge status={r.outcome} />

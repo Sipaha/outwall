@@ -189,6 +189,43 @@ func TestKeyStable(t *testing.T) {
 	require.NotEqual(t, a.Key(), d.Key())
 }
 
+func TestExtractBody(t *testing.T) {
+	tmpl, err := ParseWithBody("POST", "/items", nil, map[string]string{
+		"name":      "{n:text}",
+		"spec.size": "{size:number}",
+		"kind":      "widget", // literal: must equal
+	})
+	require.NoError(t, err)
+
+	// happy path: nested path + typed values extracted; literal matches.
+	vars, ok := tmpl.ExtractBody([]byte(`{"name":"a","kind":"widget","spec":{"size":5}}`))
+	require.True(t, ok)
+	require.Equal(t, map[string]string{"n": "a", "size": "5"}, vars)
+
+	// a missing declared path → no match
+	_, ok = tmpl.ExtractBody([]byte(`{"name":"a","kind":"widget"}`))
+	require.False(t, ok)
+
+	// a wrong literal → no match
+	_, ok = tmpl.ExtractBody([]byte(`{"name":"a","kind":"gadget","spec":{"size":5}}`))
+	require.False(t, ok)
+
+	// a number var carrying a non-number → no match
+	_, ok = tmpl.ExtractBody([]byte(`{"name":"a","kind":"widget","spec":{"size":"big"}}`))
+	require.False(t, ok)
+
+	// invalid JSON → no match
+	_, ok = tmpl.ExtractBody([]byte(`not json`))
+	require.False(t, ok)
+
+	// a template with no body params accepts any body (and an empty one)
+	noBody, err := Parse("GET", "/x", nil)
+	require.NoError(t, err)
+	vars, ok = noBody.ExtractBody(nil)
+	require.True(t, ok)
+	require.Empty(t, vars)
+}
+
 func TestIsNumber(t *testing.T) {
 	good := []string{"0", "42", "-3", "3.14", "-0.5", "1e3"}
 	for _, s := range good {

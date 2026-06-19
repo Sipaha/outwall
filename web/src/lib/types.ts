@@ -91,6 +91,7 @@ export interface Rule {
   op_method?: string // http method, e.g. "GET" (http rules)
   op_path_template?: string // http operation path-template (http rules)
   op_query_template?: Record<string, string> // query param -> literal or "{name:type}"
+  op_body_template?: Record<string, string> // JSON dotted path -> literal or "{name:type}" (body vars)
   op_value_policies?: Record<string, ValuePolicy> // varName -> value policy
   outcome: string // allow | deny | require-approval
   rate_limit_per_min: number

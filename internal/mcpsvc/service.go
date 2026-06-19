@@ -244,6 +244,7 @@ type RequestAccessInput struct {
 	Method        string
 	PathTemplate  string
 	QueryTemplate map[string]string
+	BodyTemplate  map[string]string // JSON dotted path -> literal or "{name:type}" (request body vars)
 	Variables     []Variable
 	Values        map[string]string
 	Purpose       string
@@ -297,7 +298,7 @@ func (s *Service) RequestAccess(agentID string, in RequestAccessInput) (AccessRe
 	}
 	// Validate the template up front so a malformed shape errors at the tool boundary rather than
 	// parking an unusable pending. Reparse normalizes to the same identity the H1 rule will use.
-	tmpl, err := optemplate.Parse(in.Method, in.PathTemplate, in.QueryTemplate)
+	tmpl, err := optemplate.ParseWithBody(in.Method, in.PathTemplate, in.QueryTemplate, in.BodyTemplate)
 	if err != nil {
 		return AccessResult{}, fmt.Errorf("invalid operation template: %w", err)
 	}
@@ -311,7 +312,8 @@ func (s *Service) RequestAccess(agentID string, in RequestAccessInput) (AccessRe
 		Kind: approval.KindOperation, AgentID: agentID, UpstreamID: up.ID, Host: up.Name,
 		Method: in.Method, Path: in.PathTemplate, Purpose: in.Purpose,
 		OpMethod: in.Method, OpPathTemplate: in.PathTemplate, OpQueryTemplate: in.QueryTemplate,
-		OpVariables: vars, OpValues: in.Values,
+		OpBodyTemplate: in.BodyTemplate,
+		OpVariables:    vars, OpValues: in.Values,
 	}); err != nil {
 		return AccessResult{}, err
 	}

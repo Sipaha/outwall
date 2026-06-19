@@ -99,6 +99,43 @@ func TestDecideNumberAndEnum(t *testing.T) {
 	require.Nil(t, d.Rule)
 }
 
+func TestDecideHTTPBodyVariables(t *testing.T) {
+	reg := newReg(t)
+	mk(t, reg, Rule{
+		UpstreamID:     "u1",
+		OpMethod:       "POST",
+		OpPathTemplate: "/widgets",
+		OpBodyTemplate: map[string]string{"name": "{name:text}"},
+		OpValuePolicies: map[string]ValuePolicy{
+			"name": {Type: "text", Mode: "set", Values: []string{"alpha"}},
+		},
+		Outcome: Allow,
+	})
+
+	in := func(body string) Input {
+		return Input{AgentID: "a1", UpstreamID: "u1", Method: "POST", Path: "/widgets",
+			Query: url.Values{}, Body: []byte(body)}
+	}
+
+	// body var in the allowed set → allow, extracted
+	d, err := reg.Decide(in(`{"name":"alpha"}`))
+	require.NoError(t, err)
+	require.Equal(t, Allow, d.Outcome)
+	require.Equal(t, "alpha", d.Vars["name"])
+
+	// a new body value → require-approval with the NewValues pair
+	d, err = reg.Decide(in(`{"name":"beta"}`))
+	require.NoError(t, err)
+	require.Equal(t, RequireApproval, d.Outcome)
+	require.Equal(t, []VarValue{{Var: "name", Value: "beta"}}, d.NewValues)
+
+	// a body missing the declared field → structural non-match → default-deny
+	d, err = reg.Decide(in(`{"other":"x"}`))
+	require.NoError(t, err)
+	require.Equal(t, Deny, d.Outcome)
+	require.Nil(t, d.Rule)
+}
+
 func TestDecideHTTPTierPrecedence(t *testing.T) {
 	reg := newReg(t)
 	tmpl := func() (string, string, map[string]string, map[string]ValuePolicy) {

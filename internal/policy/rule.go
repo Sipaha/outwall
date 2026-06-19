@@ -33,6 +33,7 @@ type Rule struct {
 	OpMethod        string                 // e.g. "GET"; matched case-insensitively
 	OpPathTemplate  string                 // optemplate path with {name:type} placeholders
 	OpQueryTemplate map[string]string      // query param -> literal or "{name:type}"
+	OpBodyTemplate  map[string]string      // JSON dotted path -> literal or "{name:type}" (request body)
 	OpValuePolicies map[string]ValuePolicy // varName -> per-variable value policy
 
 	// k8s rule dimensions (empty on http rules):

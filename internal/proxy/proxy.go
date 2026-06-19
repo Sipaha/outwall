@@ -137,8 +137,22 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Namespace: ri.Namespace, Resource: resourceKey(ri), Verb: ri.Verb,
 		}
 	} else {
+		// Body-variable gating needs the request body at decision time. For body-bearing methods,
+		// read it once up front, pass it to Decide, and restore r.Body so the proxy + audit tee
+		// re-read the same bytes (the upstream credential is injected later, never in this body).
+		var bodyBytes []byte
+		if r.Body != nil && methodMayHaveBody(r.Method) {
+			bodyBytes, err = io.ReadAll(r.Body)
+			_ = r.Body.Close()
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, "read request body")
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			r.ContentLength = int64(len(bodyBytes))
+		}
 		dec, err = h.Policy.Decide(policy.Input{AgentID: ag.ID, UpstreamID: up.ID,
-			Method: r.Method, Path: escRelPath, Query: r.URL.Query()})
+			Method: r.Method, Path: escRelPath, Query: r.URL.Query(), Body: bodyBytes})
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "policy error")
 			return
@@ -403,6 +417,17 @@ func resourceKey(ri k8s.RequestInfo) string {
 		return ri.Resource + "/" + ri.Subresource
 	}
 	return ri.Resource
+}
+
+// methodMayHaveBody reports whether an HTTP method typically carries a request body that may hold
+// gated body variables. GET/HEAD never do, so their body (if any) is not pre-read.
+func methodMayHaveBody(method string) bool {
+	switch strings.ToUpper(method) {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
 }
 
 // isMutatingVerb reports whether a k8s RBAC verb changes cluster state and so should be

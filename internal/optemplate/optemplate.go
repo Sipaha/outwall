@@ -6,6 +6,7 @@
 package optemplate
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -55,6 +56,15 @@ type queryParam struct {
 	placeholder *Variable
 }
 
+// bodyParam is one declared JSON request-body field, addressed by a dotted path (e.g. "spec.size"),
+// matched as either a literal value or a typed placeholder. Body matching is only attempted for
+// requests with a JSON body; see ExtractBody.
+type bodyParam struct {
+	path        string // dotted JSON path into the request body object
+	literal     string
+	placeholder *Variable
+}
+
 // Template is a parsed operation shape. Query params NOT named here are scope-bearing and cause a
 // request to NOT match (except ExemptQueryParams).
 type Template struct {
@@ -62,14 +72,22 @@ type Template struct {
 	rawPath  string // the original path template, for Key()
 	segments []segment
 	query    []queryParam // sorted by name for stable Key()/iteration
-	vars     []Variable   // path then query, declaration order
+	body     []bodyParam  // sorted by path for stable Key()/iteration
+	vars     []Variable   // path then query then body, declaration order
 }
 
-// Parse builds a Template. pathTemplate uses {name:type} placeholders, each binding exactly ONE
-// path segment (no '/'); a literal segment matches itself. queryTemplate maps a param name to
-// either a literal value or a "{name:type}" placeholder. Returns an error on a malformed
-// placeholder, an unknown type, a duplicate variable name, or an empty method.
+// Parse builds a Template with no body matching. See ParseWithBody.
 func Parse(method, pathTemplate string, queryTemplate map[string]string) (Template, error) {
+	return ParseWithBody(method, pathTemplate, queryTemplate, nil)
+}
+
+// ParseWithBody builds a Template. pathTemplate uses {name:type} placeholders, each binding exactly
+// ONE path segment (no '/'); a literal segment matches itself. queryTemplate maps a param name to
+// either a literal value or a "{name:type}" placeholder. bodyTemplate maps a dotted JSON path
+// (e.g. "spec.replicas") to either a literal value or a "{name:type}" placeholder — these are
+// extracted from the request's JSON body (see ExtractBody). Returns an error on a malformed
+// placeholder, an unknown type, a duplicate variable name, or an empty method.
+func ParseWithBody(method, pathTemplate string, queryTemplate, bodyTemplate map[string]string) (Template, error) {
 	if strings.TrimSpace(method) == "" {
 		return Template{}, fmt.Errorf("optemplate: empty method")
 	}
@@ -113,6 +131,28 @@ func Parse(method, pathTemplate string, queryTemplate map[string]string) (Templa
 			t.vars = append(t.vars, v)
 		} else {
 			t.query = append(t.query, queryParam{name: name, literal: val})
+		}
+	}
+
+	// Body params, sorted by JSON path for a deterministic Key() and iteration order.
+	bodyPaths := make([]string, 0, len(bodyTemplate))
+	for k := range bodyTemplate {
+		bodyPaths = append(bodyPaths, k)
+	}
+	sort.Strings(bodyPaths)
+	for _, path := range bodyPaths {
+		val := bodyTemplate[path]
+		if v, ok, err := parsePlaceholder(val); err != nil {
+			return Template{}, err
+		} else if ok {
+			if _, dup := seen[v.Name]; dup {
+				return Template{}, fmt.Errorf("optemplate: duplicate variable %q", v.Name)
+			}
+			seen[v.Name] = struct{}{}
+			t.body = append(t.body, bodyParam{path: path, placeholder: &v})
+			t.vars = append(t.vars, v)
+		} else {
+			t.body = append(t.body, bodyParam{path: path, literal: val})
 		}
 	}
 	return t, nil
@@ -173,7 +213,92 @@ func (t Template) Key() string {
 			b.WriteString(qp.literal)
 		}
 	}
+	b.WriteByte('#')            // body section separator
+	for i, bp := range t.body { // already sorted by path
+		if i > 0 {
+			b.WriteByte('&')
+		}
+		b.WriteString(bp.path)
+		b.WriteByte('=')
+		if bp.placeholder != nil {
+			b.WriteString("{:" + string(bp.placeholder.Type) + "}")
+		} else {
+			b.WriteString(bp.literal)
+		}
+	}
 	return b.String()
+}
+
+// ExtractBody matches the declared body params against a JSON request body and returns the
+// extracted variable values (merged with the path/query map by the caller). When the template
+// declares no body params it returns (empty, true) regardless of the body. Otherwise the body MUST
+// be a JSON object: it fails (ok=false → the request does not match) if the body is not valid JSON,
+// a declared path is absent, a literal differs, or a typed value fails its type check
+// (date/number). Only JSON objects and dotted paths into nested objects are supported (no arrays).
+func (t Template) ExtractBody(raw []byte) (vars map[string]string, ok bool) {
+	out := map[string]string{}
+	if len(t.body) == 0 {
+		return out, true
+	}
+	var doc any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, false
+	}
+	for _, bp := range t.body {
+		leaf, found := lookupPath(doc, bp.path)
+		if !found {
+			return nil, false
+		}
+		val, ok := jsonScalar(leaf)
+		if !ok {
+			return nil, false // an object/array where a scalar was declared
+		}
+		if bp.placeholder == nil {
+			if val != bp.literal {
+				return nil, false
+			}
+			continue
+		}
+		if !typeValid(bp.placeholder.Type, val) {
+			return nil, false
+		}
+		out[bp.placeholder.Name] = val
+	}
+	return out, true
+}
+
+// lookupPath walks a dotted path into nested JSON objects, returning the leaf value and whether it
+// was present.
+func lookupPath(doc any, path string) (any, bool) {
+	cur := doc
+	for _, key := range strings.Split(path, ".") {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		cur, ok = m[key]
+		if !ok {
+			return nil, false
+		}
+	}
+	return cur, true
+}
+
+// jsonScalar renders a JSON scalar (string / number / bool) as its string form. It returns
+// ok=false for objects, arrays, and null — a scope-bearing structure cannot ride a scalar slot.
+func jsonScalar(v any) (string, bool) {
+	switch x := v.(type) {
+	case string:
+		return x, true
+	case bool:
+		return strconv.FormatBool(x), true
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64), true
+	case json.Number:
+		return x.String(), true
+	default:
+		return "", false
+	}
 }
 
 // Match reports whether method+path+query fit the template's STRUCTURE and, if so, returns the

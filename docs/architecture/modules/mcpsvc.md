@@ -38,7 +38,7 @@ real credentials are never included. The `internal/mcp` adapter exposes it as th
 - `UpstreamInfo struct { Name, BaseURL, Kind, Status string }` (Status: `open|needs-request|denied`).
 - `AccessResult struct { Status, BasePath, Memo string }` (Status: `granted|pending|denied`).
 - `Variable struct { Name, Type string }` (`Type`: `text|date`).
-- `RequestAccessInput struct { Host, Method, PathTemplate string; QueryTemplate, Values map[string]string; Variables []Variable; Purpose string }`.
+- `RequestAccessInput struct { Host, Method, PathTemplate string; QueryTemplate, BodyTemplate, Values map[string]string; Variables []Variable; Purpose string }` (`BodyTemplate` = JSON dotted path → literal/placeholder for request-body variables, ADR-0020).
 - `Identity struct { AgentID, Name, Status string; Accesses []string }`.
 - `New(a *agent.Registry, u *upstream.Registry, p *policy.Registry, ac *access.Registry) *Service`.
 - `(*Service).SetApprovals(q *approval.Queue)` — wires the queue the host/operation tools enqueue into.

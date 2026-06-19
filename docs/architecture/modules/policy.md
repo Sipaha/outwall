@@ -26,6 +26,12 @@ by rule ID), extracts the variable values, and gates each **text** value against
   any number; `number` is type-validated by `optemplate.Match`.
 - no template matched → **deny** (default-deny).
 
+**Body variables (ADR-0020).** A rule may also carry `OpBodyTemplate` (`op_body_template`: JSON
+dotted path → literal or `{name:type}`). `Decide` reads `Input.Body` and extracts the declared body
+vars (`optemplate.Template.ExtractBody`), merging them into the variable set before value gating; a
+missing or wrong-typed body var fails the match. Body vars share the same `op_value_policies` map
+(keyed by name) as path/query vars, so all four value-policy kinds apply.
+
 `AddAllowedValue(ruleID, var, value)` extends a text variable's allowed-set (idempotent). The
 tier/precedence resolution is unchanged — only the per-rule HTTP predicate changed.
 
@@ -55,15 +61,15 @@ simply never matches a real request.
 ## Public API
 
 - Outcome consts: `Allow = "allow"`, `Deny = "deny"`, `RequireApproval = "require-approval"`; `ValidOutcome(o string) bool`.
-- `Rule struct { ID, SubjectAgentID, UpstreamID, Outcome string; RateLimitPerMin int; CreatedAt time.Time; OpMethod, OpPathTemplate string; OpQueryTemplate map[string]string; OpValuePolicies map[string]ValuePolicy; Namespace, Resource, Verb string }` (`SubjectAgentID=""` = any agent; `Op*` set on HTTP rules; `Namespace`/`Resource`/`Verb` set on k8s rules only).
-- `ValuePolicy struct { Type, Mode string; Values []string }` (`Type`: `"text"|"date"`; `Mode`: `"set"|"any"`).
+- `Rule struct { ID, SubjectAgentID, UpstreamID, Outcome string; RateLimitPerMin int; CreatedAt time.Time; OpMethod, OpPathTemplate string; OpQueryTemplate, OpBodyTemplate map[string]string; OpValuePolicies map[string]ValuePolicy; Namespace, Resource, Verb string }` (`SubjectAgentID=""` = any agent; `Op*` set on HTTP rules; `OpBodyTemplate` = JSON dotted path → literal/placeholder, ADR-0020; `Namespace`/`Resource`/`Verb` set on k8s rules only).
+- `ValuePolicy struct { Type, Mode string; Values []string; Min, Max *float64 }` (`Type`: `"text"|"date"|"number"|"enum"`; `Mode`: `"set"|"any"|"range"`).
 - `MatchGlob(pattern, path string) bool` (used by the k8s namespace/resource globs).
 - `NewRegistry(s *store.Store) *Registry`
 - `(*Registry).Create(in Rule) (*Rule, error)` — assigns ID + CreatedAt; validates outcome and `RateLimitPerMin >= 0`; marshals `OpQueryTemplate`/`OpValuePolicies` to JSON columns.
 - `(*Registry).AddAllowedValue(ruleID, varName, value string) error` — extends a text variable's allowed-set (idempotent on a present value).
 - `(*Registry).SetVariableAny(ruleID, varName string) error` — flips a text variable to mode `any`, dropping its set (idempotent).
 - `(*Registry).List() ([]*Rule, error)`, `(*Registry).Delete(id string) error`, `(*Registry).ForUpstream(upstreamID string) ([]*Rule, error)`.
-- `Input struct { AgentID, UpstreamID, Method, Path string; Query url.Values; Kind, Namespace, Resource, Subresource, Verb string }` (HTTP: set `Method`/`Path`/`Query`; k8s: set `Kind="k8s"` + the tuple).
+- `Input struct { AgentID, UpstreamID, Method, Path string; Query url.Values; Body []byte; Kind, Namespace, Resource, Subresource, Verb string }` (HTTP: set `Method`/`Path`/`Query`, and `Body` for body-variable gating; k8s: set `Kind="k8s"` + the tuple).
 - `VarValue struct { Var, Value string }`, `Decision struct { Outcome string; Rule *Rule; Vars map[string]string; NewValues []VarValue }`.
 - `(*Registry).Decide(in Input) (Decision, error)` — `Outcome=Deny, Rule=nil` on default-deny.
 - `NewLimiter() *Limiter`, `(*Limiter).Allow(key string, limitPerMin int, now time.Time) bool` (`limitPerMin<=0` ⇒ always true).

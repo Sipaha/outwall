@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS rules (
 	op_method          TEXT NOT NULL DEFAULT '',
 	op_path_template   TEXT NOT NULL DEFAULT '',
 	op_query_template  TEXT NOT NULL DEFAULT '{}',
+	op_body_template   TEXT NOT NULL DEFAULT '{}',
 	op_value_policies  TEXT NOT NULL DEFAULT '{}',
 	outcome            TEXT NOT NULL,
 	rate_limit_per_min INTEGER NOT NULL DEFAULT 0,

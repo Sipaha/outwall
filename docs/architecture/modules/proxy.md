@@ -43,6 +43,12 @@ exactly once. On approve the request proceeds and the agent gets the real API re
 deny it returns 403 and the upstream is **not** called. The injected cluster credential is
 added later (the `Rewrite` step), so it is never part of the captured/previewed body.
 
+**Body variables (ADR-0020).** For non-k8s body-bearing methods (POST/PUT/PATCH/DELETE) the
+proxy reads the request body once **before** `Decide`, passes it as `policy.Input.Body` (so the
+policy engine can extract + gate JSON body variables), and restores `r.Body` over the same bytes
+so the upstream and audit tee re-read the original payload. GET/HEAD bodies are never read. The
+upstream credential is applied in `Rewrite`, so it is never part of the gated/forwarded body.
+
 **K3 (exec / attach / cp / port-forward — connection upgrades).** When `ri.IsUpgrade()` (pod
 subresources `exec`/`attach`/`portforward`; `cp` rides on `exec`), the request is an HTTP
 connection upgrade carrying a duplex stream. Policy is evaluated with verb `create` +
