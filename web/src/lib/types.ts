@@ -56,6 +56,9 @@ export interface Upstream {
   // http upstreams: the current non-secret auth settings (secrets cleared) so the replace-credential
   // form can pre-fill. Absent for k8s clusters.
   auth?: UpstreamAuthConfig
+  // oidc-authorization-code hosts: true once a browser login completed (tokens held) — distinct from
+  // merely being configured. Drives the "logged in" vs "needs login" badge.
+  logged_in?: boolean
 }
 
 /** Cluster auth config sent on POST /api/upstreams when creating a kind=k8s cluster. */

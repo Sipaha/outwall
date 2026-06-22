@@ -352,6 +352,11 @@ func (d *Daemon) hUpstreamList(w http.ResponseWriter, _ *http.Request) {
 		} else {
 			// Non-secret auth settings so the "replace credential" form can pre-fill (secrets cleared).
 			m["auth"] = u.Auth.Public()
+			// For an OIDC browser-login host, whether a login has actually completed (tokens held) —
+			// distinct from merely being configured. Drives the "logged in" vs "needs login" badge.
+			if u.Auth.Type == "oidc-authorization-code" {
+				m["logged_in"] = u.Auth.AccessToken != "" || u.Auth.RefreshToken != ""
+			}
 		}
 		out = append(out, m)
 	}

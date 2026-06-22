@@ -70,6 +70,9 @@ func TestOAuthLoginAndCallbackStoresTokens(t *testing.T) {
 	require.Equal(t, "rt1", up.Auth.RefreshToken)
 	require.False(t, d.callback.running(), "listener is released after the callback resolves")
 
+	// The host list now reports the OIDC host as logged in (tokens held), not merely configured.
+	require.Contains(t, req(t, d.AdminHandler(), "GET", "/upstreams", "").Body.String(), `"logged_in":true`)
+
 	// (3) a callback with an unknown/replayed state is rejected.
 	cb2 := httptest.NewRecorder()
 	d.hOAuthCallback(cb2, httptest.NewRequest("GET", "/oauth/callback?code=x&state="+state, nil))

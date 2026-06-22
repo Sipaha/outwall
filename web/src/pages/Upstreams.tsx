@@ -474,13 +474,24 @@ export function Upstreams() {
             {
               header: 'Credential',
               cell: (u) =>
-                hasCredential(u) ? (
-                  <span className="rounded bg-success/15 px-1.5 py-0.5 text-[11px] font-medium text-success">
-                    credential set ({u.auth_type})
-                  </span>
-                ) : (
+                !hasCredential(u) ? (
                   <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                     no credential
+                  </span>
+                ) : u.auth_type === 'oidc-authorization-code' ? (
+                  // Configured ≠ logged in: show whether a browser login has actually completed.
+                  u.logged_in ? (
+                    <span className="rounded bg-success/15 px-1.5 py-0.5 text-[11px] font-medium text-success">
+                      logged in (oidc)
+                    </span>
+                  ) : (
+                    <span className="rounded bg-warning/15 px-1.5 py-0.5 text-[11px] font-medium text-warning">
+                      not logged in (oidc)
+                    </span>
+                  )
+                ) : (
+                  <span className="rounded bg-success/15 px-1.5 py-0.5 text-[11px] font-medium text-success">
+                    credential set ({u.auth_type})
                   </span>
                 ),
             },
