@@ -98,7 +98,7 @@ type Upstream struct {
 	Name      string
 	BaseURL   string
 	Kind      string // "http" (default) | "k8s"
-	Profile   string // server profile: "raw-http" (default) | a registered plugin name (e.g. "citeck")
+	Profile   string // server profile: "raw-http" (default) or a registered plugin name
 	AuthType  string
 	Auth      AuthConfig
 	CreatedAt time.Time

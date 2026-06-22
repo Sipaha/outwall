@@ -249,6 +249,45 @@ describe('<Operations> (Rules.tsx)', () => {
     )
   })
 
+  it('shows a server-profile rule in the Server-profile rules section (not invisible)', async () => {
+    const profileRule = {
+      id: 'r1',
+      subject_agent_id: '',
+      upstream_id: 'up',
+      outcome: 'allow' as const,
+      rate_limit_per_min: 0,
+      profile: 'citeck',
+      profile_params: { op: 'read', source_id: 'emodel/type', workspace: 'w1' },
+    }
+    vi.spyOn(api, 'listRules').mockResolvedValue([profileRule])
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([
+      { id: 'up', name: 'c.test', base_url: 'https://c.test', auth_type: 'none', profile: 'citeck' },
+    ])
+    vi.spyOn(api, 'listAgents').mockResolvedValue([])
+    const deleteSpy = vi.spyOn(api, 'deleteRule').mockResolvedValue({ ok: true })
+
+    render(<Rules />)
+
+    // The profile rule must be visible: source_id value appears in the Server-profile rules section.
+    const section = (await screen.findByText('Server-profile rules')).closest('section')!
+    expect(within(section).getByText(/emodel\/type/)).toBeInTheDocument()
+    // A Delete button must be present for it.
+    const deleteBtn = within(section).getByRole('button', { name: /delete/i })
+    expect(deleteBtn).toBeInTheDocument()
+    // Clicking Delete opens the confirm modal; the confirm modal contains the confirmation text.
+    fireEvent.click(deleteBtn)
+    // Wait for the confirm text to appear, then click the destructive Delete button in the modal footer.
+    await screen.findByText(/delete this operation\?/i)
+    // There are two Delete buttons at this point: the row one and the modal confirm one.
+    // The modal confirm button has bg-destructive class (not bg-destructive/15).
+    const confirmBtn = screen.getAllByRole('button', { name: /^delete$/i }).find(
+      (b) => b.className.includes('bg-destructive ') || b.className.includes('bg-destructive\n'),
+    )
+    expect(confirmBtn).toBeDefined()
+    fireEvent.click(confirmBtn!)
+    await waitFor(() => expect(deleteSpy).toHaveBeenCalledWith('r1'))
+  })
+
   it('keeps k8s rules in a separate tuple list (not the operations editor)', async () => {
     vi.spyOn(api, 'listRules').mockResolvedValue([
       {

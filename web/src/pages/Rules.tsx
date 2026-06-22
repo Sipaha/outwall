@@ -76,10 +76,18 @@ function parseOpValues(text: string): Record<string, ValuePolicy> {
 // k8s RBAC verbs offered in the rule editor (mirrors internal/k8s verbFor + policy.Rule.Verb).
 const K8S_VERBS = ['*', 'get', 'list', 'watch', 'create', 'update', 'patch', 'delete', 'deletecollection']
 
+// isProfileRule is true for a server-profile rule (e.g. citeck Records). Such rules carry a
+// profile name instead of an operation path-template or k8s RBAC tuple and live in their own
+// section to avoid the authz hazard of being invisible in the other two sections.
+function isProfileRule(r: Rule): boolean {
+  return !!r.profile
+}
+
 // isOperationRule is true for an http operation rule (has a path-template); k8s rules carry the
-// RBAC tuple instead and live in their own section.
+// RBAC tuple instead and live in their own section. Profile rules are excluded to avoid
+// double-counting.
 function isOperationRule(r: Rule): boolean {
-  return !!r.op_path_template
+  return !isProfileRule(r) && !!r.op_path_template
 }
 
 // segmentsOf splits a path template into fixed vs `{name:type}` variable pieces so the template can
@@ -388,8 +396,9 @@ export function Rules() {
   const upstreamName = (id: string) => upstreams.find((u) => u.id === id)?.name ?? id
   const agentName = (id: string) => (id === '' ? 'any' : agents.find((a) => a.id === id)?.name ?? id)
 
+  const profileRules = rules.filter(isProfileRule)
   const operationRules = rules.filter(isOperationRule)
-  const k8sRules = rules.filter((r) => !isOperationRule(r) && (r.namespace || r.resource || r.verb))
+  const k8sRules = rules.filter((r) => !isProfileRule(r) && !isOperationRule(r) && (r.namespace || r.resource || r.verb))
 
   // The rule editor adapts to the selected upstream: k8s clusters match on the RBAC tuple
   // (namespace/resource/verb); http upstreams are operation rules (method + path-template +
@@ -621,6 +630,56 @@ export function Rules() {
                     <span className="text-muted-foreground">{r.verb || '*'}</span>
                   </span>
                 ),
+              },
+              { header: 'Outcome', cell: (r) => <StatusBadge status={r.outcome} /> },
+              {
+                header: '',
+                cell: (r) => (
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => setConfirmDelete(r)}
+                      className="rounded bg-destructive/15 px-2 py-0.5 text-[11px] font-medium text-destructive hover:bg-destructive/25"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </section>
+      )}
+
+      {/* Server-profile rules (e.g. Records rules for citeck upstreams). Without this section
+          a profile rule is invisible in the UI — an authz hazard. */}
+      {profileRules.length > 0 && (
+        <section className="rounded-lg border border-border bg-card">
+          <header className="border-b border-border px-3 py-2 text-xs font-semibold text-muted-foreground">
+            Server-profile rules
+          </header>
+          <DataTable
+            rows={profileRules}
+            rowKey={(r) => r.id}
+            empty="No server-profile rules"
+            columns={[
+              { header: 'Subject', cell: (r) => agentName(r.subject_agent_id) },
+              { header: 'Host', cell: (r) => upstreamName(r.upstream_id) },
+              { header: 'Profile', cell: (r) => <span className="font-mono">{r.profile}</span> },
+              {
+                header: 'Params',
+                cell: (r) => {
+                  const pp = r.profile_params ?? {}
+                  const op = pp['op'] as string | undefined
+                  const sourceId = pp['source_id'] as string | undefined
+                  const workspace = pp['workspace'] as string | undefined
+                  return (
+                    <span className="font-mono text-[11px]">
+                      {op && <span className="mr-2">op={op}</span>}
+                      {sourceId && <span className="mr-2">source_id={sourceId}</span>}
+                      {workspace && <span>workspace={workspace}</span>}
+                    </span>
+                  )
+                },
               },
               { header: 'Outcome', cell: (r) => <StatusBadge status={r.outcome} /> },
               {

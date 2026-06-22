@@ -49,7 +49,9 @@ func TestClassifyQueryEcosTypeAlsoExtracted(t *testing.T) {
 	op, ok, _ := classify(req("/api/records/query", `{"query":{"ecosType":"emodel/type@contract","query":{}}}`))
 	require.True(t, ok)
 	require.Equal(t, "read", op.Kind)
-	require.Contains(t, op.Resources, serverprofile.ResourceScope{Resource: "emodel/type@contract", Scope: scopeAll})
+	// ecosType is normalised to the source part ("emodel/type") so it gates identically to
+	// a sourceId rule that specifies "emodel/type".
+	require.Equal(t, []serverprofile.ResourceScope{{Resource: "emodel/type", Scope: scopeAll}}, op.Resources)
 }
 
 func TestClassifyMutateCreateUsesWorkspaceAttr(t *testing.T) {
@@ -84,6 +86,7 @@ func TestClassifyNonRecordsNotHandled(t *testing.T) {
 }
 
 func TestClassifyGatewayPrefixHandled(t *testing.T) {
-	_, ok, _ := classify(req("/gateway/emodel/api/records/query", `{"query":{"sourceId":"emodel/type","query":{}}}`))
+	op, ok, _ := classify(req("/gateway/emodel/api/records/query", `{"query":{"sourceId":"emodel/type","query":{}}}`))
 	require.True(t, ok)
+	require.Equal(t, []serverprofile.ResourceScope{{Resource: "emodel/type", Scope: scopeAll}}, op.Resources)
 }

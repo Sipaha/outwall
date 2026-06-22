@@ -649,7 +649,10 @@ func TestUpstreamCreateWithProfile(t *testing.T) {
 
 	list := req(t, h, "GET", "/upstreams", "")
 	require.Equal(t, http.StatusOK, list.Code)
-	require.Contains(t, list.Body.String(), `"profile":"citeck"`)
+	var upstreams []map[string]any
+	require.NoError(t, json.Unmarshal(list.Body.Bytes(), &upstreams))
+	require.Len(t, upstreams, 1)
+	require.Equal(t, "citeck", upstreams[0]["profile"])
 }
 
 func TestRuleCreateWithProfileParams(t *testing.T) {
@@ -668,8 +671,13 @@ func TestRuleCreateWithProfileParams(t *testing.T) {
 
 	list := req(t, h, "GET", "/rules", "")
 	require.Equal(t, http.StatusOK, list.Code)
-	require.Contains(t, list.Body.String(), `"profile":"citeck"`)
-	require.Contains(t, list.Body.String(), `"source_id":"emodel/type"`)
+	var rules []map[string]any
+	require.NoError(t, json.Unmarshal(list.Body.Bytes(), &rules))
+	require.Len(t, rules, 1)
+	require.Equal(t, "citeck", rules[0]["profile"])
+	params, ok := rules[0]["profile_params"].(map[string]any)
+	require.True(t, ok, "profile_params should be a JSON object")
+	require.Equal(t, "emodel/type", params["source_id"])
 }
 
 func TestProfilesEndpoint(t *testing.T) {
@@ -679,5 +687,14 @@ func TestProfilesEndpoint(t *testing.T) {
 
 	w := req(t, h, "GET", "/profiles", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	require.Contains(t, w.Body.String(), `"citeck"`)
+	var profiles []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &profiles))
+	require.NotEmpty(t, profiles, "profiles list should be non-empty")
+	names := make([]string, 0, len(profiles))
+	for _, p := range profiles {
+		if name, ok := p["profile"].(string); ok {
+			names = append(names, name)
+		}
+	}
+	require.Contains(t, names, "citeck")
 }

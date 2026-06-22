@@ -64,7 +64,16 @@ func classify(r serverprofile.Request) (serverprofile.Operation, bool, error) {
 		}
 		if body.Query.SourceID != "" || body.Query.EcosType != "" {
 			scopes := workspaceScopes(body.Query.Workspaces)
-			for _, src := range nonEmpty(body.Query.SourceID, body.Query.EcosType) {
+			// sourceId is already a bare source; ecosType is a ref ("src@localId") — normalize to
+			// source-only so an operator rule "source_id: emodel/type" gates both identically.
+			var sources []string
+			if body.Query.SourceID != "" {
+				sources = append(sources, body.Query.SourceID)
+			}
+			if body.Query.EcosType != "" {
+				sources = append(sources, normalizeSource(body.Query.EcosType))
+			}
+			for _, src := range sources {
 				for _, ws := range scopes {
 					out.Resources = append(out.Resources, serverprofile.ResourceScope{Resource: src, Scope: ws})
 				}
@@ -125,6 +134,16 @@ func workspaceScopes(ws []string) []string {
 		return []string{scopeAll}
 	}
 	return ws
+}
+
+// normalizeSource strips the "@localId" suffix from an EntityRef so the source part can be used
+// as a gating key. If there is no "@", the string is already a bare source (or bare localId with
+// no app prefix) and is returned as-is.
+func normalizeSource(s string) string {
+	if src, _ := refSource(s); src != "" {
+		return src
+	}
+	return s
 }
 
 func nonEmpty(xs ...string) []string {
