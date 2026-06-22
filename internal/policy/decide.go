@@ -126,23 +126,21 @@ func (r *Registry) Decide(in Input) (Decision, error) {
 			continue // profile rules are evaluated only on the profile path
 		}
 		var c candidate
-		var matched bool
 		if k8s {
 			if !k8sMatches(rule, in) {
 				continue
 			}
 			c = candidate{rule: rule, outcome: rule.Outcome}
-			matched = true
 		} else {
-			c, matched, err = r.evalHTTPRule(rule, in)
-			if err != nil {
-				return Decision{}, err
+			cc, matched, herr := r.evalHTTPRule(rule, in)
+			if herr != nil {
+				return Decision{}, herr
 			}
 			if !matched {
 				continue
 			}
+			c = cc
 		}
-		_ = matched
 		switch rule.SubjectAgentID {
 		case in.AgentID:
 			agentTier = append(agentTier, c)
@@ -203,9 +201,9 @@ func opVars(op serverprofile.Operation) map[string]string {
 		scopes = append(scopes, res.Scope)
 	}
 	return map[string]string{
-		"op":        op.Kind,
-		"sourceId":  strings.Join(srcs, ","),
-		"workspace": strings.Join(scopes, ","),
+		"op":       op.Kind,
+		"resource": strings.Join(srcs, ","),
+		"scope":    strings.Join(scopes, ","),
 	}
 }
 
