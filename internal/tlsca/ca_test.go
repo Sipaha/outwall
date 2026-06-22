@@ -48,3 +48,22 @@ func TestServerCertVerifiesAgainstCA(t *testing.T) {
 	_, err = leaf.Verify(x509.VerifyOptions{Roots: pool, DNSName: "127.0.0.1"})
 	require.NoError(t, err)
 }
+
+func TestServerCertForCachesPerSNI(t *testing.T) {
+	ca, err := LoadOrCreateCA(t.TempDir())
+	require.NoError(t, err)
+
+	c1, err := ca.ServerCertFor("be.outwall.localhost")
+	require.NoError(t, err)
+	require.Contains(t, c1.Leaf.DNSNames, "be.outwall.localhost")
+
+	// A dotted name (an upstream host) is covered exactly (a one-label wildcard could not).
+	c2, err := ca.ServerCertFor("enterprise.ecos24.ru.outwall.localhost")
+	require.NoError(t, err)
+	require.Contains(t, c2.Leaf.DNSNames, "enterprise.ecos24.ru.outwall.localhost")
+
+	// Same SNI returns the cached identical cert (same leaf pointer / serial).
+	c1b, err := ca.ServerCertFor("be.outwall.localhost")
+	require.NoError(t, err)
+	require.Equal(t, c1.Leaf.SerialNumber, c1b.Leaf.SerialNumber)
+}

@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -33,6 +34,9 @@ type CA struct {
 	cert  *x509.Certificate
 	key   *ecdsa.PrivateKey
 	caPEM []byte
+
+	sniMu    sync.Mutex
+	sniCache map[string]*tls.Certificate
 }
 
 // LoadOrCreateCA loads the CA persisted under dir, creating it (and dir) on first use.
@@ -157,6 +161,26 @@ func (c *CA) ServerCert(hosts ...string) (tls.Certificate, error) {
 		PrivateKey:  key,
 		Leaf:        mustLeaf(der),
 	}, nil
+}
+
+// ServerCertFor returns a CA-signed leaf whose SAN is the given SNI host (plus the loopback IPs so
+// the same endpoint still answers IP/localhost handshakes). Certs are issued once per SNI and
+// cached for the CA's lifetime. The SNI is a hostname (never an IP) — callers pass the browse host.
+func (c *CA) ServerCertFor(sni string) (*tls.Certificate, error) {
+	c.sniMu.Lock()
+	defer c.sniMu.Unlock()
+	if c.sniCache == nil {
+		c.sniCache = map[string]*tls.Certificate{}
+	}
+	if cert, ok := c.sniCache[sni]; ok {
+		return cert, nil
+	}
+	leaf, err := c.ServerCert(sni, "127.0.0.1", "::1")
+	if err != nil {
+		return nil, err
+	}
+	c.sniCache[sni] = &leaf
+	return &leaf, nil
 }
 
 func mustLeaf(der []byte) *x509.Certificate {
