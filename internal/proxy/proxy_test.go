@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +19,8 @@ import (
 	"github.com/Sipaha/outwall/internal/authn"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/secret"
+	"github.com/Sipaha/outwall/internal/serverprofile"
+	_ "github.com/Sipaha/outwall/internal/serverprofile/citeck"
 	"github.com/Sipaha/outwall/internal/store"
 	"github.com/Sipaha/outwall/internal/upstream"
 )
@@ -352,4 +356,51 @@ func TestProxyRecordsDeny(t *testing.T) {
 	require.Len(t, list, 1)
 	require.Equal(t, "deny", list[0].Decision)
 	require.Equal(t, 403, list[0].StatusCode)
+}
+
+func TestProxyPassesProfileToPolicy(t *testing.T) {
+	// Verify the citeck profile is registered (the blank import above registers it).
+	_, ok := serverprofile.Get("citeck")
+	require.True(t, ok, "citeck serverprofile must be registered via blank import")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer backend.Close()
+
+	h, ag, up, pol, _, _ := build(t)
+	_, token, err := ag.Register("claude")
+	require.NoError(t, err)
+
+	// Register a citeck-profiled upstream.
+	u, err := up.CreateProfiled("be", backend.URL, "http", "citeck", upstream.AuthConfig{Type: "none"})
+	require.NoError(t, err)
+
+	// Add a citeck READ allow rule (no write rule).
+	_, err = pol.Create(policy.Rule{
+		UpstreamID:    u.ID,
+		Outcome:       "allow",
+		Profile:       "citeck",
+		ProfileParams: json.RawMessage(`{"op":"read","source_id":"*","workspace":"*"}`),
+	})
+	require.NoError(t, err)
+
+	postJSON := func(path string, body []byte) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+
+	// (1) Records query (read) with a sourceId → the citeck read rule allows it.
+	readBody := []byte(`{"query":{"sourceId":"emodel/type","workspaces":["w1"]}}`)
+	w := postJSON("/be/api/records/query", readBody)
+	require.Equal(t, http.StatusOK, w.Code, "citeck read rule must allow records/query")
+
+	// (2) Records mutate (write) with no write rule → default-deny → 403.
+	writeBody := []byte(`{"records":[{"id":"emodel/type@someid","attributes":{}}]}`)
+	w = postJSON("/be/api/records/mutate", writeBody)
+	require.Equal(t, http.StatusForbidden, w.Code, "no write rule: records/mutate must be denied")
 }

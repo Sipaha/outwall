@@ -207,7 +207,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 			r.ContentLength = int64(len(bodyBytes))
 		}
-		dec, err = h.Policy.Decide(policy.Input{AgentID: ag.ID, UpstreamID: up.ID,
+		dec, err = h.Policy.Decide(policy.Input{AgentID: ag.ID, UpstreamID: up.ID, Profile: up.Profile,
 			Method: r.Method, Path: escRelPath, Query: r.URL.Query(), Body: bodyBytes})
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "policy error")
