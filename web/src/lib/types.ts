@@ -59,6 +59,7 @@ export interface Upstream {
   // oidc-authorization-code hosts: true once a browser login completed (tokens held) — distinct from
   // merely being configured. Drives the "logged in" vs "needs login" badge.
   logged_in?: boolean
+  profile?: string
 }
 
 /** Cluster auth config sent on POST /api/upstreams when creating a kind=k8s cluster. */
@@ -108,7 +109,12 @@ export interface Rule {
   namespace?: string // k8s: "", "prod", "prod-*", "*"
   resource?: string // k8s: "pods", "pods/log", "deployments", "*"
   verb?: string // k8s: get/list/watch/create/update/patch/delete/deletecollection/*
+  profile?: string
+  profile_params?: Record<string, unknown>
 }
+
+export interface ProfileField { key: string; label: string; type: string; options?: string[] }
+export interface ProfileSchema { profile: string; fields: ProfileField[] }
 
 /** A declared typed operation variable on a KindOperation approval (mirrors approval.Variable). */
 export interface OpVariable {

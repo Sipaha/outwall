@@ -12,6 +12,7 @@ import type {
   AccessRequest,
   AuditEntry,
   AuditDetail,
+  ProfileSchema,
 } from './types'
 
 /** All control-API calls are mounted under /api on the daemon's UIListen bind. */
@@ -111,8 +112,9 @@ export function createUpstream(
   name: string,
   baseURL: string,
   auth: UpstreamAuthConfig,
+  profile?: string,
 ): Promise<{ id: string }> {
-  return request('POST', '/upstreams', { name, base_url: baseURL, auth })
+  return request('POST', '/upstreams', { name, base_url: baseURL, auth, profile })
 }
 
 export function deleteUpstream(name: string): Promise<{ ok: boolean }> {
@@ -204,6 +206,12 @@ export function createRule(rule: Omit<Rule, 'id'>): Promise<{ id: string }> {
 
 export function deleteRule(id: string): Promise<{ ok: boolean }> {
   return request('DELETE', `/rules/${encodeURIComponent(id)}`)
+}
+
+// --- Profiles ---
+
+export function getProfiles(): Promise<ProfileSchema[]> {
+  return request('GET', '/profiles')
 }
 
 /**
