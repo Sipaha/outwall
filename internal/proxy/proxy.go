@@ -562,7 +562,7 @@ func rewriteBrowseHeaders(resp *http.Response, base *url.URL, browseOrigin strin
 	if loc := resp.Header.Get("Location"); loc != "" {
 		if u, err := url.Parse(loc); err == nil && u.IsAbs() && strings.EqualFold(u.Host, base.Host) {
 			u.Scheme, u.Host = "", "" // make it relative to the browse origin
-			resp.Header.Set("Location", strings.TrimPrefix(browseOrigin+u.String(), ""))
+			resp.Header.Set("Location", browseOrigin+u.String())
 		}
 	}
 	if cookies := resp.Header.Values("Set-Cookie"); len(cookies) > 0 {
