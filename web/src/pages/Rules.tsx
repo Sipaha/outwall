@@ -29,6 +29,10 @@ interface DraftRule {
   namespace: string
   resource: string
   verb: string
+  // citeck Records fields
+  rec_op: string
+  source_id: string
+  workspace: string
 }
 
 const emptyDraft: DraftRule = {
@@ -42,6 +46,9 @@ const emptyDraft: DraftRule = {
   namespace: '',
   resource: '',
   verb: '',
+  rec_op: 'read',
+  source_id: '',
+  workspace: '',
 }
 
 // parseOpValues turns "var=value" lines into per-variable text value policies. "var=*" sets the
@@ -386,8 +393,9 @@ export function Rules() {
 
   // The rule editor adapts to the selected upstream: k8s clusters match on the RBAC tuple
   // (namespace/resource/verb); http upstreams are operation rules (method + path-template +
-  // per-variable value policies).
+  // per-variable value policies); citeck upstreams use Records fields (op/sourceId/workspace).
   const draftIsK8s = upstreams.find((u) => u.id === draft.upstream_id)?.kind === 'k8s'
+  const draftProfile = upstreams.find((u) => u.id === draft.upstream_id)?.profile
 
   function openModal() {
     // Default the verb to "*" so the k8s verb <select> is a controlled match from the start.
@@ -403,27 +411,39 @@ export function Rules() {
     }
     setBusy(true)
     try {
-      // k8s rules send the RBAC tuple; http rules are operation rules (method + path-template +
-      // per-variable value policies).
-      const payload = draftIsK8s
-        ? {
-            subject_agent_id: draft.subject_agent_id,
-            upstream_id: draft.upstream_id,
-            outcome: draft.outcome,
-            rate_limit_per_min: draft.rate_limit_per_min,
-            namespace: draft.namespace,
-            resource: draft.resource,
-            verb: draft.verb,
-          }
-        : {
-            subject_agent_id: draft.subject_agent_id,
-            upstream_id: draft.upstream_id,
-            op_method: draft.op_method,
-            op_path_template: draft.op_path_template,
-            op_value_policies: parseOpValues(draft.op_values),
-            outcome: draft.outcome,
-            rate_limit_per_min: draft.rate_limit_per_min,
-          }
+      // k8s rules send the RBAC tuple; citeck upstreams send a Records rule (op/sourceId/workspace);
+      // http rules are operation rules (method + path-template + per-variable value policies).
+      let payload: Omit<Rule, 'id'>
+      if (draftIsK8s) {
+        payload = {
+          subject_agent_id: draft.subject_agent_id,
+          upstream_id: draft.upstream_id,
+          outcome: draft.outcome,
+          rate_limit_per_min: draft.rate_limit_per_min,
+          namespace: draft.namespace,
+          resource: draft.resource,
+          verb: draft.verb,
+        }
+      } else if (draftProfile === 'citeck') {
+        payload = {
+          subject_agent_id: draft.subject_agent_id,
+          upstream_id: draft.upstream_id,
+          outcome: draft.outcome,
+          rate_limit_per_min: draft.rate_limit_per_min,
+          profile: 'citeck',
+          profile_params: { op: draft.rec_op, source_id: draft.source_id, workspace: draft.workspace },
+        }
+      } else {
+        payload = {
+          subject_agent_id: draft.subject_agent_id,
+          upstream_id: draft.upstream_id,
+          op_method: draft.op_method,
+          op_path_template: draft.op_path_template,
+          op_value_policies: parseOpValues(draft.op_values),
+          outcome: draft.outcome,
+          rate_limit_per_min: draft.rate_limit_per_min,
+        }
+      }
       await createRule(payload)
       push('success', 'Operation created')
       setOpen(false)
@@ -687,6 +707,38 @@ export function Rules() {
                 value={draft.verb}
                 onChange={(v) => setDraft({ ...draft, verb: v })}
                 options={K8S_VERBS.map((v) => ({ value: v, label: v }))}
+              />
+            </FormField>
+          </>
+        ) : draftProfile === 'citeck' ? (
+          <>
+            <FormField label="Records operation">
+              <select
+                className={fieldControlClass}
+                value={draft.rec_op}
+                onChange={(e) => setDraft({ ...draft, rec_op: e.target.value })}
+                aria-label="Records operation"
+              >
+                <option value="read">read (query)</option>
+                <option value="write">write (mutate/delete)</option>
+              </select>
+            </FormField>
+            <FormField label="Source ID">
+              <input
+                className={fieldControlClass}
+                value={draft.source_id}
+                onChange={(e) => setDraft({ ...draft, source_id: e.target.value })}
+                placeholder="emodel/type or *"
+                aria-label="Source ID"
+              />
+            </FormField>
+            <FormField label="Workspace">
+              <input
+                className={fieldControlClass}
+                value={draft.workspace}
+                onChange={(e) => setDraft({ ...draft, workspace: e.target.value })}
+                placeholder="* (not enforced for update/delete)"
+                aria-label="Workspace"
               />
             </FormField>
           </>

@@ -218,6 +218,37 @@ describe('<Operations> (Rules.tsx)', () => {
     )
   })
 
+  it('creates a citeck Records rule', async () => {
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([
+      { id: 'up', name: 'c.test', base_url: 'https://c.test', auth_type: 'none', profile: 'citeck' },
+    ])
+    vi.spyOn(api, 'listRules').mockResolvedValue([])
+    vi.spyOn(api, 'listAgents').mockResolvedValue([])
+    const createSpy = vi.spyOn(api, 'createRule').mockResolvedValue({ id: 'r1' })
+    render(<Rules />)
+
+    await screen.findByText('No operations yet — default-deny applies')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add operation' }))
+    // Host selector is pre-populated with the only upstream; citeck fields should appear
+    await screen.findByLabelText('Records operation')
+    fireEvent.change(screen.getByLabelText('Records operation'), { target: { value: 'read' } })
+    fireEvent.change(screen.getByLabelText('Source ID'), { target: { value: 'emodel/type' } })
+    fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: 'w1' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() =>
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          upstream_id: 'up',
+          outcome: 'allow',
+          profile: 'citeck',
+          profile_params: { op: 'read', source_id: 'emodel/type', workspace: 'w1' },
+        }),
+      ),
+    )
+  })
+
   it('keeps k8s rules in a separate tuple list (not the operations editor)', async () => {
     vi.spyOn(api, 'listRules').mockResolvedValue([
       {
