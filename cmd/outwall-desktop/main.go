@@ -36,6 +36,10 @@ import (
 	"github.com/Sipaha/outwall/internal/config"
 	"github.com/Sipaha/outwall/internal/daemon"
 	"github.com/Sipaha/outwall/internal/desktop"
+
+	// Bundle server-profile plugins (self-register via init()). The core never imports these; the
+	// binary entrypoint opts each one in. Add a line here for each new platform plugin.
+	_ "github.com/Sipaha/outwall/internal/serverprofile/citeck"
 )
 
 //go:embed logo.png
