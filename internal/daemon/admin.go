@@ -18,6 +18,7 @@ import (
 	"github.com/Sipaha/outwall/internal/optemplate"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/secret"
+	"github.com/Sipaha/outwall/internal/serverprofile"
 	"github.com/Sipaha/outwall/internal/upstream"
 )
 
@@ -46,6 +47,7 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	mux.HandleFunc("GET /rules", d.hRuleList)
 	mux.HandleFunc("DELETE /rules/{id}", d.hRuleDelete)
 	mux.HandleFunc("POST /rules/{id}/value-policy", d.hRuleSetVariablePolicy)
+	mux.HandleFunc("GET /profiles", d.hProfileList)
 	mux.HandleFunc("GET /approvals", d.hApprovalList)
 	mux.HandleFunc("POST /approvals/{id}/resolve", d.hApprovalResolve)
 	mux.HandleFunc("GET /access-requests", d.hAccessRequestList)
@@ -186,13 +188,14 @@ func (d *Daemon) hUpstreamCreate(w http.ResponseWriter, r *http.Request) {
 		Name    string              `json:"name"`
 		BaseURL string              `json:"base_url"`
 		Kind    string              `json:"kind"`
+		Profile string              `json:"profile"`
 		Auth    upstream.AuthConfig `json:"auth"`
 	}
 	if err := decode(r, &body); err != nil {
 		adminErr(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	up, err := d.upstreams.CreateKind(body.Name, body.BaseURL, body.Kind, body.Auth)
+	up, err := d.upstreams.CreateProfiled(body.Name, body.BaseURL, body.Kind, body.Profile, body.Auth)
 	if err != nil {
 		adminErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -342,7 +345,8 @@ func (d *Daemon) hUpstreamList(w http.ResponseWriter, _ *http.Request) {
 	out := make([]map[string]any, 0, len(ups))
 	for _, u := range ups {
 		m := map[string]any{
-			"id": u.ID, "name": u.Name, "base_url": u.BaseURL, "auth_type": u.AuthType, "kind": u.Kind,
+			"id": u.ID, "name": u.Name, "base_url": u.BaseURL, "auth_type": u.AuthType,
+			"kind": u.Kind, "profile": u.Profile,
 		} // secrets intentionally omitted
 		if u.Kind == upstream.KindK8s {
 			// Non-secret cluster metadata the Clusters UI needs: the auth method and whether TLS
@@ -409,6 +413,9 @@ func (d *Daemon) hRuleCreate(w http.ResponseWriter, r *http.Request) {
 		Namespace string `json:"namespace"`
 		Resource  string `json:"resource"`
 		Verb      string `json:"verb"`
+		// server-profile rule fields:
+		Profile       string          `json:"profile"`
+		ProfileParams json.RawMessage `json:"profile_params"`
 	}
 	if err := decode(r, &body); err != nil {
 		adminErr(w, http.StatusBadRequest, "bad json")
@@ -421,6 +428,7 @@ func (d *Daemon) hRuleCreate(w http.ResponseWriter, r *http.Request) {
 		OpQueryTemplate: body.OpQueryTemplate, OpBodyTemplate: body.OpBodyTemplate,
 		OpValuePolicies: body.OpValuePolicies,
 		Namespace:       body.Namespace, Resource: body.Resource, Verb: body.Verb,
+		Profile: body.Profile, ProfileParams: body.ProfileParams,
 	})
 	if err != nil {
 		adminErr(w, http.StatusBadRequest, err.Error())
@@ -445,6 +453,7 @@ func (d *Daemon) hRuleList(w http.ResponseWriter, _ *http.Request) {
 			"op_value_policies": rule.OpValuePolicies,
 			"outcome":           rule.Outcome, "rate_limit_per_min": rule.RateLimitPerMin,
 			"namespace": rule.Namespace, "resource": rule.Resource, "verb": rule.Verb,
+			"profile": rule.Profile, "profile_params": rule.ProfileParams,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -456,6 +465,18 @@ func (d *Daemon) hRuleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// hProfileList returns the registered server profiles and their rule schemas, so the UI can render
+// the right rule editor per profile. "raw-http" is implicit and not listed here.
+func (d *Daemon) hProfileList(w http.ResponseWriter, _ *http.Request) {
+	out := make([]serverprofile.RuleSchema, 0)
+	for _, name := range serverprofile.Names() {
+		if p, ok := serverprofile.Get(name); ok {
+			out = append(out, p.RuleSchema())
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // hRuleSetVariablePolicy replaces a single variable's value policy on an operation rule — the

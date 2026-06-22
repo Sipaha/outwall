@@ -18,6 +18,7 @@ import (
 	"github.com/Sipaha/outwall/internal/approval"
 	"github.com/Sipaha/outwall/internal/events"
 	"github.com/Sipaha/outwall/internal/policy"
+	_ "github.com/Sipaha/outwall/internal/serverprofile/citeck"
 	"github.com/Sipaha/outwall/internal/upstream"
 )
 
@@ -636,4 +637,47 @@ func TestAdminAccessRequests(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, req(t, h, "POST", "/access-requests/nope/resolve", `{"status":"granted"}`).Code)
 	// list is empty-but-OK initially
 	require.Equal(t, http.StatusOK, req(t, h, "GET", "/access-requests", "").Code)
+}
+
+func TestUpstreamCreateWithProfile(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	w := req(t, h, "POST", "/upstreams", `{"name":"c.test","base_url":"https://c.test","profile":"citeck","auth":{"type":"none"}}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	list := req(t, h, "GET", "/upstreams", "")
+	require.Equal(t, http.StatusOK, list.Code)
+	require.Contains(t, list.Body.String(), `"profile":"citeck"`)
+}
+
+func TestRuleCreateWithProfileParams(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	// Create an upstream first, then a rule with profile params.
+	wu := req(t, h, "POST", "/upstreams", `{"name":"citeck.test","base_url":"https://citeck.test","auth":{"type":"none"}}`)
+	require.Equal(t, http.StatusOK, wu.Code, wu.Body.String())
+	var up map[string]string
+	require.NoError(t, json.Unmarshal(wu.Body.Bytes(), &up))
+
+	wr := req(t, h, "POST", "/rules", `{"upstream_id":"`+up["id"]+`","outcome":"allow","profile":"citeck","profile_params":{"op":"read","source_id":"emodel/type","workspace":"*"}}`)
+	require.Equal(t, http.StatusOK, wr.Code, wr.Body.String())
+
+	list := req(t, h, "GET", "/rules", "")
+	require.Equal(t, http.StatusOK, list.Code)
+	require.Contains(t, list.Body.String(), `"profile":"citeck"`)
+	require.Contains(t, list.Body.String(), `"source_id":"emodel/type"`)
+}
+
+func TestProfilesEndpoint(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	w := req(t, h, "GET", "/profiles", "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), `"citeck"`)
 }
