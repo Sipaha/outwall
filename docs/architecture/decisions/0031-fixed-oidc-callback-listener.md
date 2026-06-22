@@ -17,10 +17,13 @@ happens to listen". Operators need one stable, well-known redirect URI to regist
 Serve the OIDC callback on a **dedicated loopback listener** with a fixed default and make it
 configurable.
 
-- `Config.CallbackListen` (default `DefaultCallbackListen = 127.0.0.1:23312`). `Daemon.Serve` starts a
-  small HTTP server bound there whose only route is `/callback` → the existing `hOAuthCallback`
-  handler. The redirect URI is therefore `http://127.0.0.1:23312/callback` by default — stable and
-  independent of the UI port.
+- `Config.CallbackListen` (default `DefaultCallbackListen = 127.0.0.1:23312`). The redirect URI is
+  therefore `http://127.0.0.1:23312/callback` by default — stable and independent of the UI port.
+- **On-demand binding.** The listener (`callbackServer`, one route `/callback` → `hOAuthCallback`) is
+  NOT bound at startup. `hOAuthLogin` `acquire()`s it (ref-counted) when a login begins; it is
+  released — and the port freed — after the callback resolves or the login TTL (10 min) expires. So
+  the fixed port is held only while a browser login is actually in flight, not for the daemon's whole
+  life. `Daemon.Serve` force-stops it on shutdown.
 - The default redirect URI used for both the authorize URL and the token exchange comes from
   `Config.CallbackListen` (`effectiveOAuthCfg`); a custom `RedirectURL` on the upstream still wins,
   and the handler stays mounted at `/oauth/callback` on the UI listener too for that case.
@@ -46,5 +49,7 @@ configurable.
 
 - One stable redirect URI (`http://127.0.0.1:23312/callback`) to register in the IdP, surfaced in the
   UI; overridable via `--callback-listen` and per-upstream `RedirectURL`.
-- A fifth loopback listener in `Serve` (started/closed alongside the others). Covered by
-  `TestOAuthRedirectURIFixedCallback` (endpoint + authorize-URL `redirect_uri`).
+- The fixed port is bound only during an in-flight login, so it doesn't permanently occupy 23312
+  (two instances, tests, etc. don't collide while idle). Covered by `TestOAuthRedirectURIFixedCallback`
+  (endpoint + authorize-URL `redirect_uri`) and the on-demand up/down assertions in
+  `TestOAuthLoginAndCallbackStoresTokens`.

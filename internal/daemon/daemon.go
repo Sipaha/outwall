@@ -94,6 +94,7 @@ type Daemon struct {
 	importer    *k8s.Importer
 	authManager *authn.Manager
 	oauthLogins *oauthLogins
+	callback    *callbackServer // on-demand OIDC callback listener (up only during a login)
 	dataPlane   http.Handler
 	mcp         http.Handler
 }
@@ -165,6 +166,11 @@ func New(cfg Config) (*Daemon, error) {
 		}),
 		mcp: mcpHandler,
 	}
+	// On-demand OIDC callback listener: started by hOAuthLogin, stopped after the callback (or the
+	// login TTL) — so the fixed port (cfg.CallbackListen) is only bound while a login is in flight.
+	cbMux := http.NewServeMux()
+	cbMux.HandleFunc("/callback", d.hOAuthCallback)
+	d.callback = newCallbackServer(cfg.CallbackListen, cbMux)
 	// Persist refreshed oidc-authorization-code tokens back to the vault so a rotated refresh
 	// token survives a restart (the agent never sees any of this).
 	authMgr.SetOAuthPersister(d.persistOAuthTokens)
@@ -211,11 +217,8 @@ func (d *Daemon) Serve(ctx context.Context) error {
 	dataSrv := &http.Server{Addr: d.cfg.Listen, Handler: d.dataPlane, TLSConfig: dataTLS}
 	mcpSrv := &http.Server{Addr: d.cfg.MCPListen, Handler: d.mcp}
 	uiSrv := &http.Server{Addr: d.cfg.UIListen, Handler: d.UIHandler()}
-	// Dedicated loopback listener for the OIDC browser-login callback (fixed redirect URI). Only
-	// /callback is served here; it reuses the same handler as the UI-mounted /oauth/callback.
-	cbMux := http.NewServeMux()
-	cbMux.HandleFunc("/callback", d.hOAuthCallback)
-	cbSrv := &http.Server{Addr: d.cfg.CallbackListen, Handler: cbMux}
+	// The OIDC callback listener (d.callback) is started on demand by hOAuthLogin and stopped after
+	// the callback / login TTL — it is NOT bound here, so the fixed port stays free while idle.
 
 	// Background audit pruner: enforces the stored retention setting until ctx is canceled.
 	pruneInterval := d.cfg.PruneInterval
@@ -226,12 +229,11 @@ func (d *Daemon) Serve(ctx context.Context) error {
 		go d.audit.RunPruner(ctx, pruneInterval)
 	}
 
-	errc := make(chan error, 5)
+	errc := make(chan error, 4)
 	go func() { errc <- adminSrv.Serve(ln) }()
 	go func() { errc <- dataSrv.ListenAndServeTLS("", "") }()
 	go func() { errc <- mcpSrv.ListenAndServe() }()
 	go func() { errc <- uiSrv.ListenAndServe() }()
-	go func() { errc <- cbSrv.ListenAndServe() }()
 
 	select {
 	case <-ctx.Done():
@@ -239,7 +241,7 @@ func (d *Daemon) Serve(ctx context.Context) error {
 		_ = dataSrv.Close()
 		_ = mcpSrv.Close()
 		_ = uiSrv.Close()
-		_ = cbSrv.Close()
+		d.callback.shutdown()
 		_ = os.Remove(d.cfg.SocketPath)
 		return nil
 	case err := <-errc:

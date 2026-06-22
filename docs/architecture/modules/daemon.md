@@ -47,9 +47,11 @@ deletes entries older than it (no-op when retention is 0). The goroutine exits o
 
 **OIDC browser login (ADR-0021, ADR-0031).** `POST /upstreams/{name}/oauth/login` starts an
 authorization-code login (mints a CSRF `state` + PKCE verifier, returns the IdP authorize URL). The
-callback (`/callback`) is served on a **dedicated loopback listener** (`Config.CallbackListen`,
+callback (`/callback`) is served on a **dedicated, on-demand loopback listener** (`Config.CallbackListen`,
 default `127.0.0.1:23312`) so the redirect URI is a fixed, registerable value independent of the UI
-port; it is CSRF-exempt (a browser redirect; the random state is the binding) and exchanges the code
+port; the listener (`callbackServer`) is brought up by `hOAuthLogin` and released after the callback
+or login TTL, so the port is bound only during a login. It is CSRF-exempt (a browser redirect; the
+random state is the binding) and exchanges the code
 for tokens, persisting them encrypted on the upstream. `GET /oidc/redirect-uri` returns that URI for
 the UI to show; `POST /oidc/discover {url}` fetches the provider's well-known document to auto-fill
 the endpoints (ADR-0030). The daemon wires `authn.Manager.SetOAuthPersister` so refreshed tokens are

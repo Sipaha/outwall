@@ -7,6 +7,7 @@ import (
 	"html"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -14,6 +15,73 @@ import (
 	"github.com/Sipaha/outwall/internal/authn"
 	"github.com/Sipaha/outwall/internal/upstream"
 )
+
+// callbackServer is the on-demand OIDC callback listener. It binds the fixed callback port only
+// while at least one browser login is in flight (ref-counted via acquire/release), so the port is
+// free when idle (a login can also be abandoned — release fires on the login TTL too).
+type callbackServer struct {
+	addr    string
+	handler http.Handler
+	mu      sync.Mutex
+	srv     *http.Server
+	active  int
+}
+
+func newCallbackServer(addr string, handler http.Handler) *callbackServer {
+	return &callbackServer{addr: addr, handler: handler}
+}
+
+// acquire starts the listener if it is not already running and registers one in-flight login. The
+// returned release (idempotent) deregisters and, when no logins remain, shuts the listener down.
+func (c *callbackServer) acquire() (func(), error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.srv == nil {
+		ln, err := net.Listen("tcp", c.addr)
+		if err != nil {
+			return nil, err
+		}
+		srv := &http.Server{Handler: c.handler}
+		c.srv = srv
+		go func() { _ = srv.Serve(ln) }()
+	}
+	c.active++
+	var once sync.Once
+	return func() { once.Do(c.release) }, nil
+}
+
+func (c *callbackServer) release() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.active > 0 {
+		c.active--
+	}
+	if c.active == 0 && c.srv != nil {
+		_ = c.srv.Close()
+		c.srv = nil
+	}
+}
+
+// running reports whether the listener is currently bound (a login is in flight).
+func (c *callbackServer) running() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.srv != nil
+}
+
+// shutdown stops the listener regardless of in-flight count (daemon stop).
+func (c *callbackServer) shutdown() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.srv != nil {
+		_ = c.srv.Close()
+		c.srv = nil
+		c.active = 0
+	}
+}
 
 // oauthLoginTTL bounds how long a started browser login may stay pending before its state expires.
 const oauthLoginTTL = 10 * time.Minute
@@ -23,6 +91,9 @@ type oauthLogin struct {
 	upstreamID string
 	verifier   string
 	expiry     time.Time
+	// release frees the on-demand callback listener for this login (idempotent). Called when the
+	// callback arrives or the login TTL expires.
+	release func()
 }
 
 // oauthLogins is the in-memory store of pending logins, keyed by the CSRF state value.
@@ -108,8 +179,17 @@ func (d *Daemon) hOAuthLogin(w http.ResponseWriter, r *http.Request) {
 		adminErr(w, http.StatusInternalServerError, "state gen")
 		return
 	}
+	// Bring up the callback listener for the duration of this login (released on callback or TTL).
+	release, err := d.callback.acquire()
+	if err != nil {
+		adminErr(w, http.StatusInternalServerError, "start callback listener: "+err.Error())
+		return
+	}
+	time.AfterFunc(oauthLoginTTL, release) // free the listener if the login is abandoned
 	verifier := authn.GenerateVerifier()
-	d.oauthLogins.put(state, oauthLogin{upstreamID: up.ID, verifier: verifier, expiry: time.Now().Add(oauthLoginTTL)})
+	d.oauthLogins.put(state, oauthLogin{
+		upstreamID: up.ID, verifier: verifier, expiry: time.Now().Add(oauthLoginTTL), release: release,
+	})
 	authURL := authn.AuthCodeURL(cfg, state, verifier)
 	// In the desktop app the embedded webview drops window.open, so open the system browser from
 	// here. In browser/headless mode OpenURL is nil and the front-end's window.open does the job.
@@ -140,6 +220,9 @@ func (d *Daemon) hOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		oauthResultPage(w, http.StatusBadRequest, "Login expired or unknown — start again from outwall.")
 		return
+	}
+	if login.release != nil {
+		defer login.release() // free the callback listener now the login is resolved
 	}
 	up, err := d.upstreams.GetByID(login.upstreamID)
 	if err != nil {

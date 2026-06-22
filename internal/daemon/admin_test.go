@@ -33,6 +33,9 @@ func newDaemon(t *testing.T) *Daemon {
 		DBPath:     filepath.Join(t.TempDir(), "d.db"),
 		SocketPath: filepath.Join(t.TempDir(), "d.sock"),
 		Listen:     "127.0.0.1:0",
+		// Ephemeral callback bind so an OIDC login in a test never collides with the fixed 23312
+		// (a real outwall-desktop may hold it).
+		CallbackListen: "127.0.0.1:0",
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })

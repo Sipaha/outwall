@@ -5,12 +5,26 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sipaha/outwall/internal/upstream"
 )
+
+// TestDefaultCallbackListen: an empty CallbackListen defaults to the fixed port (no listener bound —
+// the default is only realized when a login starts).
+func TestDefaultCallbackListen(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "none"))
+	dir := t.TempDir()
+	d, err := New(Config{DBPath: filepath.Join(dir, "d.db"), SocketPath: filepath.Join(dir, "d.sock")})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.Equal(t, DefaultCallbackListen, d.cfg.CallbackListen)
+	require.False(t, d.callback.running(), "no listener bound until a login starts")
+}
 
 func TestOAuthLoginAndCallbackStoresTokens(t *testing.T) {
 	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -28,9 +42,13 @@ func TestOAuthLoginAndCallbackStoresTokens(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// The callback listener is on-demand: down while idle.
+	require.False(t, d.callback.running())
+
 	// (1) start the login → get the authorize URL and pull the state out of it.
 	w := req(t, d.AdminHandler(), "POST", "/upstreams/api.test/oauth/login", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.True(t, d.callback.running(), "listener comes up for the login")
 	var lr struct {
 		URL string `json:"url"`
 	}
@@ -50,6 +68,7 @@ func TestOAuthLoginAndCallbackStoresTokens(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "at1", up.Auth.AccessToken)
 	require.Equal(t, "rt1", up.Auth.RefreshToken)
+	require.False(t, d.callback.running(), "listener is released after the callback resolves")
 
 	// (3) a callback with an unknown/replayed state is rejected.
 	cb2 := httptest.NewRecorder()
@@ -58,9 +77,10 @@ func TestOAuthLoginAndCallbackStoresTokens(t *testing.T) {
 }
 
 func TestOAuthRedirectURIFixedCallback(t *testing.T) {
-	d := newDaemon(t) // CallbackListen defaults to DefaultCallbackListen
+	d := newDaemon(t) // ephemeral callback bind in tests
 	require.NoError(t, d.vault.Init("pw"))
-	want := "http://" + DefaultCallbackListen + "/callback"
+	// The redirect URI is derived from the configured callback bind and used in the authorize URL.
+	want := "http://" + d.cfg.CallbackListen + "/callback"
 
 	// The endpoint reports the fixed redirect URI to register in the IdP.
 	w := req(t, d.AdminHandler(), "GET", "/oidc/redirect-uri", "")
