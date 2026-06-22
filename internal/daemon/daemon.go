@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Sipaha/outwall/internal/access"
@@ -99,6 +100,7 @@ type Daemon struct {
 	audit       *audit.Recorder
 	bus         *events.Bus
 	ca          *tlsca.CA
+	staticCert  *tls.Certificate
 	importer    *k8s.Importer
 	authManager *authn.Manager
 	oauthLogins *oauthLogins
@@ -177,6 +179,14 @@ func New(cfg Config) (*Daemon, error) {
 		}),
 		mcp: mcpHandler,
 	}
+	// Issue the static loopback cert once at construction time (used by the data-plane TLS
+	// GetCertificate callback for non-browse SNIs: IP addresses, "localhost", and empty SNI).
+	sc, err := ca.ServerCert("127.0.0.1", "localhost", "::1")
+	if err != nil {
+		_ = s.Close()
+		return nil, fmt.Errorf("issue data-plane server cert: %w", err)
+	}
+	d.staticCert = &sc
 	// On-demand OIDC callback listener: started by hOAuthLogin, stopped after the callback (or the
 	// login TTL) — so the fixed port (cfg.CallbackListen) is only bound while a login is in flight.
 	cbMux := http.NewServeMux()
@@ -202,6 +212,17 @@ func (d *Daemon) CAPEM() []byte { return d.ca.CAPEM() }
 // DataPlaneURL returns the https base URL of the data plane (no trailing slash).
 func (d *Daemon) DataPlaneURL() string { return "https://" + d.cfg.Listen }
 
+// dataPlaneCert picks the TLS leaf for a handshake: a per-SNI browse cert when the SNI is a
+// <name>.<BrowseDomain> host, else the static loopback cert (IP/localhost/empty SNI — API clients
+// and kubectl).
+func (d *Daemon) dataPlaneCert(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	sni := hello.ServerName
+	if sni != "" && strings.HasSuffix(sni, "."+d.cfg.BrowseDomain) {
+		return d.ca.ServerCertFor(sni)
+	}
+	return d.staticCert, nil
+}
+
 // Serve starts the data-plane and admin listeners until ctx is canceled.
 func (d *Daemon) Serve(ctx context.Context) error {
 	_ = os.Remove(d.cfg.SocketPath)
@@ -212,16 +233,12 @@ func (d *Daemon) Serve(ctx context.Context) error {
 	if err := os.Chmod(d.cfg.SocketPath, 0o600); err != nil {
 		return fmt.Errorf("chmod socket: %w", err)
 	}
-	// The data plane is served over TLS using the local-CA-issued server cert so kubectl
-	// validates the proxy honestly (the agent kubeconfig embeds the same CA). HTTP upstreams
-	// reach the same TLS endpoint at https://127.0.0.1:PORT/<upstream>/...
-	serverCert, err := d.ca.ServerCert("127.0.0.1", "localhost", "::1")
-	if err != nil {
-		return fmt.Errorf("issue data-plane server cert: %w", err)
-	}
+	// The data plane is served over TLS using a dynamic GetCertificate callback so browse-domain
+	// SNIs get per-host certs while kubectl / API clients (IP or "localhost") get the static
+	// loopback cert issued at construction time (the agent kubeconfig embeds the same CA).
 	dataTLS := &tls.Config{
-		Certificates: []tls.Certificate{serverCert},
-		MinVersion:   tls.VersionTLS12,
+		GetCertificate: d.dataPlaneCert,
+		MinVersion:     tls.VersionTLS12,
 	}
 
 	adminSrv := &http.Server{Handler: d.AdminHandler()}
