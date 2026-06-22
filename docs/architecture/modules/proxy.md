@@ -1,8 +1,11 @@
 # module: internal/proxy
 
 The data plane: a localhost reverse proxy for `<METHOD> /<upstream>/<rest...>`. It halts when
-the vault is locked (503), authenticates the calling agent's bearer token (401), resolves the
-upstream by name (404), then evaluates the policy engine on the upstream-relative path
+the vault is locked (503), authenticates the calling agent's token (401) — from the `Authorization:
+Bearer` header **or** an `outwall_token` cookie (the cookie lets a real browser, e.g. Playwright
+opening an OIDC-protected site through the data plane, carry the token automatically; it is stripped
+before forwarding, ADR-0033) — resolves the upstream by name (404), then evaluates the policy engine
+on the upstream-relative path
 (`/<rest>`):
 
 - `deny` → 403 `access denied`.
@@ -10,9 +13,10 @@ upstream by name (404), then evaluates the policy engine on the upstream-relativ
 - `allow` → continue.
 
 If the matched rule sets a rate limit, the in-memory `policy.Limiter` is consulted (keyed by
-`agentID|ruleID`); over the limit ⇒ 429. It then strips the agent's `Authorization`, applies the
-upstream authenticator obtained from `authn.Manager` (so OIDC tokens are cached across requests),
-and forwards via `httputil.ReverseProxy` (`Host` rewritten to the upstream, query preserved).
+`agentID|ruleID`); over the limit ⇒ 429. It then strips the agent's `Authorization` **and the
+`outwall_token` cookie** (other cookies pass through), applies the upstream authenticator obtained
+from `authn.Manager` (so OIDC tokens are cached across requests), and forwards via
+`httputil.ReverseProxy` (`Host` rewritten to the upstream, query preserved).
 
 **H1 (operation enforcement — HTTP).** For an HTTP upstream the proxy builds
 `policy.Input{Method, Path: <escaped upstream-relative path>, Query: r.URL.Query()}` and calls

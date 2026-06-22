@@ -54,18 +54,52 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
+// tokenCookieName is the cookie a browser-driven agent (e.g. Playwright) may carry its outwall
+// token in, as an alternative to the Authorization bearer header. It is consumed for agent auth and
+// stripped before the request is forwarded upstream.
+const tokenCookieName = "outwall_token"
+
+// agentToken extracts the agent's outwall token from the Authorization bearer header, falling back
+// to the outwall_token cookie. Returns "" when neither is present.
+func agentToken(r *http.Request) string {
+	if authz := r.Header.Get("Authorization"); strings.HasPrefix(authz, "Bearer ") {
+		return strings.TrimPrefix(authz, "Bearer ")
+	}
+	if c, err := r.Cookie(tokenCookieName); err == nil {
+		return c.Value
+	}
+	return ""
+}
+
+// stripCookie removes a single named cookie from the request's Cookie header, preserving the rest
+// (so the upstream's own cookies still pass through). Used to drop the agent's outwall_token before
+// forwarding.
+func stripCookie(req *http.Request, name string) {
+	cookies := req.Cookies()
+	req.Header.Del("Cookie")
+	for _, c := range cookies {
+		if c.Name == name {
+			continue
+		}
+		req.AddCookie(c)
+	}
+}
+
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.Vault.Locked() {
 		writeErr(w, http.StatusServiceUnavailable, "vault locked")
 		return
 	}
 
-	authz := r.Header.Get("Authorization")
-	if !strings.HasPrefix(authz, "Bearer ") {
+	// The agent authenticates with its outwall token via the Authorization bearer header OR the
+	// `outwall_token` cookie. The cookie lets a real browser (e.g. Playwright opening an
+	// OIDC-protected site through the data plane) carry the token automatically on every request;
+	// it is stripped before forwarding so the upstream never sees it.
+	token := agentToken(r)
+	if token == "" {
 		writeErr(w, http.StatusUnauthorized, "missing bearer token")
 		return
 	}
-	token := strings.TrimPrefix(authz, "Bearer ")
 	ag, err := h.Agents.Authenticate(token)
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, "invalid token")
@@ -287,6 +321,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			pr.Out.URL.Path = singleJoin(base.Path, rest)
 			pr.Out.URL.RawQuery = r.URL.RawQuery
 			pr.Out.Header.Del("Authorization") // never forward the agent's token
+			stripCookie(pr.Out, tokenCookieName)
 			if err := auth.Apply(pr.Out); err != nil {
 				h.Logger.Error("apply upstream auth", "upstream", up.Name, "err", err)
 			}

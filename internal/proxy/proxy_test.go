@@ -104,6 +104,44 @@ func TestProxyHappyPathInjectsAuthAndStripsAgentToken(t *testing.T) {
 	require.Equal(t, "/repos/x?page=2", gotPath)    // agent token NOT forwarded
 }
 
+func TestProxyCookieTokenAuthAndStrip(t *testing.T) {
+	var gotAuth, gotCookie string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotCookie = r.Header.Get("Cookie")
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer backend.Close()
+
+	h, ag, up, pol, _, _ := build(t)
+	_, token, err := ag.Register("claude")
+	require.NoError(t, err)
+	u, err := up.Create("be", backend.URL, upstream.AuthConfig{
+		Type: "static", Header: "Authorization", Token: "Bearer upstreamtok",
+	})
+	require.NoError(t, err)
+	allowOp(t, pol, u.ID, "GET", "/repos/{name:text}", "name")
+
+	// No Authorization header — authenticate via the outwall_token cookie (the browser case).
+	r := httptest.NewRequest(http.MethodGet, "/be/repos/x", nil)
+	r.AddCookie(&http.Cookie{Name: "outwall_token", Value: token})
+	r.AddCookie(&http.Cookie{Name: "sessionid", Value: "keepme"})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "Bearer upstreamtok", gotAuth)    // authed via cookie; upstream cred injected
+	require.NotContains(t, gotCookie, "outwall_token") // agent token stripped before forwarding
+	require.Contains(t, gotCookie, "sessionid=keepme") // the upstream's own cookies pass through
+
+	// A bogus cookie token is rejected.
+	r2 := httptest.NewRequest(http.MethodGet, "/be/repos/x", nil)
+	r2.AddCookie(&http.Cookie{Name: "outwall_token", Value: "nope"})
+	w2 := httptest.NewRecorder()
+	h.ServeHTTP(w2, r2)
+	require.Equal(t, http.StatusUnauthorized, w2.Code)
+}
+
 func TestProxyOperationEnforcement(t *testing.T) {
 	var gotPath string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
