@@ -14,6 +14,7 @@ describe('<Hosts> (Upstreams.tsx)', () => {
       { id: 'u1', name: 'api.example.test', base_url: 'https://api.example.test', auth_type: 'static' },
       { id: 'u2', name: 'plain.test', base_url: 'https://plain.test', auth_type: 'none' },
     ])
+    vi.spyOn(api, 'getProfiles').mockResolvedValue([])
     render(<Upstreams />)
 
     const withCred = (await screen.findByText('api.example.test')).closest('tr')!
@@ -27,6 +28,7 @@ describe('<Hosts> (Upstreams.tsx)', () => {
     vi.spyOn(api, 'listUpstreams').mockResolvedValue([
       { id: 'u2', name: 'plain.test', base_url: 'https://plain.test', auth_type: 'none' },
     ])
+    vi.spyOn(api, 'getProfiles').mockResolvedValue([])
     const setSpy = vi.spyOn(api, 'setUpstreamAuth').mockResolvedValue({ ok: true })
     render(<Upstreams />)
 
@@ -47,6 +49,7 @@ describe('<Hosts> (Upstreams.tsx)', () => {
 
   it('auto-fills OIDC endpoints via Discover', async () => {
     vi.spyOn(api, 'listUpstreams').mockResolvedValue([])
+    vi.spyOn(api, 'getProfiles').mockResolvedValue([])
     const discoverSpy = vi.spyOn(api, 'discoverOIDC').mockResolvedValue({
       issuer: 'https://idp/realms/x',
       authorization_endpoint: 'https://idp/realms/x/auth',
@@ -87,6 +90,7 @@ describe('<Hosts> (Upstreams.tsx)', () => {
     vi.spyOn(api, 'listUpstreams').mockResolvedValue([
       { id: 'u2', name: 'plain.test', base_url: 'https://plain.test', auth_type: 'none' },
     ])
+    vi.spyOn(api, 'getProfiles').mockResolvedValue([])
     const delSpy = vi.spyOn(api, 'deleteUpstream').mockResolvedValue({ ok: true })
     render(<Upstreams />)
 
@@ -99,6 +103,7 @@ describe('<Hosts> (Upstreams.tsx)', () => {
 
   it('submits createUpstream from the add-host modal', async () => {
     vi.spyOn(api, 'listUpstreams').mockResolvedValue([])
+    vi.spyOn(api, 'getProfiles').mockResolvedValue([])
     const createSpy = vi.spyOn(api, 'createUpstream').mockResolvedValue({ id: 'new' })
     render(<Upstreams />)
 
@@ -121,11 +126,12 @@ describe('<Hosts> (Upstreams.tsx)', () => {
         type: 'static',
         header: 'Authorization',
         token: 'Bearer x',
-      }),
+      }, 'raw-http'),
     )
   })
 
   it('starts an OIDC browser login from the host row', async () => {
+    vi.spyOn(api, 'getProfiles').mockResolvedValue([])
     vi.spyOn(api, 'listUpstreams').mockResolvedValue([
       {
         id: 'o1',
@@ -147,6 +153,7 @@ describe('<Hosts> (Upstreams.tsx)', () => {
 
   it('shows sigv4 fields and submits them', async () => {
     vi.spyOn(api, 'listUpstreams').mockResolvedValue([])
+    vi.spyOn(api, 'getProfiles').mockResolvedValue([])
     const createSpy = vi.spyOn(api, 'createUpstream').mockResolvedValue({ id: 'new' })
     render(<Upstreams />)
 
@@ -168,7 +175,29 @@ describe('<Hosts> (Upstreams.tsx)', () => {
         aws_secret_access_key: 'SECRET',
         aws_region: 'us-east-1',
         aws_service: 'execute-api',
-      }),
+      }, 'raw-http'),
+    )
+  })
+
+  it('submits the chosen server profile when adding a host', async () => {
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([])
+    vi.spyOn(api, 'getProfiles').mockResolvedValue([
+      { profile: 'citeck', fields: [] },
+    ])
+    const createSpy = vi.spyOn(api, 'createUpstream').mockResolvedValue({ id: 'new' })
+    render(<Upstreams />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add host' }))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'c' } })
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://c.test' } })
+    // Wait for the profiles async load to populate the 'citeck' option before selecting it.
+    const serverTypeSelect = await screen.findByLabelText('Server type') as HTMLSelectElement
+    await waitFor(() => expect(serverTypeSelect.options.length).toBeGreaterThan(1))
+    fireEvent.change(serverTypeSelect, { target: { value: 'citeck' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() =>
+      expect(createSpy).toHaveBeenCalledWith('c', 'https://c.test', { type: 'none' }, 'citeck'),
     )
   })
 })

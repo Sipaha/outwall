@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   listUpstreams,
   createUpstream,
+  getProfiles,
   setUpstreamAuth,
   deleteUpstream,
   oauthLogin,
@@ -9,7 +10,7 @@ import {
   oidcRedirectURI,
   ApiError,
 } from '../lib/api'
-import type { Upstream, UpstreamAuthConfig } from '../lib/types'
+import type { Upstream, UpstreamAuthConfig, ProfileSchema } from '../lib/types'
 import { useEventStore } from '../lib/events'
 import { DataTable } from '../components/DataTable'
 import { Modal } from '../components/Modal'
@@ -354,6 +355,8 @@ export function Upstreams() {
   const [name, setName] = useState('')
   const [baseURL, setBaseURL] = useState('')
   const [auth, setAuth] = useState<UpstreamAuthConfig>({ type: 'none' })
+  const [profile, setProfile] = useState('raw-http')
+  const [profiles, setProfiles] = useState<ProfileSchema[]>([])
   const [busy, setBusy] = useState(false)
   // The host whose credential is being set/replaced (set-credential modal), and a separate auth draft.
   const [credFor, setCredFor] = useState<Upstream | null>(null)
@@ -378,10 +381,15 @@ export function Upstreams() {
 
   useEffect(load, [load, counter])
 
+  useEffect(() => {
+    getProfiles().then(setProfiles).catch(() => {})
+  }, [])
+
   function openAdd() {
     setName('')
     setBaseURL('')
     setAuth({ type: 'none' })
+    setProfile('raw-http')
     setAddOpen(true)
   }
 
@@ -389,7 +397,7 @@ export function Upstreams() {
     e.preventDefault()
     setBusy(true)
     try {
-      await createUpstream(name, baseURL, auth)
+      await createUpstream(name, baseURL, auth, profile)
       push('success', 'Host created')
       setAddOpen(false)
       load()
@@ -532,13 +540,13 @@ export function Upstreams() {
       <Modal
         open={addOpen}
         title="Add host"
-        onClose={() => setAddOpen(false)}
+        onClose={() => { setAddOpen(false); setProfile('raw-http') }}
         onSubmit={submitAdd}
         footer={
           <>
             <button
               type="button"
-              onClick={() => setAddOpen(false)}
+              onClick={() => { setAddOpen(false); setProfile('raw-http') }}
               className="rounded px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
             >
               Cancel
@@ -570,6 +578,18 @@ export function Upstreams() {
             placeholder="https://api.github.com"
             aria-label="Base URL"
           />
+        </FormField>
+        <FormField label="Server type">
+          <select
+            className={fieldControlClass}
+            value={profile}
+            onChange={(e) => setProfile(e.target.value)}
+          >
+            <option value="raw-http">Raw HTTP</option>
+            {profiles.map((p) => (
+              <option key={p.profile} value={p.profile}>{p.profile}</option>
+            ))}
+          </select>
         </FormField>
         <AuthFields auth={auth} setAuth={setAuth} />
       </Modal>
