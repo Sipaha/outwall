@@ -29,7 +29,7 @@ interface DraftRule {
   namespace: string
   resource: string
   verb: string
-  // citeck Records fields
+  // server-profile Records fields
   rec_op: string
   source_id: string
   workspace: string
@@ -402,7 +402,7 @@ export function Rules() {
 
   // The rule editor adapts to the selected upstream: k8s clusters match on the RBAC tuple
   // (namespace/resource/verb); http upstreams are operation rules (method + path-template +
-  // per-variable value policies); citeck upstreams use Records fields (op/sourceId/workspace).
+  // per-variable value policies); profiled upstreams use Records fields (op/sourceId/workspace).
   const draftIsK8s = upstreams.find((u) => u.id === draft.upstream_id)?.kind === 'k8s'
   const draftProfile = upstreams.find((u) => u.id === draft.upstream_id)?.profile
 
@@ -420,7 +420,7 @@ export function Rules() {
     }
     setBusy(true)
     try {
-      // k8s rules send the RBAC tuple; citeck upstreams send a Records rule (op/sourceId/workspace);
+      // k8s rules send the RBAC tuple; profiled upstreams send a Records rule (op/sourceId/workspace);
       // http rules are operation rules (method + path-template + per-variable value policies).
       let payload: Omit<Rule, 'id'>
       if (draftIsK8s) {
