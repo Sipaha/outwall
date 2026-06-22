@@ -80,7 +80,9 @@ and the `Sec-Fetch-Site` guard (ADR-0033) rejects cookie auth on a cross-site re
   Location + Set-Cookie rewriting), `internal/tlsca` (per-SNI cert incl. a dotted name),
   `internal/daemon` (cert selection), and `internal/mcpsvc`/`internal/daemon` (browse_url discovery).
 - **Residual:** JS-built absolute URLs to the real host still escape (documented; rare for same-origin
-  SPAs). Non-Chromium clients need `--resolve` to reach a browse origin — but they use the path-prefix
-  model anyway. The end-to-end browser run against a real upstream is an operator-driven verification
-  (the daemon can't drive the operator's login/browser).
+  SPAs). The `Location` rewrite only fires when the redirect's host matches the upstream's registered
+  `BaseURL` host **exactly** (incl. port) — a redirect to a different host/port of the same app is not
+  rewritten and the browser leaves the proxy. Non-Chromium clients need `--resolve` to reach a browse
+  origin — but they use the path-prefix model anyway. The end-to-end browser run against a real
+  upstream is an operator-driven verification (the daemon can't drive the operator's login/browser).
 </content>
