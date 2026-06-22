@@ -40,10 +40,13 @@ type Operation struct {
 	Path      string
 }
 
-// Rule is a stored policy rule for a profile: an opaque, profile-defined params blob plus its ID.
+// Rule is a stored policy rule for a profile: an opaque, profile-defined params blob plus its ID
+// and outcome. Outcome is the stored rule's decision string (Allow/Deny/RequireApproval) set by the
+// core when it dispatches a rule to a profile's Match method.
 type Rule struct {
-	ID     string
-	Params json.RawMessage
+	ID      string
+	Outcome string // "allow" | "deny" | "require-approval" (the stored rule's outcome)
+	Params  json.RawMessage
 }
 
 // RuleField describes one editable field of a profile rule, so a UI can render an editor.
