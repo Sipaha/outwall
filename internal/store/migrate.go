@@ -151,6 +151,14 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("commit migration %d (%s): %w", i+1, m.name, err)
 		}
 	}
+	// Reconcile additive columns on EVERY open, independent of user_version. A purely-additive
+	// column is appended to `additiveColumns` without a version bump (ADR-0022); if reconciliation
+	// only ran inside the version-1 baseline step it would never reach a DB already past version 1,
+	// so a later-added column (e.g. access_requests.reason) would be silently missing (ADR-0027).
+	// ensureColumns is idempotent — a no-op once every column exists.
+	if err := ensureColumns(db); err != nil {
+		return fmt.Errorf("reconcile additive columns: %w", err)
+	}
 	return nil
 }
 

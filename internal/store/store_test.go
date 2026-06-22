@@ -85,6 +85,42 @@ func TestEnsureColumnsUpgradesOldDB(t *testing.T) {
 	require.Equal(t, "{}", body)
 }
 
+// TestEnsureColumnsReconcilesAtCurrentVersion reproduces the bug where an additive column appended
+// AFTER a database was already stamped at the baseline version was never added: ensureColumns ran
+// only inside the version-1 baseline step, which never re-runs once user_version >= 1. The additive
+// reconcile must run on every Open regardless of version (ADR-0027).
+func TestEnsureColumnsReconcilesAtCurrentVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stamped.db")
+
+	// A realistic DB already past the baseline: the full current schema is present (all tables) but
+	// access_requests predates the later-added `reason` column, and user_version is already stamped
+	// at 1 — as an older versioned-runner build (whose additiveColumns lacked `reason`) would leave
+	// it. Recreate just access_requests without `reason` to simulate that one missing column.
+	raw, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	_, err = raw.Exec(schema)
+	require.NoError(t, err)
+	_, err = raw.Exec(`
+		DROP TABLE access_requests;
+		CREATE TABLE access_requests (
+			id TEXT PRIMARY KEY, agent_id TEXT NOT NULL DEFAULT '', upstream_id TEXT NOT NULL DEFAULT '',
+			purpose TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL DEFAULT '', resolved_at TEXT NOT NULL DEFAULT '');
+		INSERT INTO access_requests (id) VALUES ('x1');
+		PRAGMA user_version = 1;
+	`)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+
+	s, err := Open(path)
+	require.NoError(t, err)
+	defer s.Close()
+
+	has, err := columnExists(s.DB(), "access_requests", "reason")
+	require.NoError(t, err)
+	require.True(t, has, "an additive column appended after baseline must be reconciled on Open")
+}
+
 func userVersion(t *testing.T, s *Store) int {
 	t.Helper()
 	var v int
