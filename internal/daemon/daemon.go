@@ -46,6 +46,9 @@ const DefaultUIListen = "127.0.0.1:8182"
 // the (possibly customized) UI port.
 const DefaultCallbackListen = "127.0.0.1:23312"
 
+// DefaultBrowseDomain is the default base domain for per-upstream browser origins.
+const DefaultBrowseDomain = "outwall.localhost"
+
 // DefaultPruneInterval is how often the background audit pruner enforces the retention setting.
 const DefaultPruneInterval = time.Hour
 
@@ -60,6 +63,11 @@ type Config struct {
 	// (default DefaultCallbackListen). Its /callback path is the redirect URI registered in the IdP.
 	CallbackListen string
 	CADir          string // local-CA dir; defaults to the DB's directory when empty
+
+	// BrowseDomain is the base domain for per-upstream browser origins: an http upstream <name> is
+	// reachable at https://<name>.<BrowseDomain>:<port>/ (Host-routed). Default "outwall.localhost"
+	// (Chromium resolves *.localhost to loopback). The path-prefix model on 127.0.0.1 is unchanged.
+	BrowseDomain string
 
 	// PruneInterval is how often the background audit pruner enforces the stored retention. Zero
 	// uses DefaultPruneInterval; a negative value disables the pruner (tests / keep-all).
@@ -119,6 +127,9 @@ func New(cfg Config) (*Daemon, error) {
 	}
 	if cfg.Listen == "" {
 		cfg.Listen = DefaultListen
+	}
+	if cfg.BrowseDomain == "" {
+		cfg.BrowseDomain = DefaultBrowseDomain
 	}
 	if cfg.CADir == "" {
 		cfg.CADir = filepath.Dir(cfg.DBPath)

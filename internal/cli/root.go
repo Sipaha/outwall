@@ -19,6 +19,7 @@ type globalFlags struct {
 	mcpListen      string
 	uiListen       string
 	callbackListen string
+	browseDomain   string
 }
 
 func defaultDir() string {
@@ -42,6 +43,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&gf.mcpListen, "mcp-listen", "127.0.0.1:8181", "MCP control-plane listen address")
 	root.PersistentFlags().StringVar(&gf.uiListen, "ui-listen", "127.0.0.1:8182", "desktop-UI control API + SSE listen address")
 	root.PersistentFlags().StringVar(&gf.callbackListen, "callback-listen", daemon.DefaultCallbackListen, "OIDC browser-login callback listen address (its /callback is the IdP redirect URI)")
+	root.PersistentFlags().StringVar(&gf.browseDomain, "browse-domain", daemon.DefaultBrowseDomain, "base domain for per-upstream browser origins")
 
 	root.AddCommand(
 		newServeCmd(gf),
