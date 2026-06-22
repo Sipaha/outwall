@@ -1,6 +1,6 @@
 // Package serverprofile is the platform-agnostic plugin point for classifying and authorizing
-// requests to a specific kind of upstream server. A plugin (e.g. internal/serverprofile/citeck)
-// registers itself via Register in its init(); the core never imports a plugin.
+// requests to a specific kind of upstream server. A plugin package registers itself via Register
+// in its init(); the core never imports a plugin.
 package serverprofile
 
 import (
@@ -25,8 +25,8 @@ type Request struct {
 }
 
 // ResourceScope is one (resource, scope) pair a request touches. The meaning of the strings is
-// profile-defined and opaque to the core (e.g. citeck encodes sourceId + workspace, using its own
-// sentinels for "all" / "unknown" scopes).
+// profile-defined and opaque to the core (e.g. a plugin may encode a source id + workspace, using
+// its own sentinels for "all" / "unknown" scopes).
 type ResourceScope struct {
 	Resource string
 	Scope    string
