@@ -48,6 +48,13 @@ func DiscoveryURL(raw string) (string, error) {
 // Discover fetches and parses the discovery document at the issuer/discovery URL using hc, returning
 // the endpoints outwall needs. It errors when the document cannot be fetched/parsed or lacks the
 // authorization/token endpoints.
+//
+// SSRF posture: this is an OPERATOR-only action (the admin API is not reachable by agents) and the
+// caller can already point outwall at any host (upstreams/clusters), so no privilege boundary is
+// crossed. We deliberately do NOT block private/loopback/link-local targets — outwall's purpose is
+// to reach internal hosts, and internal IdPs are a normal, supported case. Exfiltration is bounded:
+// only well-formed OIDC fields are returned (a non-OIDC endpoint fails the endpoint check), the body
+// is capped (maxBody) and the caller's client carries a timeout + a redirect cap.
 func Discover(ctx context.Context, hc *http.Client, raw string) (Config, error) {
 	url, err := DiscoveryURL(raw)
 	if err != nil {

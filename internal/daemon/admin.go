@@ -788,7 +788,18 @@ func (d *Daemon) hOIDCDiscover(w http.ResponseWriter, r *http.Request) {
 		adminErr(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	cfg, err := oidcdisc.Discover(r.Context(), &http.Client{Timeout: 10 * time.Second}, body.URL)
+	// Operator-only fetch; bound it with a timeout and a small redirect cap (an OIDC well-known
+	// document needs at most an issuer-normalization hop — don't follow a long redirect chain).
+	hc := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("too many redirects")
+			}
+			return nil
+		},
+	}
+	cfg, err := oidcdisc.Discover(r.Context(), hc, body.URL)
 	if err != nil {
 		adminErr(w, http.StatusBadGateway, err.Error())
 		return
