@@ -179,10 +179,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var ri k8s.RequestInfo
 	var pending approval.Pending
 	var dec policy.Decision
-	// isUpgrade marks an interactive k8s subresource (exec/attach/portforward): an HTTP
-	// connection upgrade carrying a duplex stream, not a request/response body. Such requests
-	// bypass body capture (it would corrupt the 101 stream) and audit metadata only.
-	isUpgrade := false
+	// isUpgrade marks any HTTP connection upgrade (WebSocket, k8s exec/attach/portforward, etc.):
+	// a duplex stream, not a request/response body. Such requests bypass body capture (it would
+	// corrupt the 101 stream) and audit metadata only. Start with the generic HTTP upgrade check;
+	// the k8s block below overrides with its own finer-grained IsUpgrade for k8s requests.
+	isUpgrade := isHTTPUpgrade(r)
 	if isK8s {
 		ri = k8s.Parse(r.Method, relPath, r.URL.Query())
 		isUpgrade = ri.IsUpgrade()
@@ -600,6 +601,21 @@ func operationOf(rule *policy.Rule) string {
 		return ""
 	}
 	return rule.OpPathTemplate
+}
+
+// isHTTPUpgrade reports whether the request is an HTTP connection upgrade (e.g. a WebSocket): a
+// duplex stream, not a request/response body. Such requests must bypass audit body capture (it
+// would corrupt the 101 stream), like the k8s exec/attach path.
+func isHTTPUpgrade(r *http.Request) bool {
+	if r.Header.Get("Upgrade") == "" {
+		return false
+	}
+	for _, tok := range strings.Split(r.Header.Get("Connection"), ",") {
+		if strings.EqualFold(strings.TrimSpace(tok), "upgrade") {
+			return true
+		}
+	}
+	return false
 }
 
 func singleJoin(a, b string) string {
