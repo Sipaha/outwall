@@ -1,17 +1,24 @@
 package policy
 
 import (
+	"log/slog"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/Sipaha/outwall/internal/optemplate"
+	"github.com/Sipaha/outwall/internal/serverprofile"
 )
 
 // Input is the request context evaluated against the rules.
 type Input struct {
 	AgentID, UpstreamID, Method, Path string
+
+	// Profile is the upstream's server profile ("raw-http" or a registered plugin name). When set
+	// to a registered non-raw-http profile that CLAIMS the request, the profile's rules decide;
+	// otherwise evaluation falls through to the raw-http/k8s path (which skips profile rules).
+	Profile string
 
 	// HTTP request query (used for operation-template matching when Kind != "k8s").
 	Query url.Values
@@ -100,9 +107,24 @@ func (r *Registry) Decide(in Input) (Decision, error) {
 	if err != nil {
 		return Decision{}, err
 	}
+	// Server-profile path: if the upstream has a registered profile that claims this request, its
+	// own rules decide.
+	if in.Profile != "" && in.Profile != "raw-http" {
+		if prof, ok := serverprofile.Get(in.Profile); ok {
+			op, handled, cerr := prof.Classify(serverprofile.Request{Method: in.Method, Path: in.Path, Query: in.Query, Body: in.Body})
+			if cerr == nil && handled {
+				return decideProfile(prof, in, op, rules)
+			}
+		} else {
+			slog.Warn("unknown server profile; falling back to raw-http", "profile", in.Profile, "upstream", in.UpstreamID)
+		}
+	}
 	k8s := in.Kind == "k8s"
 	var agentTier, anyTier []candidate
 	for _, rule := range rules {
+		if rule.Profile != "" {
+			continue // profile rules are evaluated only on the profile path
+		}
 		var c candidate
 		var matched bool
 		if k8s {
@@ -120,6 +142,7 @@ func (r *Registry) Decide(in Input) (Decision, error) {
 				continue
 			}
 		}
+		_ = matched
 		switch rule.SubjectAgentID {
 		case in.AgentID:
 			agentTier = append(agentTier, c)
@@ -134,6 +157,56 @@ func (r *Registry) Decide(in Input) (Decision, error) {
 		return d, nil
 	}
 	return Decision{Outcome: Deny, Rule: nil}, nil // default-deny
+}
+
+// decideProfile evaluates the upstream's profile rules (only those whose Profile == in.Profile)
+// against the classified operation, applying the same tier precedence as raw-http.
+func decideProfile(prof serverprofile.Profile, in Input, op serverprofile.Operation, rules []*Rule) (Decision, error) {
+	var agentTier, anyTier []candidate
+	vars := opVars(op)
+	for _, rule := range rules {
+		if rule.Profile != in.Profile {
+			continue
+		}
+		outcome, matched, err := prof.Match(serverprofile.Rule{ID: rule.ID, Outcome: rule.Outcome, Params: rule.ProfileParams}, op)
+		if err != nil {
+			return Decision{}, err
+		}
+		if !matched {
+			continue
+		}
+		c := candidate{rule: rule, outcome: outcome, vars: vars}
+		switch rule.SubjectAgentID {
+		case in.AgentID:
+			agentTier = append(agentTier, c)
+		case "":
+			anyTier = append(anyTier, c)
+		}
+	}
+	if d, ok := resolveTier(agentTier); ok {
+		return d, nil
+	}
+	if d, ok := resolveTier(anyTier); ok {
+		return d, nil
+	}
+	return Decision{Outcome: Deny, Rule: nil}, nil
+}
+
+// opVars renders a profile operation as audit variables (op kind + the touched resources/scopes).
+func opVars(op serverprofile.Operation) map[string]string {
+	if len(op.Resources) == 0 {
+		return map[string]string{"op": op.Kind}
+	}
+	var srcs, scopes []string
+	for _, res := range op.Resources {
+		srcs = append(srcs, res.Resource)
+		scopes = append(scopes, res.Scope)
+	}
+	return map[string]string{
+		"op":        op.Kind,
+		"sourceId":  strings.Join(srcs, ","),
+		"workspace": strings.Join(scopes, ","),
+	}
 }
 
 // evalHTTPRule matches the request against one http operation rule's template and, on a
