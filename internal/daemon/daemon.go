@@ -130,6 +130,7 @@ func New(cfg Config) (*Daemon, error) {
 	aud.SetPublisher(bus)
 	svc := mcpsvc.New(ag, up, pol, acc)
 	svc.SetPublisher(bus)
+	svc.SetEvents(bus.Subscribe)
 	svc.SetApprovals(appr)
 	svc.SetKubeconfigParams("https://"+cfg.Listen, string(ca.CAPEM()))
 	mcpHandler, err := owmcp.NewHandler(owmcp.Deps{

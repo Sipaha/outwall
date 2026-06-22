@@ -127,7 +127,7 @@ func NewHandler(deps Deps) (http.Handler, error) {
 		&sdkmcp.Tool{Name: "request_k8s_access", Description: "Request access to a k8s OPERATION on a registered cluster: declare the namespace, resource (e.g. pods or pods/log), and verb (get/list/watch/...). k8s clusters are pre-credentialed — do NOT call request_host_access for them. Returns granted|pending|denied; on pending, poll get_access. Then call get_kubeconfig and use kubectl."},
 		srv.handleRequestK8sAccess)
 	sdkmcp.AddTool(sdkServer,
-		&sdkmcp.Tool{Name: "get_access", Description: "Report your current access status and base path for an upstream."},
+		&sdkmcp.Tool{Name: "get_access", Description: "Report your current access status and base path for an upstream. If a decision is still pending this call BLOCKS until the operator decides (up to ~25s) — do NOT poll in a tight loop; just call it again if it returns pending."},
 		srv.handleGetAccess)
 	sdkmcp.AddTool(sdkServer,
 		&sdkmcp.Tool{Name: "whoami", Description: "Return your agent identity, data-plane bearer token, and current accesses."},

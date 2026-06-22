@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Sipaha/outwall/internal/access"
 	"github.com/Sipaha/outwall/internal/agent"
@@ -31,10 +32,19 @@ type Service struct {
 	approvals *approval.Queue
 	pub       events.Publisher
 
+	// subscribe, when set, returns a fresh event subscription (channel + cancel). get_access uses it
+	// to long-poll: block until the agent's pending request is resolved (or a timeout) instead of
+	// the agent busy-polling. nil disables long-poll (get_access answers immediately).
+	subscribe func() (<-chan events.Event, func())
+
 	// kubeconfig assembly inputs (set by the daemon via SetKubeconfigParams):
 	dataPlaneURL string // e.g. https://127.0.0.1:8080 (no trailing slash)
 	caPEM        string
 }
+
+// getAccessWait bounds how long get_access blocks waiting for an operator decision before returning
+// the current (still-pending) status. Kept well under typical MCP client timeouts.
+const getAccessWait = 25 * time.Second
 
 // New constructs the domain service.
 func New(a *agent.Registry, u *upstream.Registry, p *policy.Registry, ac *access.Registry) *Service {
@@ -59,6 +69,10 @@ func (s *Service) SetKubeconfigParams(dataPlaneURL, caPEM string) {
 // on this MCP path (not the admin API), so the bus is injected here rather than into the daemon
 // admin handlers (see ADR-0005).
 func (s *Service) SetPublisher(p events.Publisher) { s.pub = p }
+
+// SetEvents wires an event-subscription factory (typically events.Bus.Subscribe) so get_access can
+// long-poll for an operator decision. Passing nil disables long-poll.
+func (s *Service) SetEvents(subscribe func() (<-chan events.Event, func())) { s.subscribe = subscribe }
 
 // UpstreamInfo describes a known upstream and the agent's status against it.
 // Status: open | needs-request | denied.
@@ -280,10 +294,6 @@ func (s *Service) RequestHostAccess(agentID, host, purpose string) (AccessResult
 			Memo:     "host already registered with a credential — call request_access for the operation you need",
 		}, nil
 	}
-	// Log the intent (purpose) for the operator's access-request queue.
-	if _, err := s.access.Create(agentID, up.ID, purpose); err != nil {
-		return AccessResult{}, fmt.Errorf("log access request: %w", err)
-	}
 	st, allowing, err := s.statusFor(agentID, up.ID)
 	if err != nil {
 		return AccessResult{}, err
@@ -292,6 +302,16 @@ func (s *Service) RequestHostAccess(agentID, host, purpose string) (AccessResult
 	// Already open (an allow/approval rule exists) → granted, no need to enqueue a host card.
 	if res.Status == "granted" {
 		return res, nil
+	}
+	// Dedupe: a host request already awaiting a decision → don't log/enqueue a second one.
+	if s.pendingExists(func(p approval.Pending) bool {
+		return p.Kind == approval.KindHostAccess && p.AgentID == agentID && p.UpstreamID == up.ID
+	}) {
+		return res, nil
+	}
+	// Log the intent (purpose) for the operator's access-request queue.
+	if _, err := s.access.Create(agentID, up.ID, purpose); err != nil {
+		return AccessResult{}, fmt.Errorf("log access request: %w", err)
 	}
 	if err := s.enqueue(agentID, approval.Pending{
 		Kind: approval.KindHostAccess, AgentID: agentID, UpstreamID: up.ID,
@@ -322,6 +342,15 @@ func (s *Service) RequestAccess(agentID string, in RequestAccessInput) (AccessRe
 	}
 	_ = tmpl // parsed only to validate; the rule is (re)created from the raw shape on approve.
 
+	// Dedupe: the same operation already awaiting a decision → don't log/enqueue a second one.
+	if s.pendingExists(func(p approval.Pending) bool {
+		return p.Kind == approval.KindOperation && p.AgentID == agentID && p.UpstreamID == up.ID &&
+			p.OpMethod == in.Method && p.OpPathTemplate == in.PathTemplate
+	}) {
+		return AccessResult{Status: "pending", BasePath: "/" + up.Name,
+			Memo: "operation already submitted — call get_access (it waits for the decision)"}, nil
+	}
+
 	// Log the intent so an operator deny (with a reason) has a request row to mark, which
 	// get_access then surfaces back to this agent.
 	if _, err := s.access.Create(agentID, up.ID, in.Purpose); err != nil {
@@ -342,7 +371,7 @@ func (s *Service) RequestAccess(agentID string, in RequestAccessInput) (AccessRe
 		return AccessResult{}, err
 	}
 	return AccessResult{Status: "pending", BasePath: "/" + up.Name,
-		Memo: "operation submitted for approval — poll get_access"}, nil
+		Memo: "operation submitted for approval — call get_access (it waits for the decision)"}, nil
 }
 
 // hasCredential reports whether an upstream already carries a usable credential, so a host-access
@@ -376,6 +405,14 @@ func (s *Service) RequestK8sAccess(agentID, cluster, namespace, resource, verb, 
 	if res := toAccessResult(st, up.Name, allowing); res.Status == "granted" {
 		return res, nil
 	}
+	// Dedupe: an identical k8s request already awaiting a decision → don't raise a second card.
+	if s.pendingExists(func(p approval.Pending) bool {
+		return p.Kind == approval.KindK8sAccess && p.AgentID == agentID && p.UpstreamID == up.ID &&
+			p.Namespace == namespace && p.Resource == resource && p.Verb == verb
+	}) {
+		return AccessResult{Status: "pending", BasePath: "/" + up.Name,
+			Memo: "k8s access already submitted — call get_access (it waits for the decision)"}, nil
+	}
 	// Log the intent so a deny (with a reason) has a row to mark, surfaced via get_access.
 	if _, err := s.access.Create(agentID, up.ID, purpose); err != nil {
 		return AccessResult{}, fmt.Errorf("log access request: %w", err)
@@ -387,7 +424,21 @@ func (s *Service) RequestK8sAccess(agentID, cluster, namespace, resource, verb, 
 		return AccessResult{}, err
 	}
 	return AccessResult{Status: "pending", BasePath: "/" + up.Name,
-		Memo: "k8s access submitted for approval — poll get_access"}, nil
+		Memo: "k8s access submitted for approval — call get_access (it waits for the decision)"}, nil
+}
+
+// pendingExists reports whether the approval queue already holds a Pending matching `match`. Used to
+// dedupe a repeated request so a second identical call does not raise a second approval card.
+func (s *Service) pendingExists(match func(approval.Pending) bool) bool {
+	if s.approvals == nil {
+		return false
+	}
+	for _, p := range s.approvals.List() {
+		if match(p) {
+			return true
+		}
+	}
+	return false
 }
 
 // enqueue parks a Pending on the approval queue from a background goroutine so the MCP call
@@ -410,7 +461,10 @@ func (s *Service) enqueue(agentID string, p approval.Pending) error {
 	return nil
 }
 
-// GetAccess reports the current rule-derived status for an upstream without logging intent.
+// GetAccess reports the current rule-derived status for an upstream without logging intent. When the
+// agent has an outstanding pending request, it LONG-POLLS: it blocks until the operator decides (or
+// getAccessWait elapses) instead of returning "pending" immediately — so the agent calls it once and
+// waits rather than busy-polling.
 func (s *Service) GetAccess(agentID, upstreamName string) (AccessResult, error) {
 	up, err := s.resolveUpstream(upstreamName)
 	if err == upstream.ErrNotFound {
@@ -419,15 +473,26 @@ func (s *Service) GetAccess(agentID, upstreamName string) (AccessResult, error) 
 	if err != nil {
 		return AccessResult{}, err
 	}
+	res, err := s.accessStatus(agentID, up)
+	if err != nil {
+		return AccessResult{}, err
+	}
+	if res.Status == "pending" && s.subscribe != nil && s.hasPendingRequest(agentID, up.ID) {
+		return s.waitForDecision(agentID, up)
+	}
+	return res, nil
+}
+
+// accessStatus computes the current rule-derived AccessResult, surfacing a recent operator denial
+// (with its reason) instead of a bare "pending" so the agent learns why and stops.
+func (s *Service) accessStatus(agentID string, up *upstream.Upstream) (AccessResult, error) {
 	st, allowing, err := s.statusFor(agentID, up.ID)
 	if err != nil {
 		return AccessResult{}, err
 	}
 	res := toAccessResult(st, up.Name, allowing)
-	// No granting rule yet: if the agent's most recent request was denied by the operator, surface
-	// that (with the reason) instead of a bare "pending", so the agent stops polling and learns why.
 	if res.Status != "granted" {
-		if req, ok, lerr := s.access.Latest(agentID, up.ID); lerr == nil && ok && req.Status == "denied" {
+		if req, ok, lerr := s.access.Latest(agentID, up.ID); lerr == nil && ok && req.Status == access.StatusDenied {
 			res.Status = "denied"
 			if req.Reason != "" {
 				res.Memo = "denied by the operator: " + req.Reason
@@ -437,6 +502,41 @@ func (s *Service) GetAccess(agentID, upstreamName string) (AccessResult, error) 
 		}
 	}
 	return res, nil
+}
+
+// hasPendingRequest reports whether the agent has an outstanding (pending) access request for the
+// upstream — the condition under which get_access blocks waiting for a decision.
+func (s *Service) hasPendingRequest(agentID, upID string) bool {
+	req, ok, err := s.access.Latest(agentID, upID)
+	return err == nil && ok && req.Status == access.StatusPending
+}
+
+// waitForDecision blocks until the agent's pending request for up resolves (status no longer
+// "pending") or getAccessWait elapses, returning the latest status. It re-checks on each approval
+// event and on a periodic tick (a safety net against a dropped event), and checks once up front to
+// close the subscribe race.
+func (s *Service) waitForDecision(agentID string, up *upstream.Upstream) (AccessResult, error) {
+	ch, cancel := s.subscribe()
+	defer cancel()
+	deadline := time.NewTimer(getAccessWait)
+	defer deadline.Stop()
+	tick := time.NewTicker(2 * time.Second)
+	defer tick.Stop()
+	for {
+		res, err := s.accessStatus(agentID, up)
+		if err != nil {
+			return AccessResult{}, err
+		}
+		if res.Status != "pending" {
+			return res, nil
+		}
+		select {
+		case <-ch:
+		case <-tick.C:
+		case <-deadline.C:
+			return s.accessStatus(agentID, up)
+		}
+	}
 }
 
 // WhoAmI returns the agent's own identity and the upstreams it currently has open.

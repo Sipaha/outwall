@@ -10,7 +10,7 @@ the **only** package that imports the go-sdk; all domain logic lives in the SDK-
 - `request_host_access` — `{ host, purpose } → AccessResult`. Tier-1 for HTTP hosts (register + attach a credential). For a k8s cluster or an already-credentialed HTTP host it short-circuits to `granted` with guidance — no card (ADR-0025).
 - `request_access` — `{ host, method, path_template, query_template, variables, values, purpose } → AccessResult`. Tier-2 HTTP operation. A malformed template ⇒ a tool error.
 - `request_k8s_access` — `{ cluster, namespace, resource, verb, purpose } → AccessResult`. The k8s operation channel; on approve creates an agent-scoped allow k8s rule (ADR-0025). Then call `get_kubeconfig` + use kubectl.
-- `get_access` — `{ upstream } → AccessResult`.
+- `get_access` — `{ upstream } → AccessResult`. **Long-polls**: when the agent has a pending request it blocks until the operator decides (≤25s) instead of returning `pending` immediately, so the agent calls it once rather than busy-polling (ADR-0028). The `request_*` tools also de-duplicate — a repeated identical request does not raise a second approval card.
 - `get_kubeconfig` — `{ cluster } → { kubeconfig }`. Emits a kubeconfig pointing at the data plane, carrying the agent's own token (never the cluster's real credentials).
 - `whoami` — `{} → Identity + { token }` (the minted bearer token, from the in-memory cache).
 

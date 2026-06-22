@@ -10,6 +10,7 @@ import (
 	"github.com/Sipaha/outwall/internal/access"
 	"github.com/Sipaha/outwall/internal/agent"
 	"github.com/Sipaha/outwall/internal/approval"
+	"github.com/Sipaha/outwall/internal/events"
 	"github.com/Sipaha/outwall/internal/optemplate"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/secret"
@@ -252,6 +253,58 @@ func TestRequestK8sAccessEnqueuesK8sApproval(t *testing.T) {
 	require.Equal(t, "pods/log", p.Resource)
 	require.Equal(t, "get", p.Verb)
 	require.Equal(t, "read ecos-model logs", p.Purpose)
+}
+
+func TestRequestK8sAccessDedupesPending(t *testing.T) {
+	svc, ag, up, _, q := buildWithQueue(t)
+	a, _, _ := ag.Register("claude")
+	_, err := up.CreateKind("prod-cluster", "https://api.k8s:6443", upstream.KindK8s,
+		upstream.AuthConfig{Type: "none", K8sAuth: "token", Token: "secret"})
+	require.NoError(t, err)
+
+	_, err = svc.RequestK8sAccess(a.ID, "prod-cluster", "enterprise-ecos24", "pods/log", "get", "logs")
+	require.NoError(t, err)
+	waitPending(t, q) // the first request is parked
+
+	// A second identical request must NOT raise a second card or log a second intent row.
+	res, err := svc.RequestK8sAccess(a.ID, "prod-cluster", "enterprise-ecos24", "pods/log", "get", "logs")
+	require.NoError(t, err)
+	require.Equal(t, "pending", res.Status)
+
+	require.Len(t, q.List(), 1, "duplicate request must not enqueue a second approval")
+	reqs, err := svc.access.List()
+	require.NoError(t, err)
+	require.Len(t, reqs, 1, "duplicate request must not log a second access-request row")
+}
+
+// TestGetAccessLongPollReturnsOnGrant verifies get_access blocks on a pending request and returns
+// promptly (well under getAccessWait) once the operator grants — woken by the approval event.
+func TestGetAccessLongPollReturnsOnGrant(t *testing.T) {
+	svc, ag, up, pol, q := buildWithQueue(t)
+	bus := events.NewBus()
+	svc.SetEvents(bus.Subscribe)
+	a, _, _ := ag.Register("claude")
+	cl, err := up.CreateKind("prod-cluster", "https://api.k8s:6443", upstream.KindK8s,
+		upstream.AuthConfig{Type: "none", K8sAuth: "token", Token: "secret"})
+	require.NoError(t, err)
+
+	_, err = svc.RequestK8sAccess(a.ID, "prod-cluster", "enterprise-ecos24", "pods/log", "get", "logs")
+	require.NoError(t, err)
+	waitPending(t, q)
+
+	// Operator grants shortly after: create the rule, then publish the resolution event.
+	go func() {
+		time.Sleep(80 * time.Millisecond)
+		_, _ = pol.Create(policy.Rule{SubjectAgentID: a.ID, UpstreamID: cl.ID, Outcome: policy.Allow,
+			Namespace: "enterprise-ecos24", Resource: "pods/log", Verb: "get"})
+		bus.Publish("approval.resolved", map[string]any{"approved": true})
+	}()
+
+	start := time.Now()
+	res, err := svc.GetAccess(a.ID, "prod-cluster")
+	require.NoError(t, err)
+	require.Equal(t, "granted", res.Status)
+	require.Less(t, time.Since(start), 5*time.Second, "should return on the event, not after the full wait")
 }
 
 func TestRequestK8sAccessRejectsNonK8s(t *testing.T) {
