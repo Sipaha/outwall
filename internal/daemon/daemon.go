@@ -176,6 +176,7 @@ func New(cfg Config) (*Daemon, error) {
 		dataPlane: proxy.New(proxy.Deps{
 			Agents: ag, Upstreams: up, Policy: pol, Limiter: policy.NewLimiter(),
 			Approvals: appr, AuthManager: authMgr, Vault: v, Audit: aud,
+			BrowseDomain: cfg.BrowseDomain,
 		}),
 		mcp: mcpHandler,
 	}

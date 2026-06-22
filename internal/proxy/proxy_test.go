@@ -37,7 +37,8 @@ func build(t *testing.T) (http.Handler, *agent.Registry, *upstream.Registry, *po
 	pol := policy.NewRegistry(s)
 	appr := approval.NewQueueWithTimeout(2 * time.Second)
 	h := New(Deps{Agents: ag, Upstreams: up, Policy: pol, Limiter: policy.NewLimiter(),
-		Approvals: appr, AuthManager: authn.NewManager(nil), Vault: v})
+		Approvals: appr, AuthManager: authn.NewManager(nil), Vault: v,
+		BrowseDomain: "outwall.localhost"})
 	return h, ag, up, pol, appr, v
 }
 
@@ -54,7 +55,8 @@ func buildWithAudit(t *testing.T) (http.Handler, *agent.Registry, *upstream.Regi
 	appr := approval.NewQueueWithTimeout(2 * time.Second)
 	rec := audit.NewRecorder(s)
 	h := New(Deps{Agents: ag, Upstreams: up, Policy: pol, Limiter: policy.NewLimiter(),
-		Approvals: appr, AuthManager: authn.NewManager(nil), Vault: v, Audit: rec})
+		Approvals: appr, AuthManager: authn.NewManager(nil), Vault: v, Audit: rec,
+		BrowseDomain: "outwall.localhost"})
 	return h, ag, up, pol, appr, rec
 }
 
@@ -403,4 +405,29 @@ func TestProxyPassesProfileToPolicy(t *testing.T) {
 	writeBody := []byte(`{"records":[{"id":"emodel/type@someid","attributes":{}}]}`)
 	w = postJSON("/be/api/records/mutate", writeBody)
 	require.Equal(t, http.StatusForbidden, w.Code, "no write rule: records/mutate must be denied")
+}
+
+func TestProxyHostRoutesToUpstream(t *testing.T) {
+	h, ag, up, pol, _, _ := build(t)
+	var gotPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(200)
+	}))
+	defer backend.Close()
+
+	u, err := up.Create("be", backend.URL, upstream.AuthConfig{Type: "none"})
+	require.NoError(t, err)
+	allowOp(t, pol, u.ID, "GET", "/dashboard")
+	_, token, err := ag.Register("claude")
+	require.NoError(t, err)
+
+	// Host-routed (browse) request: no /<name> prefix in the path; full path forwarded.
+	r := httptest.NewRequest("GET", "https://be.outwall.localhost/dashboard", nil)
+	r.Host = "be.outwall.localhost"
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	require.Equal(t, "/dashboard", gotPath) // full path forwarded, NOT stripped
 }

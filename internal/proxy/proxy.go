@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -25,15 +26,16 @@ import (
 
 // Deps are the data-plane dependencies.
 type Deps struct {
-	Agents      *agent.Registry
-	Upstreams   *upstream.Registry
-	Policy      *policy.Registry
-	Limiter     *policy.Limiter
-	Approvals   *approval.Queue
-	AuthManager *authn.Manager
-	Vault       *secret.Vault
-	Audit       *audit.Recorder // optional; nil disables audit (Plans 1–3 behavior).
-	Logger      *slog.Logger
+	Agents       *agent.Registry
+	Upstreams    *upstream.Registry
+	Policy       *policy.Registry
+	Limiter      *policy.Limiter
+	Approvals    *approval.Queue
+	AuthManager  *authn.Manager
+	Vault        *secret.Vault
+	Audit        *audit.Recorder // optional; nil disables audit (Plans 1–3 behavior).
+	Logger       *slog.Logger
+	BrowseDomain string // base domain for per-upstream browser origins (Host-routed); "" disables it
 }
 
 type handler struct {
@@ -128,9 +130,23 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Split "/<upstream>/<rest...>".
-	trimmed := strings.TrimPrefix(r.URL.Path, "/")
-	name, rest, _ := strings.Cut(trimmed, "/")
+	// Browse (Host-routed) origin: a request to <name>.<BrowseDomain> selects the upstream by Host
+	// and forwards the FULL path, so a browser's root-relative/absolute URLs resolve to the same
+	// upstream. The 127.0.0.1/localhost path-prefix model (API clients, kubectl) is unchanged.
+	var name, rest string
+	browse := false
+	host := r.Host
+	if hh, _, err := net.SplitHostPort(host); err == nil {
+		host = hh
+	}
+	if suffix := "." + h.BrowseDomain; h.BrowseDomain != "" && strings.HasSuffix(host, suffix) {
+		name = strings.TrimSuffix(host, suffix)
+		rest = strings.TrimPrefix(r.URL.Path, "/")
+		browse = true
+	} else {
+		trimmed := strings.TrimPrefix(r.URL.Path, "/")
+		name, rest, _ = strings.Cut(trimmed, "/")
+	}
 	if name == "" {
 		writeErr(w, http.StatusNotFound, "no upstream in path")
 		return
@@ -145,9 +161,14 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// escRelPath preserves percent-encoding (e.g. %2F inside one segment) so the operation
 	// template matcher splits on real '/' only and an encoded slash stays within a segment.
-	// r.URL.EscapedPath() is "/<upstream>/<rest...>"; strip the leading "/<upstream>".
+	// In browse mode the full escaped path is the relative path; otherwise strip the "/<name>" prefix.
 	escRelPath := relPath
-	if esc := r.URL.EscapedPath(); strings.HasPrefix(esc, "/"+name) {
+	if browse {
+		escRelPath = r.URL.EscapedPath()
+		if escRelPath == "" {
+			escRelPath = "/"
+		}
+	} else if esc := r.URL.EscapedPath(); strings.HasPrefix(esc, "/"+name) {
 		escRelPath = strings.TrimPrefix(esc, "/"+name)
 		if escRelPath == "" {
 			escRelPath = "/"
