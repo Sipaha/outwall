@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -40,6 +41,8 @@ type Service struct {
 	// kubeconfig assembly inputs (set by the daemon via SetKubeconfigParams):
 	dataPlaneURL string // e.g. https://127.0.0.1:8080 (no trailing slash)
 	caPEM        string
+
+	browseDomain string // base domain for per-upstream browse origins
 }
 
 // getAccessWait bounds how long get_access blocks waiting for an operator decision before returning
@@ -64,6 +67,9 @@ func (s *Service) SetKubeconfigParams(dataPlaneURL, caPEM string) {
 	s.caPEM = caPEM
 }
 
+// SetBrowseDomain provides the base domain for per-upstream browse URLs surfaced to agents.
+func (s *Service) SetBrowseDomain(domain string) { s.browseDomain = domain }
+
 // SetPublisher attaches a (nil-safe) event publisher. RequestAccess publishes "access.requested"
 // after logging the intent. Passing nil disables publishing. The access-request Create happens
 // on this MCP path (not the admin API), so the bus is injected here rather than into the daemon
@@ -86,9 +92,10 @@ type UpstreamInfo struct {
 // AccessResult is the outcome of request_access / get_access.
 // Status: granted | pending | denied.
 type AccessResult struct {
-	Status   string `json:"status"`
-	BasePath string `json:"base_path"`
-	Memo     string `json:"memo"`
+	Status    string `json:"status"`
+	BasePath  string `json:"base_path"`
+	Memo      string `json:"memo"`
+	BrowseURL string `json:"browse_url,omitempty"` // https://<name>.<browse-domain>:<port> for http upstreams
 }
 
 // Identity is the whoami payload (the agent's own view of itself).
@@ -288,17 +295,20 @@ func (s *Service) RequestHostAccess(agentID, host, purpose string) (AccessResult
 		}, nil
 	}
 	if hasCredential(up) {
-		return AccessResult{
+		res := AccessResult{
 			Status:   "granted",
 			BasePath: "/" + up.Name,
 			Memo:     "host already registered with a credential — call request_access for the operation you need",
-		}, nil
+		}
+		res.BrowseURL = s.browseURL(up)
+		return res, nil
 	}
 	st, allowing, err := s.statusFor(agentID, up.ID)
 	if err != nil {
 		return AccessResult{}, err
 	}
 	res := toAccessResult(st, up.Name, allowing)
+	res.BrowseURL = s.browseURL(up)
 	// Already open (an allow/approval rule exists) → granted, no need to enqueue a host card.
 	if res.Status == "granted" {
 		return res, nil
@@ -347,8 +357,10 @@ func (s *Service) RequestAccess(agentID string, in RequestAccessInput) (AccessRe
 		return p.Kind == approval.KindOperation && p.AgentID == agentID && p.UpstreamID == up.ID &&
 			p.OpMethod == in.Method && p.OpPathTemplate == in.PathTemplate
 	}) {
-		return AccessResult{Status: "pending", BasePath: "/" + up.Name,
-			Memo: "operation already submitted — call get_access (it waits for the decision)"}, nil
+		res := AccessResult{Status: "pending", BasePath: "/" + up.Name,
+			Memo: "operation already submitted — call get_access (it waits for the decision)"}
+		res.BrowseURL = s.browseURL(up)
+		return res, nil
 	}
 
 	// Log the intent so an operator deny (with a reason) has a request row to mark, which
@@ -370,8 +382,10 @@ func (s *Service) RequestAccess(agentID string, in RequestAccessInput) (AccessRe
 	}); err != nil {
 		return AccessResult{}, err
 	}
-	return AccessResult{Status: "pending", BasePath: "/" + up.Name,
-		Memo: "operation submitted for approval — call get_access (it waits for the decision)"}, nil
+	res := AccessResult{Status: "pending", BasePath: "/" + up.Name,
+		Memo: "operation submitted for approval — call get_access (it waits for the decision)"}
+	res.BrowseURL = s.browseURL(up)
+	return res, nil
 }
 
 // hasCredential reports whether an upstream already carries a usable credential, so a host-access
@@ -512,6 +526,38 @@ func sameGrants(a, b []approval.K8sGrant) bool {
 	return true
 }
 
+// dnsHostRe matches names that are safe to use as a DNS label prefix (no @, /, etc.).
+var dnsHostRe = regexp.MustCompile(`^[A-Za-z0-9.\-]+$`)
+
+// isDNSHost reports whether name is non-empty and contains only DNS-safe characters. k8s/exec
+// upstream names such as "kubernetes-admin@kubernetes" contain "@" and return false.
+func isDNSHost(name string) bool {
+	return name != "" && dnsHostRe.MatchString(name)
+}
+
+// portOf parses rawURL and returns the explicit port, or "" if there is none.
+func portOf(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return u.Port()
+}
+
+// browseURL returns the per-upstream browser origin for an http upstream, or "" when browsing does
+// not apply (no browse domain configured, a k8s cluster, or a name that is not a valid DNS host).
+func (s *Service) browseURL(up *upstream.Upstream) string {
+	if s.browseDomain == "" || up.Kind == upstream.KindK8s || !isDNSHost(up.Name) {
+		return ""
+	}
+	port := portOf(s.dataPlaneURL)
+	host := up.Name + "." + s.browseDomain
+	if port == "" {
+		return "https://" + host
+	}
+	return "https://" + host + ":" + port
+}
+
 // pendingExists reports whether the approval queue already holds a Pending matching `match`. Used to
 // dedupe a repeated request so a second identical call does not raise a second approval card.
 func (s *Service) pendingExists(match func(approval.Pending) bool) bool {
@@ -563,8 +609,12 @@ func (s *Service) GetAccess(agentID, upstreamName string) (AccessResult, error) 
 		return AccessResult{}, err
 	}
 	if res.Status == "pending" && s.subscribe != nil && s.hasPendingRequest(agentID, up.ID) {
-		return s.waitForDecision(agentID, up)
+		res, err = s.waitForDecision(agentID, up)
+		if err != nil {
+			return AccessResult{}, err
+		}
 	}
+	res.BrowseURL = s.browseURL(up)
 	return res, nil
 }
 

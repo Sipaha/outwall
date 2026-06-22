@@ -159,6 +159,7 @@ func New(cfg Config) (*Daemon, error) {
 	svc.SetEvents(bus.Subscribe)
 	svc.SetApprovals(appr)
 	svc.SetKubeconfigParams("https://"+cfg.Listen, string(ca.CAPEM()))
+	svc.SetBrowseDomain(cfg.BrowseDomain)
 	mcpHandler, err := owmcp.NewHandler(owmcp.Deps{
 		Svc: svc, Agents: ag, Locked: v.Locked,
 	})

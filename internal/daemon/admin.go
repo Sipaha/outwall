@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -360,6 +362,9 @@ func (d *Daemon) hUpstreamList(w http.ResponseWriter, _ *http.Request) {
 			// distinct from merely being configured. Drives the "logged in" vs "needs login" badge.
 			if u.Auth.Type == "oidc-authorization-code" {
 				m["logged_in"] = u.Auth.AccessToken != "" || u.Auth.RefreshToken != ""
+			}
+			if bu := d.browseURLFor(u); bu != "" {
+				m["browse_url"] = bu
 			}
 		}
 		out = append(out, m)
@@ -981,4 +986,31 @@ func (d *Daemon) hAuditPrune(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int64{"deleted": n})
+}
+
+// dnsHostRe matches names safe for use as a DNS label prefix (no @, /, etc.).
+var dnsHostRe = regexp.MustCompile(`^[A-Za-z0-9.\-]+$`)
+
+// isDNSHost reports whether name is non-empty and contains only DNS-safe characters.
+// k8s/exec upstream names like "kubernetes-admin@kubernetes" contain "@" and return false.
+func isDNSHost(name string) bool {
+	return name != "" && dnsHostRe.MatchString(name)
+}
+
+// browseURLFor returns the per-upstream browser origin for an http upstream, or "" when
+// browsing does not apply (no browse domain configured, a k8s cluster, or a non-DNS name).
+// The port is extracted from cfg.Listen (e.g. "127.0.0.1:8080" → "8080").
+func (d *Daemon) browseURLFor(u *upstream.Upstream) string {
+	if d.cfg.BrowseDomain == "" || u.Kind == upstream.KindK8s || !isDNSHost(u.Name) {
+		return ""
+	}
+	_, port, err := net.SplitHostPort(d.cfg.Listen)
+	if err != nil {
+		port = ""
+	}
+	host := u.Name + "." + d.cfg.BrowseDomain
+	if port == "" {
+		return "https://" + host
+	}
+	return "https://" + host + ":" + port
 }

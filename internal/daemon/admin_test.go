@@ -655,6 +655,27 @@ func TestUpstreamCreateWithProfile(t *testing.T) {
 	require.Equal(t, "citeck", upstreams[0]["profile"])
 }
 
+// TestUpstreamListIncludesBrowseURL asserts GET /upstreams includes browse_url for http upstreams
+// when a browse domain is configured (default "outwall.localhost" in newDaemon).
+func TestUpstreamListIncludesBrowseURL(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	w := req(t, h, "POST", "/upstreams",
+		`{"name":"be","base_url":"https://be.example","auth":{"type":"none"}}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	wl := req(t, h, "GET", "/upstreams", "")
+	require.Equal(t, http.StatusOK, wl.Code)
+	var ups []map[string]any
+	require.NoError(t, json.Unmarshal(wl.Body.Bytes(), &ups))
+	require.Len(t, ups, 1)
+	bu, _ := ups[0]["browse_url"].(string)
+	require.Contains(t, bu, "be.outwall.localhost", "browse_url should contain the upstream name + domain")
+	require.Contains(t, bu, "https://", "browse_url should be an https URL")
+}
+
 func TestRuleCreateWithProfileParams(t *testing.T) {
 	d := newDaemon(t)
 	h := d.AdminHandler()

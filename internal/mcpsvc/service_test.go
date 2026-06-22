@@ -233,6 +233,38 @@ func TestK8sClusterDiscoveryAndKubeconfig(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestGetAccessIncludesBrowseURL asserts that get_access returns a browse_url for http upstreams
+// when a browse domain is configured, and returns empty for k8s upstreams.
+func TestGetAccessIncludesBrowseURL(t *testing.T) {
+	svc, ag, up, pol := build(t)
+	a, _, _ := ag.Register("claude")
+	svc.SetKubeconfigParams("https://127.0.0.1:8099", "ca")
+	svc.SetBrowseDomain("outwall.localhost")
+
+	// HTTP upstream "be" with an allow rule.
+	beUp, err := up.Create("be", "https://be.example", upstream.AuthConfig{Type: "none"})
+	require.NoError(t, err)
+	_, err = pol.Create(policy.Rule{UpstreamID: beUp.ID, OpMethod: "GET", OpPathTemplate: "/", Outcome: policy.Allow})
+	require.NoError(t, err)
+
+	res, err := svc.GetAccess(a.ID, "be")
+	require.NoError(t, err)
+	require.Equal(t, "granted", res.Status)
+	require.Equal(t, "https://be.outwall.localhost:8099", res.BrowseURL)
+
+	// K8s upstream yields no browse_url.
+	cl, err := up.CreateKind("prod-cluster", "https://api.k8s:6443", upstream.KindK8s,
+		upstream.AuthConfig{Type: "none", K8sAuth: "token", Token: "cluster-secret"})
+	require.NoError(t, err)
+	_, err = pol.Create(policy.Rule{UpstreamID: cl.ID, Namespace: "ns", Resource: "pods", Verb: "get", Outcome: policy.Allow})
+	require.NoError(t, err)
+
+	res2, err := svc.GetAccess(a.ID, "prod-cluster")
+	require.NoError(t, err)
+	require.Equal(t, "granted", res2.Status)
+	require.Equal(t, "", res2.BrowseURL)
+}
+
 func TestRequestK8sAccessEnqueuesK8sApproval(t *testing.T) {
 	svc, ag, up, _, q := buildWithQueue(t)
 	a, _, _ := ag.Register("claude")
