@@ -16,7 +16,10 @@ that they take down production**.
 
 **This is a Sipaha project — there is NO connection to citeck/ECOS.** citeck-launcher
 (`~/.spk/spk-editor/solutions/citeck-launcher`) is used ONLY as a source of architectural
-patterns. There must be **no `citeck` strings, imports, or branding** in outwall code.
+patterns. The core stays **platform-agnostic**: no `citeck` strings, imports, or branding in
+outwall code — with ONE contained exception (ADR-0034), the server-profile plugin package
+`internal/serverprofile/citeck` and the persisted profile-name value `"citeck"`. Everywhere else
+stays citeck-free.
 
 ## Where to start
 
@@ -57,7 +60,9 @@ Full design: the spec above. Package layout: the plan above.
 ## Hard rules (never break)
 
 - ❌ Module path is **`github.com/Sipaha/outwall`** — exact, in every import.
-- ❌ **No `citeck`** strings / imports / branding anywhere.
+- ⚠️ **No `citeck`** strings / imports / branding in the core. The ONE exception (ADR-0034) is the
+  server-profile plugin `internal/serverprofile/citeck` and the persisted profile-name value
+  `"citeck"`. Everywhere else (core, proxy, daemon, store, policy, UI chrome) stays citeck-free.
 - ❌ **No CGO** in the server binary (`CGO_ENABLED=0`). SQLite via `modernc.org/sqlite`
   (pure-Go). The desktop Wails wrapper is the only CGO target, in its own `cmd/`.
 - ❌ **No panics / `log.Fatal` in library code.** Return `error` (wrapped with `%w`).

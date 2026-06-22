@@ -49,6 +49,7 @@ Stage: alpha (pre-Plan-1).
   - [`0022-additive-schema-migrations.md`](architecture/decisions/0022-additive-schema-migrations.md) — idempotent additive `ADD COLUMN` migration so additive schema growth no longer forces a DB reset; model breaks still reset in alpha.
   - [`0023-versioned-migration-runner.md`](architecture/decisions/0023-versioned-migration-runner.md) — PRAGMA user_version + ordered run-once migration steps (transactional); baseline step folds in the ADR-0022 reconcile; structural changes appended as later steps.
   - [`0024-deny-reason.md`](architecture/decisions/0024-deny-reason.md) — operator deny reason threaded through the approval queue (`Decision{Approved,Reason}`); surfaced to the agent on the data-plane 403 and via `get_access` (access_requests.reason); reason modal in the Approvals UI.
+  - [`0034-server-profiles-and-citeck-plugin.md`](architecture/decisions/0034-server-profiles-and-citeck-plugin.md) — server-profile plugin mechanism (self-registering `Profile` registry, bundled at cmd; `upstreams.profile` + rule `profile_params`; `decide.go` delegates to a claiming profile, raw-http handles the rest); first plugin = Citeck Records (read/write × sourceId × workspace, ecosType gated, workspace-on-read/create only); scopes the "no citeck" rule to the plugin package.
 - `modules/` — per-package API docs: `secret`, `store`, `upstream`, `agent`, `authn`,
   `policy`, `approval`, `access`, `mcpsvc`, `mcp`, `audit`, `events`, `proxy`, `daemon`, `client`, `cli`, `version`, `k8s`, `tlsca`, plus `webui` (the `web/` app).
 
