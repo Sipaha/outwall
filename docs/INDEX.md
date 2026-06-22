@@ -68,6 +68,7 @@ Stage: alpha (pre-Plan-1).
   - [`2026-06-18-outwall-operation-access-design.md`](superpowers/specs/2026-06-18-outwall-operation-access-design.md) — operation-template + typed-variable HTTP access model (host=upstream, approve-on-request, value-set control, parse-from-request enforcement). Replaces HTTP path-glob rules.
   - [`2026-06-22-server-profiles-and-per-upstream-origin-design.md`](superpowers/specs/2026-06-22-server-profiles-and-per-upstream-origin-design.md) — server-profile plugin mechanism (core stays platform-agnostic; first plugin = Citeck Records read/write-per-sourceId/workspace policy) + per-upstream subdomain origin for browser browsing. ADRs 0034/0035.
 - `plans/` — bite-sized implementation plans.
+  - Server profiles: [`2026-06-22-server-profiles-citeck.md`](superpowers/plans/2026-06-22-server-profiles-citeck.md) (Parts A/B/C — shipped, ADR-0034), [`2026-06-22-per-upstream-origin.md`](superpowers/plans/2026-06-22-per-upstream-origin.md) (Part D — subdomain data plane, ADR-0035).
   - Phase 1: the `2026-06-17-outwall-*` plans (foundation … wails-desktop), all shipped.
   - Phase 3 (operation-access): [`…-opaccess-h1-engine.md`](superpowers/plans/2026-06-18-outwall-opaccess-h1-engine.md) (active),
     [`…-opaccess-h2-mcp-approval.md`](superpowers/plans/2026-06-18-outwall-opaccess-h2-mcp-approval.md),
