@@ -356,6 +356,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Body, reqCapture = audit.NewCaptureRef(r.Body, audit.BodyCap)
 	}
 
+	browseOrigin := ""
+	if browse {
+		browseOrigin = "https://" + r.Host // r.Host includes the :port the browser used
+	}
+
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.Out.URL.Scheme = base.Scheme
@@ -392,28 +397,34 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadGateway, "upstream error")
 		},
 	}
-	if captureBodies {
+	needModify := browse || captureBodies
+	if needModify {
 		rp.ModifyResponse = func(resp *http.Response) error {
-			status := resp.StatusCode
-			ctype := resp.Header.Get("Content-Type")
-			resp.Body = audit.NewCapture(resp.Body, audit.BodyCap, func(stored []byte, total int64, truncated bool) {
-				respBody := audit.ClassifyBody(audit.KindResponse, ctype, stored, total, truncated)
-				reqBody, reqSize := buildReqBody(reqCapture, reqContentType)
-				bodies := []audit.Body{}
-				if reqBody != nil {
-					bodies = append(bodies, *reqBody)
-				}
-				bodies = append(bodies, respBody)
-				h.record(audit.Entry{
-					TS: time.Now().UTC(), AgentID: ag.ID, AgentName: ag.Name,
-					UpstreamID: up.ID, UpstreamName: up.Name, Method: r.Method,
-					Path: relPath, Query: r.URL.RawQuery, StatusCode: status,
-					DurationMs: int(time.Since(started).Milliseconds()),
-					ReqBytes:   reqSize, RespBytes: total,
-					Decision: dec.Outcome, RuleID: ruleID, Operation: operation, Vars: auditVars,
-					Headers: maskedHeaders,
-				}, bodies...)
-			})
+			if browse {
+				rewriteBrowseHeaders(resp, base, browseOrigin)
+			}
+			if captureBodies {
+				status := resp.StatusCode
+				ctype := resp.Header.Get("Content-Type")
+				resp.Body = audit.NewCapture(resp.Body, audit.BodyCap, func(stored []byte, total int64, truncated bool) {
+					respBody := audit.ClassifyBody(audit.KindResponse, ctype, stored, total, truncated)
+					reqBody, reqSize := buildReqBody(reqCapture, reqContentType)
+					bodies := []audit.Body{}
+					if reqBody != nil {
+						bodies = append(bodies, *reqBody)
+					}
+					bodies = append(bodies, respBody)
+					h.record(audit.Entry{
+						TS: time.Now().UTC(), AgentID: ag.ID, AgentName: ag.Name,
+						UpstreamID: up.ID, UpstreamName: up.Name, Method: r.Method,
+						Path: relPath, Query: r.URL.RawQuery, StatusCode: status,
+						DurationMs: int(time.Since(started).Milliseconds()),
+						ReqBytes:   reqSize, RespBytes: total,
+						Decision: dec.Outcome, RuleID: ruleID, Operation: operation, Vars: auditVars,
+						Headers: maskedHeaders,
+					}, bodies...)
+				})
+			}
 			return nil
 		}
 	}
@@ -541,6 +552,39 @@ func capBytes(b []byte, cap int) []byte {
 	out := make([]byte, len(b))
 	copy(out, b)
 	return out
+}
+
+// rewriteBrowseHeaders rewrites response headers so a browser stays on the per-upstream browse
+// origin: a Location pointing at the upstream's real origin becomes the browse origin (relative
+// Locations are left untouched, they resolve correctly), and every Set-Cookie loses its Domain
+// attribute so the cookie binds to the browse origin instead of the upstream's real host.
+func rewriteBrowseHeaders(resp *http.Response, base *url.URL, browseOrigin string) {
+	if loc := resp.Header.Get("Location"); loc != "" {
+		if u, err := url.Parse(loc); err == nil && u.IsAbs() && strings.EqualFold(u.Host, base.Host) {
+			u.Scheme, u.Host = "", "" // make it relative to the browse origin
+			resp.Header.Set("Location", strings.TrimPrefix(browseOrigin+u.String(), ""))
+		}
+	}
+	if cookies := resp.Header.Values("Set-Cookie"); len(cookies) > 0 {
+		resp.Header.Del("Set-Cookie")
+		for _, c := range cookies {
+			resp.Header.Add("Set-Cookie", stripCookieDomain(c))
+		}
+	}
+}
+
+// stripCookieDomain removes a Domain=… attribute from a Set-Cookie header value, leaving the rest
+// (Path, HttpOnly, Secure, SameSite, …) intact, so the cookie becomes host-only on the browse origin.
+func stripCookieDomain(setCookie string) string {
+	parts := strings.Split(setCookie, ";")
+	out := parts[:0]
+	for _, p := range parts {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(p)), "domain=") {
+			continue
+		}
+		out = append(out, p)
+	}
+	return strings.Join(out, ";")
 }
 
 func ruleIDOf(rule *policy.Rule) string {

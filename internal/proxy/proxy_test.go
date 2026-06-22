@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -430,4 +431,42 @@ func TestProxyHostRoutesToUpstream(t *testing.T) {
 	h.ServeHTTP(w, r)
 	require.Equal(t, 200, w.Code, w.Body.String())
 	require.Equal(t, "/dashboard", gotPath) // full path forwarded, NOT stripped
+}
+
+func mustURLPath(t *testing.T, raw string) string {
+	t.Helper()
+	u, err := url.Parse(raw)
+	require.NoError(t, err)
+	return u.Path
+}
+
+func TestProxyBrowseRewritesLocationAndCookieDomain(t *testing.T) {
+	h, ag, up, pol, _, _ := build(t)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Redirect to the backend's own absolute origin + set a domain-scoped cookie.
+		w.Header().Set("Location", "http://"+r.Host+"/after-login")
+		w.Header().Add("Set-Cookie", "sid=abc; Path=/; Domain="+r.Host+"; HttpOnly")
+		w.WriteHeader(302)
+	}))
+	defer backend.Close()
+	u, err := up.Create("be", backend.URL, upstream.AuthConfig{Type: "none"})
+	require.NoError(t, err)
+	allowOp(t, pol, u.ID, "GET", "/login")
+	_, tok, err := ag.Register("claude")
+	require.NoError(t, err)
+
+	r := httptest.NewRequest("GET", "https://be.outwall.localhost/login", nil)
+	r.Host = "be.outwall.localhost"
+	r.Header.Set("Authorization", "Bearer "+tok)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	require.Equal(t, 302, w.Code)
+	// Location rewritten to the browse origin (host, not the backend's real host).
+	require.Contains(t, w.Header().Get("Location"), "be.outwall.localhost")
+	require.NotContains(t, w.Header().Get("Location"), "127.0.0.1:") // not the backend host:port
+	require.Equal(t, "/after-login", mustURLPath(t, w.Header().Get("Location")))
+	// Set-Cookie Domain stripped (so the browser keeps it on the browse origin).
+	require.NotContains(t, w.Header().Get("Set-Cookie"), "Domain=")
+	require.Contains(t, w.Header().Get("Set-Cookie"), "sid=abc")
 }
