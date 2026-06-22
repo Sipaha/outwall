@@ -25,6 +25,12 @@ Accept the agent's outwall token from an `outwall_token` **cookie** as an altern
   through** (the upstream's own session cookies are untouched).
 - The cookie value is already masked in the audit log (the `Cookie` header is in the masked set).
 
+**CSRF guard.** A cookie is ambient authority, so cookie-sourced auth is gated on the Fetch-Metadata
+signal `Sec-Fetch-Site` (always sent by Chromium/Playwright): only `same-origin` and `none` (top-level
+navigation) are allowed; an explicit `cross-site`/`same-site` (different-origin) context is refused
+(403). Absent is allowed (a non-browser client, which could equally use the header). The
+**Authorization header** path is unaffected — it is not ambient and an attacker page cannot forge it.
+
 Usage: the agent sets `outwall_token=<its token>` for the data-plane origin in its Playwright
 browser context, then navigates to `https://127.0.0.1:<port>/<host>/...`. outwall authenticates the
 agent from the cookie, enforces policy, injects the upstream credential (e.g. the operator's OIDC
@@ -43,9 +49,21 @@ seeing the upstream credential.
   servers typically accept the injected bearer per request, so the page loads without depending on
   the upstream's own cookies. Cookie-domain rewriting can be revisited if a specific site needs it.
 
+## Residual risk (single-origin confused-deputy)
+
+All upstreams are served under one loopback origin (`127.0.0.1:<port>/<host>/...`), so a page
+*already proxied through the data plane* (upstream A's HTML) is **same-origin** with the proxy and its
+JS can `fetch('/B/...')` to reach another upstream B the agent is allowed to use — carrying the cookie
+(the `Sec-Fetch-Site` guard sees `same-origin` and allows it). The blast radius is bounded by policy
+(only upstreams the agent has rules for), but this ambient cross-upstream reach does not exist with
+header auth. Mitigations: set the cookie `SameSite=Strict`; use a **dedicated browser context** for a
+browsing session and don't mix sensitive upstreams; prefer header auth for non-browser flows. A full
+fix (a distinct origin per upstream) is a larger change, deferred.
+
 ## Consequences
 
 - A browser-driven agent (Playwright) can browse upstreams — including OIDC-protected sites the
   operator logged into — through the data plane by carrying `outwall_token` as a cookie; the token is
-  stripped before forwarding and masked in audit. Covered by `TestProxyCookieTokenAuthAndStrip`.
-- The header path is unchanged; the cookie is purely additive.
+  stripped before forwarding and masked in audit. Covered by `TestProxyCookieTokenAuthAndStrip`
+  (including the cross-site CSRF refusal).
+- The header path is unchanged; the cookie is purely additive and carries a CSRF guard.

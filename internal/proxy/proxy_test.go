@@ -140,6 +140,22 @@ func TestProxyCookieTokenAuthAndStrip(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	h.ServeHTTP(w2, r2)
 	require.Equal(t, http.StatusUnauthorized, w2.Code)
+
+	// CSRF guard: a valid cookie from a cross-site context is refused (the header path is not).
+	r3 := httptest.NewRequest(http.MethodGet, "/be/repos/x", nil)
+	r3.AddCookie(&http.Cookie{Name: "outwall_token", Value: token})
+	r3.Header.Set("Sec-Fetch-Site", "cross-site")
+	w3 := httptest.NewRecorder()
+	h.ServeHTTP(w3, r3)
+	require.Equal(t, http.StatusForbidden, w3.Code)
+
+	// Same cross-site context but via the Authorization header still works (header isn't ambient).
+	r4 := httptest.NewRequest(http.MethodGet, "/be/repos/x", nil)
+	r4.Header.Set("Authorization", "Bearer "+token)
+	r4.Header.Set("Sec-Fetch-Site", "cross-site")
+	w4 := httptest.NewRecorder()
+	h.ServeHTTP(w4, r4)
+	require.Equal(t, http.StatusOK, w4.Code)
 }
 
 func TestProxyOperationEnforcement(t *testing.T) {

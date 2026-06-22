@@ -60,15 +60,32 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 const tokenCookieName = "outwall_token"
 
 // agentToken extracts the agent's outwall token from the Authorization bearer header, falling back
-// to the outwall_token cookie. Returns "" when neither is present.
-func agentToken(r *http.Request) string {
+// to the outwall_token cookie. The bool reports whether it came from the cookie (which gets the
+// CSRF guard below). Returns ("", false) when neither is present.
+func agentToken(r *http.Request) (string, bool) {
 	if authz := r.Header.Get("Authorization"); strings.HasPrefix(authz, "Bearer ") {
-		return strings.TrimPrefix(authz, "Bearer ")
+		return strings.TrimPrefix(authz, "Bearer "), false
 	}
 	if c, err := r.Cookie(tokenCookieName); err == nil {
-		return c.Value
+		return c.Value, true
 	}
-	return ""
+	return "", false
+}
+
+// cookieAuthAllowed is the CSRF guard for cookie-sourced auth: a cookie is ambient authority, so a
+// cross-context request must not be able to spend it. We trust the modern Fetch-Metadata signal
+// (`Sec-Fetch-Site`, always sent by Chromium/Playwright): allow only same-origin requests and
+// top-level navigations (`none`); reject an explicit cross-site / same-site (different-origin)
+// context. Absent (a non-browser client using the cookie) is allowed — those can equally use the
+// header. NOTE: this stops cross-origin CSRF; it cannot stop a page already proxied through the data
+// plane from reaching another upstream on the shared loopback origin (see ADR-0033).
+func cookieAuthAllowed(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "cross-site", "same-site":
+		return false
+	default: // "same-origin", "none", or absent
+		return true
+	}
 }
 
 // stripCookie removes a single named cookie from the request's Cookie header, preserving the rest
@@ -95,9 +112,14 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// `outwall_token` cookie. The cookie lets a real browser (e.g. Playwright opening an
 	// OIDC-protected site through the data plane) carry the token automatically on every request;
 	// it is stripped before forwarding so the upstream never sees it.
-	token := agentToken(r)
+	token, viaCookie := agentToken(r)
 	if token == "" {
 		writeErr(w, http.StatusUnauthorized, "missing bearer token")
+		return
+	}
+	// Cookie auth is ambient authority — refuse it from a cross-context (CSRF) request.
+	if viaCookie && !cookieAuthAllowed(r) {
+		writeErr(w, http.StatusForbidden, "cross-site cookie auth refused")
 		return
 	}
 	ag, err := h.Agents.Authenticate(token)
