@@ -270,6 +270,39 @@ function OperationCard({ approval, onResolve }: CardProps) {
   )
 }
 
+/** MCP k8s-access card: cluster + (namespace / resource) + verb + purpose. No credential form —
+ *  k8s clusters are already credentialed; approve creates an agent-scoped allow rule. */
+function K8sAccessCard({ approval, onResolve }: CardProps) {
+  const p = approval
+  return (
+    <div className={cardClass}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="space-y-1">
+          <div className="text-[11px] text-muted-foreground">
+            k8s access · agent <span className="font-mono">{shortId(p.agent_id)}</span> ·{' '}
+            <span className="font-mono">{p.host}</span>
+          </div>
+          <div className="font-mono text-xs">
+            <span className="text-muted-foreground">{p.namespace || '*'}</span>
+            <span className="text-muted-foreground">{' / '}</span>
+            <span>{p.resource || '*'}</span> <StatusBadge status={p.verb || '*'} />
+          </div>
+          {p.purpose && <div className="text-xs text-muted-foreground">{p.purpose}</div>}
+        </div>
+        <StatusBadge status="k8s" />
+      </div>
+      <div className="flex justify-end gap-1.5">
+        <button onClick={() => onResolve(p.id, true)} className={approveBtn}>
+          Approve
+        </button>
+        <button onClick={() => onResolve(p.id, false)} className={denyBtn}>
+          Deny
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /** Data-plane new-value card: the template + the new (variable, value); approve / approve+trust. */
 function NewValueCard({ approval, onResolve }: CardProps) {
   const newVals = approval.new_values ?? []
@@ -366,6 +399,7 @@ function ApprovalCard(props: CardProps) {
   const { approval } = props
   if (approval.kind === 'host-access') return <HostCard {...props} />
   if (approval.kind === 'operation') return <OperationCard {...props} />
+  if (approval.kind === 'k8s-access') return <K8sAccessCard {...props} />
   if ((approval.new_values?.length ?? 0) > 0) return <NewValueCard {...props} />
   return <PlainCard {...props} />
 }
@@ -463,7 +497,7 @@ export function Approvals() {
           Access requests
         </header>
         <p className="px-3 py-2 text-[11px] text-muted-foreground">
-          Granting marks the request handled — actual access is via Operations.
+          History of agent requests — act on them in the cards above. Dismiss clears a stale row.
         </p>
         <DataTable
           rows={requests}
@@ -489,19 +523,7 @@ export function Approvals() {
               header: '',
               cell: (r) =>
                 r.status === 'pending' ? (
-                  <div className="flex justify-end gap-1.5">
-                    <button
-                      onClick={() => resolveAccess(r.id, 'granted')}
-                      className="rounded bg-success/15 px-2 py-0.5 text-[11px] font-medium text-success hover:bg-success/25"
-                    >
-                      Grant
-                    </button>
-                    <button
-                      onClick={() => resolveAccess(r.id, 'denied')}
-                      className="rounded bg-destructive/15 px-2 py-0.5 text-[11px] font-medium text-destructive hover:bg-destructive/25"
-                    >
-                      Deny
-                    </button>
+                  <div className="flex justify-end">
                     <button
                       onClick={() => resolveAccess(r.id, 'dismissed')}
                       className="rounded bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/70"

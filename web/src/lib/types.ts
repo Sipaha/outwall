@@ -122,6 +122,7 @@ export interface NewValue {
  *    approval (has namespace/resource/verb).
  *  - "host-access" → a tier-1 host card (agent + host + purpose).
  *  - "operation"   → a tier-2 operation card (the operation shape + declared variables + values).
+ *  - "k8s-access"  → an MCP k8s-access card (cluster + namespace/resource/verb + purpose).
  */
 export interface Approval {
   id: string
@@ -136,8 +137,8 @@ export interface Approval {
   verb?: string
   request_body?: string // agent-sent patch/apply body, credentials masked
   // MCP control-plane context (empty for data-plane / k8s approvals).
-  kind?: string // "host-access" | "operation" | "" (data-plane / k8s)
-  host?: string // the host this approval concerns (host-access / operation)
+  kind?: string // "host-access" | "operation" | "k8s-access" | "" (data-plane / k8s)
+  host?: string // the host this approval concerns (host-access / operation / k8s-access)
   // Operation card (kind === "operation"):
   op_method?: string
   op_path_template?: string

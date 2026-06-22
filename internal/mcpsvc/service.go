@@ -262,6 +262,24 @@ func (s *Service) RequestHostAccess(agentID, host, purpose string) (AccessResult
 	if err != nil {
 		return AccessResult{}, fmt.Errorf("resolve host upstream: %w", err)
 	}
+	// The host tier exists only to register a host and attach its credential. For upstreams the
+	// operator can take no useful credential action on — k8s clusters (pre-credentialed) and HTTP
+	// hosts that already carry a credential — short-circuit with guidance: no card, no log row
+	// (nothing for the operator to act on). See ADR-0025.
+	if up.Kind == upstream.KindK8s {
+		return AccessResult{
+			Status:   "granted",
+			BasePath: "/" + up.Name,
+			Memo:     "k8s cluster — credentials already configured; call get_kubeconfig and request_k8s_access for the namespace/resource/verb you need",
+		}, nil
+	}
+	if hasCredential(up) {
+		return AccessResult{
+			Status:   "granted",
+			BasePath: "/" + up.Name,
+			Memo:     "host already registered with a credential — call request_access for the operation you need",
+		}, nil
+	}
 	// Log the intent (purpose) for the operator's access-request queue.
 	if _, err := s.access.Create(agentID, up.ID, purpose); err != nil {
 		return AccessResult{}, fmt.Errorf("log access request: %w", err)
@@ -325,6 +343,51 @@ func (s *Service) RequestAccess(agentID string, in RequestAccessInput) (AccessRe
 	}
 	return AccessResult{Status: "pending", BasePath: "/" + up.Name,
 		Memo: "operation submitted for approval — poll get_access"}, nil
+}
+
+// hasCredential reports whether an upstream already carries a usable credential, so a host-access
+// request need not raise a credential-attach card. For k8s the credential is the cluster connection
+// (handled by the caller); here it covers HTTP auth types.
+func hasCredential(up *upstream.Upstream) bool {
+	return up.AuthType != "" && up.AuthType != "none"
+}
+
+// RequestK8sAccess is the MCP k8s-access channel: an agent declares the (namespace, resource, verb)
+// it needs on a registered k8s cluster. It validates the upstream is a k8s cluster, logs the intent,
+// and enqueues a KindK8sAccess approval carrying the tuple. The MCP call does not block — on
+// "pending" the agent polls get_access. On approve the resolve path creates an agent-scoped allow
+// k8s rule for the tuple (see ADR-0025). k8s clusters are pre-credentialed, so there is no host tier.
+func (s *Service) RequestK8sAccess(agentID, cluster, namespace, resource, verb, purpose string) (AccessResult, error) {
+	up, err := s.resolveUpstream(cluster)
+	if err == upstream.ErrNotFound {
+		return AccessResult{Status: "denied", Memo: "no such cluster — ask the operator to register it"}, nil
+	}
+	if err != nil {
+		return AccessResult{}, err
+	}
+	if up.Kind != upstream.KindK8s {
+		return AccessResult{}, fmt.Errorf("%q is not a k8s cluster — use request_host_access / request_access", cluster)
+	}
+	// An allow/approval k8s rule already covering this agent → granted, no card.
+	st, allowing, err := s.statusFor(agentID, up.ID)
+	if err != nil {
+		return AccessResult{}, err
+	}
+	if res := toAccessResult(st, up.Name, allowing); res.Status == "granted" {
+		return res, nil
+	}
+	// Log the intent so a deny (with a reason) has a row to mark, surfaced via get_access.
+	if _, err := s.access.Create(agentID, up.ID, purpose); err != nil {
+		return AccessResult{}, fmt.Errorf("log access request: %w", err)
+	}
+	if err := s.enqueue(agentID, approval.Pending{
+		Kind: approval.KindK8sAccess, AgentID: agentID, UpstreamID: up.ID, Host: up.Name,
+		Namespace: namespace, Resource: resource, Verb: verb, Purpose: purpose,
+	}); err != nil {
+		return AccessResult{}, err
+	}
+	return AccessResult{Status: "pending", BasePath: "/" + up.Name,
+		Memo: "k8s access submitted for approval — poll get_access"}, nil
 }
 
 // enqueue parks a Pending on the approval queue from a background goroutine so the MCP call

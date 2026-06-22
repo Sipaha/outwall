@@ -526,11 +526,19 @@ func (d *Daemon) hApprovalResolve(w http.ResponseWriter, r *http.Request) {
 				adminErr(w, http.StatusBadRequest, err.Error())
 				return
 			}
-		} else if p.Kind != "" && body.Reason != "" {
-			// MCP host/operation deny: persist the reason on the agent's access-request log so the
-			// agent learns WHY when it polls get_access (the data-plane path gets it via the queue).
+			// Keep the access-request history in sync with the card decision so the table is a
+			// faithful read-only log (ADR-0025). MCP kinds (host/operation/k8s) log an intent row.
+			if p.Kind != "" {
+				if _, gerr := d.access.GrantLatest(p.AgentID, p.UpstreamID); gerr != nil {
+					slog.Warn("record grant", "err", gerr)
+				}
+			}
+		} else if p.Kind != "" {
+			// MCP host/operation/k8s deny: mark the agent's latest access-request denied (with the
+			// reason, if any) so the agent learns the outcome when it polls get_access and the table
+			// history matches the decision (the data-plane path gets the reason via the queue).
 			if _, derr := d.access.DenyLatest(p.AgentID, p.UpstreamID, body.Reason); derr != nil {
-				slog.Warn("record deny reason", "err", derr)
+				slog.Warn("record deny", "err", derr)
 			}
 		}
 	}
@@ -561,9 +569,34 @@ func (d *Daemon) applyApprovalSideEffects(p approval.Pending, auth *upstream.Aut
 		return nil
 	case approval.KindOperation:
 		return d.approveOperation(p, trustAny)
+	case approval.KindK8sAccess:
+		return d.approveK8sAccess(p)
 	default:
 		return nil
 	}
+}
+
+// approveK8sAccess creates an agent-scoped allow k8s rule for the pending's (namespace, resource,
+// verb) tuple. The grant is scoped to the requesting agent (not the whole cluster) — see ADR-0025.
+// It is idempotent: an identical rule already present (same tuple, same agent) is left untouched.
+func (d *Daemon) approveK8sAccess(p approval.Pending) error {
+	rules, err := d.policy.ForUpstream(p.UpstreamID)
+	if err != nil {
+		return fmt.Errorf("load rules: %w", err)
+	}
+	for _, r := range rules {
+		if r.SubjectAgentID == p.AgentID && r.OpPathTemplate == "" &&
+			r.Namespace == p.Namespace && r.Resource == p.Resource && r.Verb == p.Verb {
+			return nil // already granted
+		}
+	}
+	if _, err := d.policy.Create(policy.Rule{
+		SubjectAgentID: p.AgentID, UpstreamID: p.UpstreamID, Outcome: policy.Allow,
+		Namespace: p.Namespace, Resource: p.Resource, Verb: p.Verb,
+	}); err != nil {
+		return fmt.Errorf("create k8s rule: %w", err)
+	}
+	return nil
 }
 
 // approveOperation creates the H1 operation rule for the pending's template if no rule with the

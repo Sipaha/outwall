@@ -42,6 +42,10 @@ const (
 	// KindOperation is a tier-2 MCP operation request carrying the parsed operation shape + the
 	// requested values: on approve the resolve path creates/extends the H1 operation rule.
 	KindOperation = "operation"
+	// KindK8sAccess is an MCP k8s-access request carrying a (namespace, resource, verb) tuple: on
+	// approve the resolve path creates an agent-scoped allow k8s rule for that tuple. k8s clusters
+	// are pre-credentialed, so there is no separate host tier for them (see ADR-0025).
+	KindK8sAccess = "k8s-access"
 )
 
 // Pending describes a request awaiting approval.

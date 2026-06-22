@@ -127,6 +127,25 @@ func (r *Registry) DenyLatest(agentID, upstreamID, reason string) (bool, error) 
 	return n > 0, nil
 }
 
+// GrantLatest marks the most recent PENDING request for (agentID, upstreamID) as granted, stamping
+// resolved_at. It reports whether a row was updated. Used by the approval-resolve path so the
+// access-request history stays in sync with a card Approve (see ADR-0025).
+func (r *Registry) GrantLatest(agentID, upstreamID string) (bool, error) {
+	res, err := r.store.DB().Exec(
+		`UPDATE access_requests SET status=?, resolved_at=?
+		 WHERE id = (SELECT id FROM access_requests
+		             WHERE agent_id=? AND upstream_id=? AND status=?
+		             ORDER BY created_at DESC LIMIT 1)`,
+		StatusGranted, time.Now().UTC().Format(time.RFC3339Nano),
+		agentID, upstreamID, StatusPending,
+	)
+	if err != nil {
+		return false, fmt.Errorf("grant latest access request: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // Latest returns the most recent access request for (agentID, upstreamID), or (nil,false) if none.
 // get_access consults it so a just-denied request surfaces its status + reason to the agent.
 func (r *Registry) Latest(agentID, upstreamID string) (*Request, bool, error) {

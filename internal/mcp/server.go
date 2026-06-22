@@ -74,6 +74,14 @@ type requestAccessIn struct {
 	Purpose       string                  `json:"purpose" jsonschema:"why the agent needs this operation (required)"`
 }
 
+type requestK8sAccessIn struct {
+	Cluster   string `json:"cluster" jsonschema:"the registered k8s cluster name"`
+	Namespace string `json:"namespace" jsonschema:"the k8s namespace, e.g. enterprise-ecos24"`
+	Resource  string `json:"resource" jsonschema:"the k8s resource, e.g. pods or pods/log"`
+	Verb      string `json:"verb" jsonschema:"the k8s verb, e.g. get, list, watch"`
+	Purpose   string `json:"purpose" jsonschema:"why the agent needs this access (required)"`
+}
+
 type getAccessIn struct {
 	Upstream string `json:"upstream" jsonschema:"the upstream name to query"`
 }
@@ -115,6 +123,9 @@ func NewHandler(deps Deps) (http.Handler, error) {
 	sdkmcp.AddTool(sdkServer,
 		&sdkmcp.Tool{Name: "request_access", Description: "Request access to an OPERATION (tier 2) on an already-approved host: declare method, path/query templates with {name:type} placeholders, the typed variables, the concrete values you intend to use, and a purpose. A malformed template errors. Returns granted|pending|denied; on pending, poll get_access (non-blocking)."},
 		srv.handleRequestAccess)
+	sdkmcp.AddTool(sdkServer,
+		&sdkmcp.Tool{Name: "request_k8s_access", Description: "Request access to a k8s OPERATION on a registered cluster: declare the namespace, resource (e.g. pods or pods/log), and verb (get/list/watch/...). k8s clusters are pre-credentialed — do NOT call request_host_access for them. Returns granted|pending|denied; on pending, poll get_access. Then call get_kubeconfig and use kubectl."},
+		srv.handleRequestK8sAccess)
 	sdkmcp.AddTool(sdkServer,
 		&sdkmcp.Tool{Name: "get_access", Description: "Report your current access status and base path for an upstream."},
 		srv.handleGetAccess)
@@ -245,6 +256,27 @@ func (s *server) handleRequestAccess(ctx context.Context, req *sdkmcp.CallToolRe
 	})
 	if err != nil {
 		// A malformed template (or unwired queue) is a tool error, not a transport error.
+		return toolError(err.Error()), mcpsvc.AccessResult{}, nil
+	}
+	return nil, res, nil
+}
+
+func (s *server) handleRequestK8sAccess(ctx context.Context, req *sdkmcp.CallToolRequest, in requestK8sAccessIn) (*sdkmcp.CallToolResult, mcpsvc.AccessResult, error) {
+	id, err := s.agentFor(req)
+	if err != nil {
+		return nil, mcpsvc.AccessResult{}, err
+	}
+	if strings.TrimSpace(in.Purpose) == "" {
+		return toolError("purpose is required"), mcpsvc.AccessResult{}, nil
+	}
+	if strings.TrimSpace(in.Cluster) == "" {
+		return toolError("cluster is required"), mcpsvc.AccessResult{}, nil
+	}
+	if s.locked() {
+		return toolError(lockedMsg), mcpsvc.AccessResult{}, nil
+	}
+	res, err := s.deps.Svc.RequestK8sAccess(id.agentID, in.Cluster, in.Namespace, in.Resource, in.Verb, in.Purpose)
+	if err != nil {
 		return toolError(err.Error()), mcpsvc.AccessResult{}, nil
 	}
 	return nil, res, nil

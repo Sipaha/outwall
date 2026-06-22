@@ -231,3 +231,69 @@ func TestK8sClusterDiscoveryAndKubeconfig(t *testing.T) {
 	_, err = svc.Kubeconfig("plain", token)
 	require.Error(t, err)
 }
+
+func TestRequestK8sAccessEnqueuesK8sApproval(t *testing.T) {
+	svc, ag, up, _, q := buildWithQueue(t)
+	a, _, _ := ag.Register("claude")
+	cl, err := up.CreateKind("prod-cluster", "https://api.k8s:6443", upstream.KindK8s,
+		upstream.AuthConfig{Type: "none", K8sAuth: "token", Token: "cluster-secret"})
+	require.NoError(t, err)
+
+	res, err := svc.RequestK8sAccess(a.ID, "prod-cluster", "enterprise-ecos24", "pods/log", "get", "read ecos-model logs")
+	require.NoError(t, err)
+	require.Equal(t, "pending", res.Status)
+	require.Equal(t, "/prod-cluster", res.BasePath)
+
+	p := waitPending(t, q)
+	require.Equal(t, approval.KindK8sAccess, p.Kind)
+	require.Equal(t, cl.ID, p.UpstreamID)
+	require.Equal(t, "prod-cluster", p.Host)
+	require.Equal(t, "enterprise-ecos24", p.Namespace)
+	require.Equal(t, "pods/log", p.Resource)
+	require.Equal(t, "get", p.Verb)
+	require.Equal(t, "read ecos-model logs", p.Purpose)
+}
+
+func TestRequestK8sAccessRejectsNonK8s(t *testing.T) {
+	svc, ag, up, _, _ := buildWithQueue(t)
+	a, _, _ := ag.Register("claude")
+	_, err := up.Create("api.github.com", "https://api.github.com", upstream.AuthConfig{Type: "none"})
+	require.NoError(t, err)
+
+	_, err = svc.RequestK8sAccess(a.ID, "api.github.com", "ns", "pods", "get", "x")
+	require.Error(t, err)
+}
+
+func TestRequestHostAccessOnK8sReturnsGuidanceNoCard(t *testing.T) {
+	svc, ag, up, _, q := buildWithQueue(t)
+	a, _, _ := ag.Register("claude")
+	_, err := up.CreateKind("prod-cluster", "https://api.k8s:6443", upstream.KindK8s,
+		upstream.AuthConfig{Type: "none", K8sAuth: "token", Token: "cluster-secret"})
+	require.NoError(t, err)
+
+	res, err := svc.RequestHostAccess(a.ID, "prod-cluster", "read logs")
+	require.NoError(t, err)
+	require.Equal(t, "granted", res.Status)
+	require.Contains(t, res.Memo, "request_k8s_access")
+
+	// No host card is parked for a k8s cluster.
+	require.Empty(t, q.List())
+	// No access-request row was logged either (nothing for the operator to act on).
+	reqs, err := svc.access.List()
+	require.NoError(t, err)
+	require.Empty(t, reqs)
+}
+
+func TestRequestHostAccessOnCredentialedHTTPHostReturnsGuidanceNoCard(t *testing.T) {
+	svc, ag, up, _, q := buildWithQueue(t)
+	a, _, _ := ag.Register("claude")
+	_, err := up.Create("api.github.com", "https://api.github.com",
+		upstream.AuthConfig{Type: "static", Header: "Authorization", Token: "tok"})
+	require.NoError(t, err)
+
+	res, err := svc.RequestHostAccess(a.ID, "api.github.com", "triage")
+	require.NoError(t, err)
+	require.Equal(t, "granted", res.Status)
+	require.Contains(t, res.Memo, "request_access")
+	require.Empty(t, q.List())
+}

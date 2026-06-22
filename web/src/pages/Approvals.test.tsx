@@ -126,6 +126,42 @@ describe('<Approvals>', () => {
     )
   })
 
+  // --- MCP k8s-access card (ADR-0025) ---
+
+  it('renders a k8s-access card (tuple + purpose, no credential form) and approves', async () => {
+    vi.spyOn(api, 'listApprovals').mockResolvedValue([
+      {
+        id: 'k1',
+        agent_id: 'agent-claude',
+        upstream_id: 'up-cluster',
+        method: '',
+        path: '',
+        purpose: 'read ecos-model logs',
+        created_at: '2026-06-22T10:00:00Z',
+        kind: 'k8s-access',
+        host: 'prod-cluster',
+        namespace: 'enterprise-ecos24',
+        resource: 'pods/log',
+        verb: 'get',
+      },
+    ])
+    vi.spyOn(api, 'listAccessRequests').mockResolvedValue([])
+    const resolveSpy = vi.spyOn(api, 'resolveApproval').mockResolvedValue({ ok: true })
+
+    render(<Approvals />)
+
+    // The cluster + tuple + purpose are shown.
+    expect(await screen.findByText('prod-cluster')).toBeInTheDocument()
+    expect(screen.getByText('enterprise-ecos24')).toBeInTheDocument()
+    expect(screen.getByText('pods/log')).toBeInTheDocument()
+    expect(screen.getByText('read ecos-model logs')).toBeInTheDocument()
+    // No credential form on a k8s card.
+    expect(screen.queryByLabelText('Header')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    await waitFor(() => expect(resolveSpy).toHaveBeenCalledWith('k1', true))
+  })
+
   // --- H3: MCP control-plane operation card ---
 
   it('renders an operation card with the example URL, trust-any checkboxes and a broad-placeholder warning', async () => {

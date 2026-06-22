@@ -35,3 +35,27 @@ func TestAccessRequestLifecycle(t *testing.T) {
 	p, _ = reg.Pending()
 	require.Empty(t, p) // no longer pending
 }
+
+func TestGrantLatest(t *testing.T) {
+	reg := newReg(t)
+	_, err := reg.Create("a1", "u1", "first")
+	require.NoError(t, err)
+	r2, err := reg.Create("a1", "u1", "second")
+	require.NoError(t, err)
+
+	ok, err := reg.GrantLatest("a1", "u1")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	// The latest pending row is now granted; the older one stays pending.
+	latest, found, err := reg.Latest("a1", "u1")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, r2.ID, latest.ID)
+	require.Equal(t, StatusGranted, latest.Status)
+
+	// No pending row for a different (agent, upstream) → no-op.
+	ok, err = reg.GrantLatest("a1", "other")
+	require.NoError(t, err)
+	require.False(t, ok)
+}
