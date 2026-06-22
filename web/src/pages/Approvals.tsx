@@ -274,6 +274,11 @@ function OperationCard({ approval, onResolve }: CardProps) {
  *  k8s clusters are already credentialed; approve creates an agent-scoped allow rule. */
 function K8sAccessCard({ approval, onResolve }: CardProps) {
   const p = approval
+  // One card can carry several (namespace, resource, verb) tuples; fall back to the single fields.
+  const grants =
+    p.k8s_grants && p.k8s_grants.length > 0
+      ? p.k8s_grants
+      : [{ namespace: p.namespace ?? '', resource: p.resource ?? '', verb: p.verb ?? '' }]
   return (
     <div className={cardClass}>
       <div className="flex items-start justify-between gap-2">
@@ -282,10 +287,14 @@ function K8sAccessCard({ approval, onResolve }: CardProps) {
             k8s access · agent <span className="font-mono">{shortId(p.agent_id)}</span> ·{' '}
             <span className="font-mono">{p.host}</span>
           </div>
-          <div className="font-mono text-xs">
-            <span className="text-muted-foreground">{p.namespace || '*'}</span>
-            <span className="text-muted-foreground">{' / '}</span>
-            <span>{p.resource || '*'}</span> <StatusBadge status={p.verb || '*'} />
+          <div className="space-y-0.5">
+            {grants.map((g, i) => (
+              <div key={i} className="font-mono text-xs">
+                <span className="text-muted-foreground">{g.namespace || '*'}</span>
+                <span className="text-muted-foreground">{' / '}</span>
+                <span>{g.resource || '*'}</span> <StatusBadge status={g.verb || '*'} />
+              </div>
+            ))}
           </div>
           {p.purpose && <div className="text-xs text-muted-foreground">{p.purpose}</div>}
         </div>

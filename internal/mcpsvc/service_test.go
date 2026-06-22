@@ -240,7 +240,7 @@ func TestRequestK8sAccessEnqueuesK8sApproval(t *testing.T) {
 		upstream.AuthConfig{Type: "none", K8sAuth: "token", Token: "cluster-secret"})
 	require.NoError(t, err)
 
-	res, err := svc.RequestK8sAccess(a.ID, "prod-cluster", "enterprise-ecos24", "pods/log", "get", "read ecos-model logs")
+	res, err := svc.RequestK8sAccess(a.ID, "prod-cluster", "enterprise-ecos24", []K8sAccessSpec{{Resource: "pods/log", Verbs: []string{"get"}}}, "read ecos-model logs")
 	require.NoError(t, err)
 	require.Equal(t, "pending", res.Status)
 	require.Equal(t, "/prod-cluster", res.BasePath)
@@ -253,6 +253,63 @@ func TestRequestK8sAccessEnqueuesK8sApproval(t *testing.T) {
 	require.Equal(t, "pods/log", p.Resource)
 	require.Equal(t, "get", p.Verb)
 	require.Equal(t, "read ecos-model logs", p.Purpose)
+	require.Equal(t, []approval.K8sGrant{{Namespace: "enterprise-ecos24", Resource: "pods/log", Verb: "get"}}, p.K8sGrants)
+}
+
+// TestRequestK8sAccessMultiGrant: one call with several resources/verbs raises ONE card carrying all
+// the tuples; a re-request after some are granted only asks for what is still missing.
+func TestRequestK8sAccessMultiGrant(t *testing.T) {
+	svc, ag, up, pol, q := buildWithQueue(t)
+	a, _, _ := ag.Register("claude")
+	cl, err := up.CreateKind("prod-cluster", "https://api.k8s:6443", upstream.KindK8s,
+		upstream.AuthConfig{Type: "none", K8sAuth: "token", Token: "secret"})
+	require.NoError(t, err)
+
+	res, err := svc.RequestK8sAccess(a.ID, "prod-cluster", "enterprise-ecos24", []K8sAccessSpec{
+		{Resource: "pods", Verbs: []string{"get", "list"}},
+		{Resource: "pods/log", Verbs: []string{"get"}},
+	}, "read ecos-model logs")
+	require.NoError(t, err)
+	require.Equal(t, "pending", res.Status)
+
+	p := waitPending(t, q)
+	require.Equal(t, approval.KindK8sAccess, p.Kind)
+	require.ElementsMatch(t, []approval.K8sGrant{
+		{Namespace: "enterprise-ecos24", Resource: "pods", Verb: "get"},
+		{Namespace: "enterprise-ecos24", Resource: "pods", Verb: "list"},
+		{Namespace: "enterprise-ecos24", Resource: "pods/log", Verb: "get"},
+	}, p.K8sGrants)
+	require.Len(t, q.List(), 1, "one call → one card for all tuples")
+
+	// Grant pods/get + pods/list (leave pods/log/get ungranted), then re-request the same set:
+	// only the still-missing tuple should be asked for.
+	for _, v := range []string{"get", "list"} {
+		_, err = pol.Create(policy.Rule{SubjectAgentID: a.ID, UpstreamID: cl.ID, Outcome: policy.Allow,
+			Namespace: "enterprise-ecos24", Resource: "pods", Verb: v})
+		require.NoError(t, err)
+	}
+	res2, err := svc.RequestK8sAccess(a.ID, "prod-cluster", "enterprise-ecos24", []K8sAccessSpec{
+		{Resource: "pods", Verbs: []string{"get", "list"}},
+		{Resource: "pods/log", Verbs: []string{"get"}},
+	}, "read ecos-model logs")
+	require.NoError(t, err)
+	require.Equal(t, "pending", res2.Status)
+	// The new card (enqueued asynchronously) carries ONLY pods/log/get — pods get+list are already
+	// covered by rules, so they are not re-requested.
+	var newCard approval.Pending
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, pp := range q.List() {
+			if len(pp.K8sGrants) == 1 {
+				newCard = pp
+			}
+		}
+		if len(newCard.K8sGrants) == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	require.Equal(t, []approval.K8sGrant{{Namespace: "enterprise-ecos24", Resource: "pods/log", Verb: "get"}}, newCard.K8sGrants)
 }
 
 func TestRequestK8sAccessDedupesPending(t *testing.T) {
@@ -262,12 +319,12 @@ func TestRequestK8sAccessDedupesPending(t *testing.T) {
 		upstream.AuthConfig{Type: "none", K8sAuth: "token", Token: "secret"})
 	require.NoError(t, err)
 
-	_, err = svc.RequestK8sAccess(a.ID, "prod-cluster", "enterprise-ecos24", "pods/log", "get", "logs")
+	_, err = svc.RequestK8sAccess(a.ID, "prod-cluster", "enterprise-ecos24", []K8sAccessSpec{{Resource: "pods/log", Verbs: []string{"get"}}}, "logs")
 	require.NoError(t, err)
 	waitPending(t, q) // the first request is parked
 
 	// A second identical request must NOT raise a second card or log a second intent row.
-	res, err := svc.RequestK8sAccess(a.ID, "prod-cluster", "enterprise-ecos24", "pods/log", "get", "logs")
+	res, err := svc.RequestK8sAccess(a.ID, "prod-cluster", "enterprise-ecos24", []K8sAccessSpec{{Resource: "pods/log", Verbs: []string{"get"}}}, "logs")
 	require.NoError(t, err)
 	require.Equal(t, "pending", res.Status)
 
@@ -288,7 +345,7 @@ func TestGetAccessLongPollReturnsOnGrant(t *testing.T) {
 		upstream.AuthConfig{Type: "none", K8sAuth: "token", Token: "secret"})
 	require.NoError(t, err)
 
-	_, err = svc.RequestK8sAccess(a.ID, "prod-cluster", "enterprise-ecos24", "pods/log", "get", "logs")
+	_, err = svc.RequestK8sAccess(a.ID, "prod-cluster", "enterprise-ecos24", []K8sAccessSpec{{Resource: "pods/log", Verbs: []string{"get"}}}, "logs")
 	require.NoError(t, err)
 	waitPending(t, q)
 
@@ -313,7 +370,7 @@ func TestRequestK8sAccessRejectsNonK8s(t *testing.T) {
 	_, err := up.Create("api.github.com", "https://api.github.com", upstream.AuthConfig{Type: "none"})
 	require.NoError(t, err)
 
-	_, err = svc.RequestK8sAccess(a.ID, "api.github.com", "ns", "pods", "get", "x")
+	_, err = svc.RequestK8sAccess(a.ID, "api.github.com", "ns", []K8sAccessSpec{{Resource: "pods", Verbs: []string{"get"}}}, "x")
 	require.Error(t, err)
 }
 

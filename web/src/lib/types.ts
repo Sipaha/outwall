@@ -136,6 +136,7 @@ export interface Approval {
   namespace?: string // k8s tuple (empty for http approvals)
   resource?: string
   verb?: string
+  k8s_grants?: { namespace: string; resource: string; verb: string }[] // k8s-access card: all requested tuples
   request_body?: string // agent-sent patch/apply body, credentials masked
   // MCP control-plane context (empty for data-plane / k8s approvals).
   kind?: string // "host-access" | "operation" | "k8s-access" | "" (data-plane / k8s)

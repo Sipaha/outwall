@@ -74,12 +74,17 @@ type requestAccessIn struct {
 	Purpose       string                  `json:"purpose" jsonschema:"why the agent needs this operation (required)"`
 }
 
+// k8sAccessGrant is one resource and the verbs the agent needs on it.
+type k8sAccessGrant struct {
+	Resource string   `json:"resource" jsonschema:"the k8s resource, e.g. pods or pods/log"`
+	Verbs    []string `json:"verbs" jsonschema:"the verbs needed on this resource, e.g. [get, list, watch]"`
+}
+
 type requestK8sAccessIn struct {
-	Cluster   string `json:"cluster" jsonschema:"the registered k8s cluster name"`
-	Namespace string `json:"namespace" jsonschema:"the k8s namespace, e.g. enterprise-ecos24"`
-	Resource  string `json:"resource" jsonschema:"the k8s resource, e.g. pods or pods/log"`
-	Verb      string `json:"verb" jsonschema:"the k8s verb, e.g. get, list, watch"`
-	Purpose   string `json:"purpose" jsonschema:"why the agent needs this access (required)"`
+	Cluster   string           `json:"cluster" jsonschema:"the registered k8s cluster name"`
+	Namespace string           `json:"namespace" jsonschema:"the k8s namespace, e.g. enterprise-ecos24"`
+	Grants    []k8sAccessGrant `json:"grants" jsonschema:"the resources and verbs to request, e.g. [{resource: pods, verbs: [get, list]}, {resource: pods/log, verbs: [get]}]. To read a pod's logs with kubectl logs, request pods get+list AND pods/log get."`
+	Purpose   string           `json:"purpose" jsonschema:"why the agent needs this access (required)"`
 }
 
 type getAccessIn struct {
@@ -124,7 +129,7 @@ func NewHandler(deps Deps) (http.Handler, error) {
 		&sdkmcp.Tool{Name: "request_access", Description: "Request access to an OPERATION (tier 2) on an already-approved host: declare method, path/query templates with {name:type} placeholders, the typed variables, the concrete values you intend to use, and a purpose. A malformed template errors. Returns granted|pending|denied; on pending, poll get_access (non-blocking)."},
 		srv.handleRequestAccess)
 	sdkmcp.AddTool(sdkServer,
-		&sdkmcp.Tool{Name: "request_k8s_access", Description: "Request access to a k8s OPERATION on a registered cluster: declare the namespace, resource (e.g. pods or pods/log), and verb (get/list/watch/...). k8s clusters are pre-credentialed — do NOT call request_host_access for them. Returns granted|pending|denied; on pending, poll get_access. Then call get_kubeconfig and use kubectl."},
+		&sdkmcp.Tool{Name: "request_k8s_access", Description: "Request k8s access on a registered cluster for one namespace: pass `grants` = a list of {resource, verbs} (e.g. [{resource:pods,verbs:[get,list]},{resource:pods/log,verbs:[get]}]) — one call, one approval card. To read a pod's logs with `kubectl logs` you need pods get+list AND pods/log get. k8s clusters are pre-credentialed — do NOT call request_host_access for them. Returns granted|pending|denied; on pending call get_access (it waits). Then call get_kubeconfig and use kubectl."},
 		srv.handleRequestK8sAccess)
 	sdkmcp.AddTool(sdkServer,
 		&sdkmcp.Tool{Name: "get_access", Description: "Report your current access status and base path for an upstream. If a decision is still pending this call BLOCKS until the operator decides (up to ~25s) — do NOT poll in a tight loop; just call it again if it returns pending."},
@@ -272,10 +277,17 @@ func (s *server) handleRequestK8sAccess(ctx context.Context, req *sdkmcp.CallToo
 	if strings.TrimSpace(in.Cluster) == "" {
 		return toolError("cluster is required"), mcpsvc.AccessResult{}, nil
 	}
+	if len(in.Grants) == 0 {
+		return toolError("at least one grant (resource + verbs) is required"), mcpsvc.AccessResult{}, nil
+	}
 	if s.locked() {
 		return toolError(lockedMsg), mcpsvc.AccessResult{}, nil
 	}
-	res, err := s.deps.Svc.RequestK8sAccess(id.agentID, in.Cluster, in.Namespace, in.Resource, in.Verb, in.Purpose)
+	specs := make([]mcpsvc.K8sAccessSpec, 0, len(in.Grants))
+	for _, g := range in.Grants {
+		specs = append(specs, mcpsvc.K8sAccessSpec{Resource: g.Resource, Verbs: g.Verbs})
+	}
+	res, err := s.deps.Svc.RequestK8sAccess(id.agentID, in.Cluster, in.Namespace, specs, in.Purpose)
 	if err != nil {
 		return toolError(err.Error()), mcpsvc.AccessResult{}, nil
 	}

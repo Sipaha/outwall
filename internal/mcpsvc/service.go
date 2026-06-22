@@ -381,12 +381,20 @@ func hasCredential(up *upstream.Upstream) bool {
 	return up.AuthType != "" && up.AuthType != "none"
 }
 
-// RequestK8sAccess is the MCP k8s-access channel: an agent declares the (namespace, resource, verb)
-// it needs on a registered k8s cluster. It validates the upstream is a k8s cluster, logs the intent,
-// and enqueues a KindK8sAccess approval carrying the tuple. The MCP call does not block — on
-// "pending" the agent polls get_access. On approve the resolve path creates an agent-scoped allow
-// k8s rule for the tuple (see ADR-0025). k8s clusters are pre-credentialed, so there is no host tier.
-func (s *Service) RequestK8sAccess(agentID, cluster, namespace, resource, verb, purpose string) (AccessResult, error) {
+// K8sAccessSpec is one resource plus the verbs the agent wants on it, as declared in a single
+// request_k8s_access call (e.g. {Resource: "pods", Verbs: ["get","list"]}).
+type K8sAccessSpec struct {
+	Resource string
+	Verbs    []string
+}
+
+// RequestK8sAccess is the MCP k8s-access channel: an agent declares, for one namespace, the
+// resources and the verbs it needs on each. It validates the upstream is a k8s cluster, drops tuples
+// already covered by an existing allow rule, and — if anything remains — enqueues ONE KindK8sAccess
+// approval carrying all the (namespace, resource, verb) tuples. The MCP call does not block; the
+// agent calls get_access (which waits). On approve the resolve path creates an agent-scoped allow
+// rule per tuple (ADR-0025/0029). k8s clusters are pre-credentialed, so there is no host tier.
+func (s *Service) RequestK8sAccess(agentID, cluster, namespace string, specs []K8sAccessSpec, purpose string) (AccessResult, error) {
 	up, err := s.resolveUpstream(cluster)
 	if err == upstream.ErrNotFound {
 		return AccessResult{Status: "denied", Memo: "no such cluster — ask the operator to register it"}, nil
@@ -397,34 +405,111 @@ func (s *Service) RequestK8sAccess(agentID, cluster, namespace, resource, verb, 
 	if up.Kind != upstream.KindK8s {
 		return AccessResult{}, fmt.Errorf("%q is not a k8s cluster — use request_host_access / request_access", cluster)
 	}
-	// An allow/approval k8s rule already covering this agent → granted, no card.
-	st, allowing, err := s.statusFor(agentID, up.ID)
+	namespace = strings.TrimSpace(namespace)
+
+	// Flatten specs into unique (namespace, resource, verb) tuples.
+	want := make([]approval.K8sGrant, 0)
+	seen := map[string]bool{}
+	for _, sp := range specs {
+		res := strings.TrimSpace(sp.Resource)
+		for _, v := range sp.Verbs {
+			v = strings.TrimSpace(v)
+			if res == "" || v == "" {
+				continue
+			}
+			g := approval.K8sGrant{Namespace: namespace, Resource: res, Verb: v}
+			if k := grantKey(g); !seen[k] {
+				seen[k] = true
+				want = append(want, g)
+			}
+		}
+	}
+	if len(want) == 0 {
+		return AccessResult{}, fmt.Errorf("no (resource, verb) requested")
+	}
+
+	// Drop tuples an existing allow rule already covers, so we only ask for what is missing.
+	rules, err := s.policy.ForUpstream(up.ID)
 	if err != nil {
-		return AccessResult{}, err
+		return AccessResult{}, fmt.Errorf("load rules: %w", err)
 	}
-	if res := toAccessResult(st, up.Name, allowing); res.Status == "granted" {
-		return res, nil
+	missing := make([]approval.K8sGrant, 0, len(want))
+	for _, g := range want {
+		if !k8sRuleCovers(rules, agentID, g) {
+			missing = append(missing, g)
+		}
 	}
-	// Dedupe: an identical k8s request already awaiting a decision → don't raise a second card.
+	if len(missing) == 0 {
+		return AccessResult{Status: "granted", BasePath: "/" + up.Name,
+			Memo: "already granted"}, nil
+	}
+
+	// Dedupe: an identical pending request (same grant set) → don't raise a second card.
 	if s.pendingExists(func(p approval.Pending) bool {
 		return p.Kind == approval.KindK8sAccess && p.AgentID == agentID && p.UpstreamID == up.ID &&
-			p.Namespace == namespace && p.Resource == resource && p.Verb == verb
+			sameGrants(p.K8sGrants, missing)
 	}) {
 		return AccessResult{Status: "pending", BasePath: "/" + up.Name,
 			Memo: "k8s access already submitted — call get_access (it waits for the decision)"}, nil
 	}
+
 	// Log the intent so a deny (with a reason) has a row to mark, surfaced via get_access.
 	if _, err := s.access.Create(agentID, up.ID, purpose); err != nil {
 		return AccessResult{}, fmt.Errorf("log access request: %w", err)
 	}
 	if err := s.enqueue(agentID, approval.Pending{
 		Kind: approval.KindK8sAccess, AgentID: agentID, UpstreamID: up.ID, Host: up.Name,
-		Namespace: namespace, Resource: resource, Verb: verb, Purpose: purpose,
+		K8sGrants: missing, Purpose: purpose,
+		// First tuple in the single fields for any legacy display/notification path.
+		Namespace: missing[0].Namespace, Resource: missing[0].Resource, Verb: missing[0].Verb,
 	}); err != nil {
 		return AccessResult{}, err
 	}
 	return AccessResult{Status: "pending", BasePath: "/" + up.Name,
 		Memo: "k8s access submitted for approval — call get_access (it waits for the decision)"}, nil
+}
+
+// grantKey is the comparison key for a k8s grant tuple (used for dedup / set equality).
+func grantKey(g approval.K8sGrant) string {
+	return g.Namespace + "\x00" + g.Resource + "\x00" + g.Verb
+}
+
+// k8sRuleCovers reports whether an existing allow k8s rule (for this agent or any) exactly matches
+// the tuple. Exact match (not glob) — a broader operator-authored rule simply means we re-ask, which
+// is safe; the approve path skips a tuple whose rule already exists.
+func k8sRuleCovers(rules []*policy.Rule, agentID string, g approval.K8sGrant) bool {
+	for _, r := range rules {
+		if r.OpPathTemplate != "" || r.Outcome != policy.Allow {
+			continue // http rule, or not an allow
+		}
+		if r.SubjectAgentID != "" && r.SubjectAgentID != agentID {
+			continue
+		}
+		if r.Namespace == g.Namespace && r.Resource == g.Resource && r.Verb == g.Verb {
+			return true
+		}
+	}
+	return false
+}
+
+// sameGrants reports whether two grant slices hold the same set of tuples (order-independent).
+func sameGrants(a, b []approval.K8sGrant) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := make(map[string]int, len(a))
+	for _, g := range a {
+		m[grantKey(g)]++
+	}
+	for _, g := range b {
+		m[grantKey(g)]--
+	}
+	for _, v := range m {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // pendingExists reports whether the approval queue already holds a Pending matching `match`. Used to

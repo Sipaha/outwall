@@ -33,6 +33,15 @@ type Variable struct {
 	Type string `json:"type"` // "text" | "date"
 }
 
+// K8sGrant is one (namespace, resource, verb) tuple requested in a KindK8sAccess approval. A single
+// request_k8s_access call can carry several (e.g. pods/get, pods/list, pods/log/get) so one card
+// covers everything the agent needs; on approve each becomes an allow rule (see ADR-0029).
+type K8sGrant struct {
+	Namespace string `json:"namespace"`
+	Resource  string `json:"resource"`
+	Verb      string `json:"verb"`
+}
+
 // Kinds of MCP control-plane approval (the discriminator the daemon resolve path switches on).
 // An empty Kind is a pre-H2 data-plane new-value / k8s approval, resolved by the queue alone.
 const (
@@ -83,6 +92,10 @@ type Pending struct {
 	Namespace string
 	Resource  string // "resource" or "resource/subresource"
 	Verb      string
+
+	// K8sGrants is the set of (namespace, resource, verb) tuples on a KindK8sAccess approval — one
+	// card can request several at once (ADR-0029). On approve each becomes an allow rule.
+	K8sGrants []K8sGrant
 
 	// HTTP operation fields (set for an http new-value approval; empty otherwise). RuleID is the
 	// matched operation rule; NewValues are the not-yet-allowed (variable, value) pairs the

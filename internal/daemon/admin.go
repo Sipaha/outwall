@@ -479,6 +479,9 @@ func (d *Daemon) hApprovalList(w http.ResponseWriter, _ *http.Request) {
 			m["kind"] = p.Kind
 			m["host"] = p.Host
 		}
+		if p.Kind == approval.KindK8sAccess && len(p.K8sGrants) > 0 {
+			m["k8s_grants"] = p.K8sGrants
+		}
 		if p.Kind == approval.KindOperation {
 			m["op_method"] = p.OpMethod
 			m["op_path_template"] = p.OpPathTemplate
@@ -592,25 +595,37 @@ func (d *Daemon) applyApprovalSideEffects(p approval.Pending, auth *upstream.Aut
 	}
 }
 
-// approveK8sAccess creates an agent-scoped allow k8s rule for the pending's (namespace, resource,
-// verb) tuple. The grant is scoped to the requesting agent (not the whole cluster) — see ADR-0025.
-// It is idempotent: an identical rule already present (same tuple, same agent) is left untouched.
+// approveK8sAccess creates an agent-scoped allow k8s rule for each (namespace, resource, verb) tuple
+// on the pending. Grants are scoped to the requesting agent (not the whole cluster) — see ADR-0025.
+// Idempotent: a tuple whose identical rule already exists (same agent) is skipped (ADR-0029).
 func (d *Daemon) approveK8sAccess(p approval.Pending) error {
 	rules, err := d.policy.ForUpstream(p.UpstreamID)
 	if err != nil {
 		return fmt.Errorf("load rules: %w", err)
 	}
-	for _, r := range rules {
-		if r.SubjectAgentID == p.AgentID && r.OpPathTemplate == "" &&
-			r.Namespace == p.Namespace && r.Resource == p.Resource && r.Verb == p.Verb {
-			return nil // already granted
+	exists := func(g approval.K8sGrant) bool {
+		for _, r := range rules {
+			if r.SubjectAgentID == p.AgentID && r.OpPathTemplate == "" &&
+				r.Namespace == g.Namespace && r.Resource == g.Resource && r.Verb == g.Verb {
+				return true
+			}
 		}
+		return false
 	}
-	if _, err := d.policy.Create(policy.Rule{
-		SubjectAgentID: p.AgentID, UpstreamID: p.UpstreamID, Outcome: policy.Allow,
-		Namespace: p.Namespace, Resource: p.Resource, Verb: p.Verb,
-	}); err != nil {
-		return fmt.Errorf("create k8s rule: %w", err)
+	grants := p.K8sGrants
+	if len(grants) == 0 { // legacy single-tuple pending
+		grants = []approval.K8sGrant{{Namespace: p.Namespace, Resource: p.Resource, Verb: p.Verb}}
+	}
+	for _, g := range grants {
+		if exists(g) {
+			continue
+		}
+		if _, err := d.policy.Create(policy.Rule{
+			SubjectAgentID: p.AgentID, UpstreamID: p.UpstreamID, Outcome: policy.Allow,
+			Namespace: g.Namespace, Resource: g.Resource, Verb: g.Verb,
+		}); err != nil {
+			return fmt.Errorf("create k8s rule %s/%s/%s: %w", g.Namespace, g.Resource, g.Verb, err)
+		}
 	}
 	return nil
 }
