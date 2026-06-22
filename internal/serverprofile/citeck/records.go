@@ -3,7 +3,19 @@
 // permitted to name "citeck" (see ADR-0034); the core stays platform-agnostic.
 package citeck
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+
+	"github.com/Sipaha/outwall/internal/serverprofile"
+)
+
+// Scope sentinels (profile-internal; opaque to the core). A concrete workspace id is any other
+// string.
+const (
+	scopeAll     = "\x00all"     // request spans ALL workspaces (read with no workspaces filter)
+	scopeUnknown = "\x00unknown" // workspace not derivable from the body (update / delete / get-atts)
+)
 
 // refSource splits an EntityRef "appName/sourceId@localId" into its source part (keeping the
 // optional "appName/" prefix, which operator globs match against) and its localId. With no '@' the
@@ -14,4 +26,120 @@ func refSource(ref string) (source, localID string) {
 		return "", ref
 	}
 	return ref[:at], ref[at+1:]
+}
+
+// recordsOp returns the Records operation ("query"/"mutate"/"delete") for a path, matching both the
+// direct (/api/records/...) and gateway-prefixed (/gateway/.../api/records/...) forms.
+func recordsOp(path string) (string, bool) {
+	for _, op := range []string{"query", "mutate", "delete"} {
+		if strings.HasSuffix(path, "/api/records/"+op) {
+			return op, true
+		}
+	}
+	return "", false
+}
+
+func classify(r serverprofile.Request) (serverprofile.Operation, bool, error) {
+	if r.Method != "POST" {
+		return serverprofile.Operation{}, false, nil
+	}
+	op, ok := recordsOp(r.Path)
+	if !ok {
+		return serverprofile.Operation{}, false, nil
+	}
+	out := serverprofile.Operation{Method: r.Method, Path: r.Path}
+	switch op {
+	case "query":
+		out.Kind = "read"
+		var body struct {
+			Query struct {
+				SourceID   string   `json:"sourceId"`
+				EcosType   string   `json:"ecosType"`
+				Workspaces []string `json:"workspaces"`
+			} `json:"query"`
+			Records []string `json:"records"` // get-atts mode
+		}
+		if err := json.Unmarshal(nonNil(r.Body), &body); err != nil {
+			return serverprofile.Operation{}, false, nil // malformed → not handled (never grants)
+		}
+		if body.Query.SourceID != "" || body.Query.EcosType != "" {
+			scopes := workspaceScopes(body.Query.Workspaces)
+			for _, src := range nonEmpty(body.Query.SourceID, body.Query.EcosType) {
+				for _, ws := range scopes {
+					out.Resources = append(out.Resources, serverprofile.ResourceScope{Resource: src, Scope: ws})
+				}
+			}
+		} else {
+			// get-atts: read specific records by ref; workspace not derivable.
+			for _, ref := range body.Records {
+				src, _ := refSource(ref)
+				out.Resources = append(out.Resources, serverprofile.ResourceScope{Resource: src, Scope: scopeUnknown})
+			}
+		}
+	case "mutate":
+		out.Kind = "write"
+		var body struct {
+			Records []struct {
+				ID         string         `json:"id"`
+				Attributes map[string]any `json:"attributes"`
+			} `json:"records"`
+		}
+		if err := json.Unmarshal(nonNil(r.Body), &body); err != nil {
+			return serverprofile.Operation{}, false, nil
+		}
+		for _, rec := range body.Records {
+			src, localID := refSource(rec.ID)
+			scope := scopeUnknown
+			if localID == "" { // create: workspace may be set explicitly
+				if ws, _ := rec.Attributes["_workspace"].(string); ws != "" {
+					_, wsLocal := refSource(ws) // _workspace may be a ref; take its localId
+					if wsLocal != "" {
+						scope = wsLocal
+					} else {
+						scope = ws
+					}
+				}
+			}
+			out.Resources = append(out.Resources, serverprofile.ResourceScope{Resource: src, Scope: scope})
+		}
+	case "delete":
+		out.Kind = "write"
+		var body struct {
+			Records []string `json:"records"`
+		}
+		if err := json.Unmarshal(nonNil(r.Body), &body); err != nil {
+			return serverprofile.Operation{}, false, nil
+		}
+		for _, ref := range body.Records {
+			src, _ := refSource(ref)
+			out.Resources = append(out.Resources, serverprofile.ResourceScope{Resource: src, Scope: scopeUnknown})
+		}
+	}
+	return out, true, nil
+}
+
+// workspaceScopes maps a query's workspaces filter to scope tokens: empty → [scopeAll], else the
+// concrete ids.
+func workspaceScopes(ws []string) []string {
+	if len(ws) == 0 {
+		return []string{scopeAll}
+	}
+	return ws
+}
+
+func nonEmpty(xs ...string) []string {
+	out := make([]string, 0, len(xs))
+	for _, x := range xs {
+		if x != "" {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func nonNil(b []byte) []byte {
+	if b == nil {
+		return []byte("{}")
+	}
+	return b
 }
