@@ -100,7 +100,7 @@ export function Audit() {
         open={detail !== null}
         title="Audit entry"
         onClose={() => setDetail(null)}
-        width="lg"
+        width="xl"
       >
         {detail && (
           <>

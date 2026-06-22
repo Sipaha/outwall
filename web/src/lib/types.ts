@@ -53,6 +53,9 @@ export interface Upstream {
   // k8s clusters: the cluster auth method and whether TLS verification is disabled (insecure).
   k8s_auth?: string // token | client-cert | exec
   k8s_insecure?: boolean // true → registered with insecure-skip-tls-verify (drives the red badge)
+  // http upstreams: the current non-secret auth settings (secrets cleared) so the replace-credential
+  // form can pre-fill. Absent for k8s clusters.
+  auth?: UpstreamAuthConfig
 }
 
 /** Cluster auth config sent on POST /api/upstreams when creating a kind=k8s cluster. */

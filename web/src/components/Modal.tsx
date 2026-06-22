@@ -5,8 +5,8 @@ interface ModalProps {
   open: boolean
   title: string
   onClose: () => void
-  /** sm = 360px, md = 480px (default), lg = 640px. All capped at 90vw. */
-  width?: 'sm' | 'md' | 'lg'
+  /** sm = 360px, md = 480px (default), lg = 640px, xl = 900px. All capped at 90vw. */
+  width?: 'sm' | 'md' | 'lg' | 'xl'
   children: React.ReactNode
   footer?: React.ReactNode
   /** When set, the body + footer are wrapped in a <form> so Enter submits. */
@@ -25,7 +25,14 @@ export function Modal({ open, title, onClose, width = 'md', children, footer, on
     else if (!open && dlg.open) dlg.close()
   }, [open])
 
-  const widthClass = width === 'sm' ? 'w-[360px]' : width === 'lg' ? 'w-[640px]' : 'w-[480px]'
+  const widthClass =
+    width === 'sm'
+      ? 'w-[360px]'
+      : width === 'lg'
+        ? 'w-[640px]'
+        : width === 'xl'
+          ? 'w-[900px]'
+          : 'w-[480px]'
 
   const body = (
     <>

@@ -402,7 +402,10 @@ export function Upstreams() {
 
   function openCred(u: Upstream) {
     setCredFor(u)
-    setCredAuth({ type: 'static' })
+    // Pre-fill with the host's current non-secret auth settings (secrets come back blank); editing
+    // one field and leaving secrets blank keeps the stored secret + OIDC tokens (server merges). A
+    // host without a credential yet starts on 'static' (a sensible default to set one).
+    setCredAuth(u.auth && u.auth.type && u.auth.type !== 'none' ? { ...u.auth } : { type: 'static' })
   }
 
   async function startLogin(u: Upstream) {
@@ -587,6 +590,12 @@ export function Upstreams() {
         <p className="text-[11px] text-muted-foreground">
           The credential is encrypted in the vault and injected server-side — the agent never sees it.
         </p>
+        {credFor !== null && hasCredential(credFor) && (
+          <p className="text-[11px] text-muted-foreground">
+            Current settings are pre-filled. Leave secret fields blank to keep the stored value (and
+            any OIDC login).
+          </p>
+        )}
         {/* Render the fields only while the modal is open so the closed dialog leaks no inputs. */}
         {credFor !== null && <AuthFields auth={credAuth} setAuth={setCredAuth} />}
       </Modal>

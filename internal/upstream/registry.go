@@ -69,6 +69,23 @@ type AuthConfig struct {
 	K8sInsecureSkipVerify bool `json:"k8s_insecure_skip_verify,omitempty"`
 }
 
+// Public returns a copy of the auth config with every secret field cleared, safe to send to the UI
+// so a "replace credential" form can pre-fill the non-secret settings (type, endpoints, client id,
+// header/username, scope, region, …). Secrets (tokens, passwords, client secret, private key, OIDC
+// access/refresh tokens, exec env) are zeroed and never leave the daemon.
+func (a AuthConfig) Public() AuthConfig {
+	a.Token = ""
+	a.Password = ""
+	a.ClientSecret = ""
+	a.AccessToken = ""
+	a.RefreshToken = ""
+	a.AWSSecretAccessKey = ""
+	a.HMACSecret = ""
+	a.ClientKey = ""
+	a.ExecEnv = nil
+	return a
+}
+
 // KindHTTP and KindK8s are the upstream kinds.
 const (
 	KindHTTP = "http"

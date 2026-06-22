@@ -591,6 +591,40 @@ func TestOIDCDiscoverEndpoint(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, wbad.Code)
 }
 
+func TestSetAuthKeepsSecretsOnSameTypeReplace(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.NoError(t, d.vault.Init("pw"))
+	_, err := d.upstreams.Create("api.test", "https://api.test", upstream.AuthConfig{
+		Type: "oidc-authorization-code", ClientID: "old-cid", ClientSecret: "shh",
+		AuthURL: "https://idp/auth", TokenURL: "https://idp/token",
+		AccessToken: "at", RefreshToken: "rt",
+	})
+	require.NoError(t, err)
+
+	// List returns the non-secret auth for pre-fill: client_id present, secret never leaks.
+	wl := req(t, h, "GET", "/upstreams", "")
+	require.Contains(t, wl.Body.String(), "old-cid")
+	require.NotContains(t, wl.Body.String(), "shh")
+
+	// Replace with the SAME type, change client_id, leave secret + tokens blank → they are kept.
+	body := `{"auth":{"type":"oidc-authorization-code","client_id":"new-cid","auth_url":"https://idp/auth","token_url":"https://idp/token"}}`
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/upstreams/api.test/auth", body).Code)
+	up, err := d.upstreams.GetByName("api.test")
+	require.NoError(t, err)
+	require.Equal(t, "new-cid", up.Auth.ClientID)
+	require.Equal(t, "shh", up.Auth.ClientSecret, "blank secret keeps the stored value")
+	require.Equal(t, "at", up.Auth.AccessToken, "OIDC tokens are preserved")
+	require.Equal(t, "rt", up.Auth.RefreshToken)
+
+	// Changing the TYPE is a full reconfigure — no secret carryover.
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/upstreams/api.test/auth", `{"auth":{"type":"static","header":"Authorization"}}`).Code)
+	up2, err := d.upstreams.GetByName("api.test")
+	require.NoError(t, err)
+	require.Equal(t, "", up2.Auth.ClientSecret)
+	require.Equal(t, "", up2.Auth.AccessToken)
+}
+
 func TestAdminAccessRequests(t *testing.T) {
 	d := newDaemon(t)
 	h := d.AdminHandler()

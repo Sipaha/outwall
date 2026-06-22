@@ -236,7 +236,12 @@ func (d *Daemon) hUpstreamSetAuth(w http.ResponseWriter, r *http.Request) {
 		adminErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := d.upstreams.SetAuth(up.ID, body.Auth); err != nil {
+	// Replacing a credential of the SAME type keeps the existing secrets the operator left blank
+	// (the UI never receives them) and the server-managed OIDC tokens — so editing one field (e.g.
+	// the client id) does not wipe the secret or force a re-login. A different type = a full
+	// reconfigure, taken as sent.
+	merged := mergeKeepSecrets(up.Auth, body.Auth)
+	if err := d.upstreams.SetAuth(up.ID, merged); err != nil {
 		adminErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -344,6 +349,9 @@ func (d *Daemon) hUpstreamList(w http.ResponseWriter, _ *http.Request) {
 			// verification is disabled (drives the red "insecure" badge). No credentials leak.
 			m["k8s_auth"] = u.Auth.K8sAuth
 			m["k8s_insecure"] = u.Auth.K8sInsecureSkipVerify
+		} else {
+			// Non-secret auth settings so the "replace credential" form can pre-fill (secrets cleared).
+			m["auth"] = u.Auth.Public()
 		}
 		out = append(out, m)
 	}
@@ -812,6 +820,32 @@ func (d *Daemon) hOIDCDiscover(w http.ResponseWriter, r *http.Request) {
 		"end_session_endpoint":   cfg.EndSessionEndpoint,
 		"scopes_supported":       cfg.ScopesSupported,
 	})
+}
+
+// mergeKeepSecrets fills the incoming auth's blank secret fields (and the server-managed OIDC
+// tokens) from the existing config when the auth type is unchanged — so a "replace credential" edit
+// that leaves a secret blank keeps the stored one rather than wiping it. A changed type is a full
+// reconfigure: take the incoming config verbatim.
+func mergeKeepSecrets(old, in upstream.AuthConfig) upstream.AuthConfig {
+	if old.Type != in.Type {
+		return in
+	}
+	keep := func(dst *string, prev string) {
+		if *dst == "" {
+			*dst = prev
+		}
+	}
+	keep(&in.Token, old.Token)
+	keep(&in.Password, old.Password)
+	keep(&in.ClientSecret, old.ClientSecret)
+	keep(&in.AWSSecretAccessKey, old.AWSSecretAccessKey)
+	keep(&in.HMACSecret, old.HMACSecret)
+	keep(&in.ClientKey, old.ClientKey)
+	// OIDC tokens are server-managed and never sent from the form — always carry them over.
+	keep(&in.AccessToken, old.AccessToken)
+	keep(&in.RefreshToken, old.RefreshToken)
+	keep(&in.TokenExpiry, old.TokenExpiry)
+	return in
 }
 
 func auditEntryMap(e audit.Entry) map[string]any {
