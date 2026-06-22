@@ -476,7 +476,22 @@ export function Upstreams() {
             { header: 'Host', cell: (u) => u.name },
             {
               header: 'Base URL',
-              cell: (u) => u.base_url,
+              cell: (u) => (
+                <div>
+                  <span>{u.base_url}</span>
+                  {u.browse_url && (
+                    <div className="mt-0.5 text-[11px]">
+                      <span className="text-muted-foreground">Browse: </span>
+                      <a
+                        href={u.browse_url}
+                        className="font-mono text-primary hover:underline"
+                      >
+                        {u.browse_url}
+                      </a>
+                    </div>
+                  )}
+                </div>
+              ),
               className: 'font-mono text-muted-foreground',
             },
             {

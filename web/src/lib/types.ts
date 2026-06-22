@@ -60,6 +60,8 @@ export interface Upstream {
   // merely being configured. Drives the "logged in" vs "needs login" badge.
   logged_in?: boolean
   profile?: string
+  // http upstreams: the local reverse-proxy URL the agent uses to reach this upstream.
+  browse_url?: string
 }
 
 /** Cluster auth config sent on POST /api/upstreams when creating a kind=k8s cluster. */

@@ -179,6 +179,15 @@ describe('<Hosts> (Upstreams.tsx)', () => {
     )
   })
 
+  it('shows the browse URL for an http upstream that has one', async () => {
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([
+      { id: 'u1', name: 'be', base_url: 'https://be.test', auth_type: 'none', browse_url: 'https://be.outwall.localhost:8099' },
+    ])
+    vi.spyOn(api, 'getProfiles').mockResolvedValue([])
+    render(<Upstreams />)
+    expect(await screen.findByText('https://be.outwall.localhost:8099')).toBeInTheDocument()
+  })
+
   it('submits the chosen server profile when adding a host', async () => {
     vi.spyOn(api, 'listUpstreams').mockResolvedValue([])
     vi.spyOn(api, 'getProfiles').mockResolvedValue([
