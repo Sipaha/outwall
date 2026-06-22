@@ -76,8 +76,8 @@ function parseOpValues(text: string): Record<string, ValuePolicy> {
 // k8s RBAC verbs offered in the rule editor (mirrors internal/k8s verbFor + policy.Rule.Verb).
 const K8S_VERBS = ['*', 'get', 'list', 'watch', 'create', 'update', 'patch', 'delete', 'deletecollection']
 
-// isProfileRule is true for a server-profile rule (e.g. citeck Records). Such rules carry a
-// profile name instead of an operation path-template or k8s RBAC tuple and live in their own
+// isProfileRule is true for a server-profile rule (a Records-style platform rule). Such rules carry
+// a profile name instead of an operation path-template or k8s RBAC tuple and live in their own
 // section to avoid the authz hazard of being invisible in the other two sections.
 function isProfileRule(r: Rule): boolean {
   return !!r.profile
@@ -650,7 +650,7 @@ export function Rules() {
         </section>
       )}
 
-      {/* Server-profile rules (e.g. Records rules for citeck upstreams). Without this section
+      {/* Server-profile rules (e.g. Records rules for profiled upstreams). Without this section
           a profile rule is invisible in the UI — an authz hazard. */}
       {profileRules.length > 0 && (
         <section className="rounded-lg border border-border bg-card">
