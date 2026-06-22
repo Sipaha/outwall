@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS upstreams (
 	name        TEXT NOT NULL UNIQUE,
 	base_url    TEXT NOT NULL,
 	kind        TEXT NOT NULL DEFAULT 'http',
+	profile     TEXT NOT NULL DEFAULT 'raw-http',
 	auth_type   TEXT NOT NULL,
 	auth_config BLOB,
 	created_at  TEXT NOT NULL
@@ -41,6 +42,8 @@ CREATE TABLE IF NOT EXISTS rules (
 	k8s_namespace      TEXT NOT NULL DEFAULT '',
 	k8s_resource       TEXT NOT NULL DEFAULT '',
 	k8s_verb           TEXT NOT NULL DEFAULT '',
+	profile            TEXT NOT NULL DEFAULT '',
+	profile_params     TEXT NOT NULL DEFAULT '{}',
 	created_at         TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS rules_by_upstream ON rules(upstream_id);
@@ -116,6 +119,18 @@ var migrations = []migration{
 	{"baseline", func(tx *sql.Tx) error {
 		if _, err := tx.Exec(schema); err != nil {
 			return fmt.Errorf("baseline schema: %w", err)
+		}
+		return nil
+	}},
+	{"server_profiles", func(tx *sql.Tx) error {
+		for _, stmt := range []string{
+			`ALTER TABLE upstreams ADD COLUMN profile TEXT NOT NULL DEFAULT 'raw-http'`,
+			`ALTER TABLE rules ADD COLUMN profile TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE rules ADD COLUMN profile_params TEXT NOT NULL DEFAULT '{}'`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("server_profiles: %w", err)
+			}
 		}
 		return nil
 	}},

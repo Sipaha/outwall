@@ -103,6 +103,39 @@ func TestMigrationRunnerAppliesPendingOnce(t *testing.T) {
 	require.Equal(t, baseline+1, userVersion(t, s))
 }
 
+// TestServerProfileColumns: an existing v1 database is upgraded to carry the server-profile columns,
+// and a fresh DB has them from the current schema.
+func TestServerProfileColumns(t *testing.T) {
+	// Fresh DB from current schema.
+	s, err := Open(filepath.Join(t.TempDir(), "fresh.db"))
+	require.NoError(t, err)
+	defer s.Close()
+	_, err = s.DB().Exec(`SELECT profile FROM upstreams LIMIT 0`)
+	require.NoError(t, err)
+	_, err = s.DB().Exec(`SELECT profile, profile_params FROM rules LIMIT 0`)
+	require.NoError(t, err)
+
+	// Simulate an OLD (v1) database: baseline schema without the new columns, stamped at version 1.
+	p := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", p)
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TABLE upstreams (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, base_url TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'http', auth_type TEXT NOT NULL, auth_config BLOB, created_at TEXT NOT NULL);
+		CREATE TABLE rules (id TEXT PRIMARY KEY, subject_agent_id TEXT NOT NULL DEFAULT '', upstream_id TEXT NOT NULL, op_method TEXT NOT NULL DEFAULT '', op_path_template TEXT NOT NULL DEFAULT '', op_query_template TEXT NOT NULL DEFAULT '{}', op_body_template TEXT NOT NULL DEFAULT '{}', op_value_policies TEXT NOT NULL DEFAULT '{}', outcome TEXT NOT NULL, rate_limit_per_min INTEGER NOT NULL DEFAULT 0, k8s_namespace TEXT NOT NULL DEFAULT '', k8s_resource TEXT NOT NULL DEFAULT '', k8s_verb TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+		PRAGMA user_version = 1;`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	// Re-open through the runner: the new migration adds the columns.
+	s2, err := Open(p)
+	require.NoError(t, err)
+	defer s2.Close()
+	_, err = s2.DB().Exec(`SELECT profile FROM upstreams LIMIT 0`)
+	require.NoError(t, err)
+	_, err = s2.DB().Exec(`SELECT profile, profile_params FROM rules LIMIT 0`)
+	require.NoError(t, err)
+	require.Equal(t, len(migrations), userVersion(t, s2))
+}
+
 func TestSettingsRoundTrip(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "outwall.db"))
 	require.NoError(t, err)
