@@ -44,9 +44,9 @@ func TestSchemaCoversAdditiveColumns(t *testing.T) {
 	}
 }
 
-// TestEnsureColumnsUpgradesOldDB simulates a database created by an older build (tables lacking the
-// later additive columns) and verifies Open's migration adds them — no reset needed.
-func TestEnsureColumnsUpgradesOldDB(t *testing.T) {
+// TestMigrationsUpgradeOldDB simulates a database created by an older build (tables lacking the
+// later additive columns) and verifies Open's version-gated steps add them — no reset needed.
+func TestMigrationsUpgradeOldDB(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
 
 	// Build an "old" DB by hand: audit_log without operation/vars_json, rules without
@@ -85,11 +85,12 @@ func TestEnsureColumnsUpgradesOldDB(t *testing.T) {
 	require.Equal(t, "{}", body)
 }
 
-// TestEnsureColumnsReconcilesAtCurrentVersion reproduces the bug where an additive column appended
-// AFTER a database was already stamped at the baseline version was never added: ensureColumns ran
-// only inside the version-1 baseline step, which never re-runs once user_version >= 1. The additive
-// reconcile must run on every Open regardless of version (ADR-0027).
-func TestEnsureColumnsReconcilesAtCurrentVersion(t *testing.T) {
+// TestMigrationAddsColumnToDBStampedAtEarlierVersion reproduces the bug where an additive column
+// appended AFTER a database was already stamped at the baseline version was never added: the
+// reconcile ran only inside the version-1 baseline step, which never re-runs once user_version >= 1.
+// Now each additive column is its own version-gated step, so a DB stamped at an earlier version
+// still gets the pending steps on the next Open (ADR-0027).
+func TestMigrationAddsColumnToDBStampedAtEarlierVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stamped.db")
 
 	// A realistic DB already past the baseline: the full current schema is present (all tables) but
@@ -118,7 +119,9 @@ func TestEnsureColumnsReconcilesAtCurrentVersion(t *testing.T) {
 
 	has, err := columnExists(s.DB(), "access_requests", "reason")
 	require.NoError(t, err)
-	require.True(t, has, "an additive column appended after baseline must be reconciled on Open")
+	require.True(t, has, "a later additive column must be added by its pending version-gated step")
+	// And the DB is now stamped at the latest version (all pending steps ran).
+	require.Equal(t, len(migrations), userVersion(t, s))
 }
 
 func userVersion(t *testing.T, s *Store) int {

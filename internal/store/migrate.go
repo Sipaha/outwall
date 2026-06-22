@@ -107,22 +107,41 @@ type migration struct {
 	up   func(tx *sql.Tx) error
 }
 
-// migrations is the ordered list of schema steps. The runner applies every step whose version is
-// greater than the database's current `PRAGMA user_version`, each in its own transaction, bumping
-// user_version on success — so a step runs exactly once per database, fresh or upgraded.
+// migrations is the ordered list of schema steps. The runner applies every step whose version
+// (its 1-based position) is greater than the database's `PRAGMA user_version`, each in its own
+// transaction, bumping user_version on success — so a step runs exactly once per database, fresh
+// or upgraded.
 //
-// Step 1 is the **baseline**: the full current `schema` (idempotent `CREATE TABLE IF NOT EXISTS`)
-// plus the additive `ensureColumns` reconcile (ADR-0022). On a fresh DB it builds everything; on a
-// pre-versioning DB (user_version still 0) it is a safe no-op/reconcile and stamps it to version 1.
-// Append later **structural** changes (renames, data backfills, drops — things `ensureColumns`
-// cannot express) as new entries; never edit or reorder a released entry.
-var migrations = []migration{
-	{"baseline", func(tx *sql.Tx) error {
-		if _, err := tx.Exec(schema); err != nil {
-			return fmt.Errorf("baseline schema: %w", err)
-		}
-		return ensureColumns(tx)
-	}},
+//   - Step 1 is the **baseline**: the full current `schema` (idempotent `CREATE TABLE IF NOT
+//     EXISTS`). A fresh DB gets every table+column here; an old DB only gets tables it was missing.
+//   - Each later **additive column** is its own subsequent step, built from `additiveColumns`
+//     (ADR-0022 / ADR-0027). It is a *guarded* ADD COLUMN — a no-op when the column is already
+//     present (e.g. a fresh DB whose baseline just created it, or an old DB already carrying it).
+//     The guard is needed because the baseline is the *current* schema, so a fresh DB already has
+//     the column; it also tolerates the historically-moving baseline (different old DBs hold
+//     different column subsets at the same version).
+//
+// Append later **structural** changes (renames, backfills, drops) as new explicit entries after the
+// generated additive steps. **Never edit or reorder a released step** — its position is its version.
+var migrations = buildMigrations()
+
+func buildMigrations() []migration {
+	migs := []migration{
+		{"baseline", func(tx *sql.Tx) error {
+			if _, err := tx.Exec(schema); err != nil {
+				return fmt.Errorf("baseline schema: %w", err)
+			}
+			return nil
+		}},
+	}
+	for _, c := range additiveColumns {
+		c := c // capture per-iteration for the closure
+		migs = append(migs, migration{
+			name: "add " + c.table + "." + c.name,
+			up:   func(tx *sql.Tx) error { return addColumnIfMissing(tx, c.table, c.name, c.ddl) },
+		})
+	}
+	return migs
 }
 
 // migrate brings db up to len(migrations) by running each pending step (version > user_version) in a
@@ -151,28 +170,22 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("commit migration %d (%s): %w", i+1, m.name, err)
 		}
 	}
-	// Reconcile additive columns on EVERY open, independent of user_version. A purely-additive
-	// column is appended to `additiveColumns` without a version bump (ADR-0022); if reconciliation
-	// only ran inside the version-1 baseline step it would never reach a DB already past version 1,
-	// so a later-added column (e.g. access_requests.reason) would be silently missing (ADR-0027).
-	// ensureColumns is idempotent — a no-op once every column exists.
-	if err := ensureColumns(db); err != nil {
-		return fmt.Errorf("reconcile additive columns: %w", err)
-	}
 	return nil
 }
 
-// additiveColumns are columns that were ADDED to existing tables in later builds. On a database
-// created by an older build, ensureColumns adds any that are missing (idempotent
-// `ALTER TABLE … ADD COLUMN`), so a purely-additive schema change no longer forces a one-time DB
-// reset.
+// additiveColumns are columns ADDED to existing tables after the baseline. buildMigrations turns
+// each into its own run-once, version-gated migration step (a guarded ADD COLUMN), so a
+// purely-additive schema change reaches every database — fresh or long-lived — without a reset.
+//
+// APPEND-ONLY: an entry's position fixes its migration version, so never reorder or delete one
+// (that would shift versions and replay the wrong steps). Add new additive columns to the END.
 //
 // SCOPE: additions only. A column REMOVAL or a semantic model change — e.g. the path-glob →
-// operation rule model that dropped `method`/`path_glob` for `op_*` (ADR-0014) — is NOT migratable
-// this way and still needs a one-time reset in alpha (full migrations are a Beta item). Only list a
-// column here when its absence is a pure addition to an otherwise-current table; every entry MUST
-// also exist in `schema` above (TestSchemaCoversAdditiveColumns enforces this), and the DDL must
-// carry a DEFAULT (SQLite requires one to ADD a NOT NULL column to a non-empty table).
+// operation rule model that dropped `method`/`path_glob` for `op_*` (ADR-0014) — is NOT expressed
+// here; add an explicit structural migration step (and in alpha a one-time reset may still be
+// needed). Every entry MUST also exist in `schema` above (TestSchemaCoversAdditiveColumns enforces
+// this), and the DDL must carry a DEFAULT (SQLite requires one to ADD a NOT NULL column to a
+// non-empty table).
 var additiveColumns = []struct{ table, name, ddl string }{
 	{"audit_log", "operation", "TEXT NOT NULL DEFAULT ''"},
 	{"audit_log", "vars_json", "TEXT NOT NULL DEFAULT ''"},
@@ -181,23 +194,20 @@ var additiveColumns = []struct{ table, name, ddl string }{
 	{"access_requests", "reason", "TEXT NOT NULL DEFAULT ''"},
 }
 
-// ensureColumns brings an older database's tables up to date by adding any missing additive column.
-// It is idempotent: a column that already exists is skipped, so a fresh DB (just built from
-// `schema`) is a no-op.
-func ensureColumns(q sqlExecQuerier) error {
-	for _, c := range additiveColumns {
-		has, err := columnExists(q, c.table, c.name)
-		if err != nil {
-			return err
-		}
-		if has {
-			continue
-		}
-		// Table/column names here are hardcoded constants, not user input — no injection surface
-		// (and PRAGMA / ALTER do not accept bound parameters for identifiers anyway).
-		if _, err := q.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.table, c.name, c.ddl)); err != nil {
-			return fmt.Errorf("add column %s.%s: %w", c.table, c.name, err)
-		}
+// addColumnIfMissing adds one column via ALTER TABLE … ADD COLUMN, but only if it is absent — so the
+// step is a no-op on a database whose baseline already created the column (a fresh DB) or that an
+// older build already carries it. Table/column names are hardcoded constants, not user input — no
+// injection surface (and ALTER / PRAGMA do not accept bound parameters for identifiers anyway).
+func addColumnIfMissing(q sqlExecQuerier, table, name, ddl string) error {
+	has, err := columnExists(q, table, name)
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	if _, err := q.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, name, ddl)); err != nil {
+		return fmt.Errorf("add column %s.%s: %w", table, name, err)
 	}
 	return nil
 }
