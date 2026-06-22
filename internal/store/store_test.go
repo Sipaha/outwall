@@ -31,97 +31,38 @@ func TestOpenAppliesSchemaIdempotently(t *testing.T) {
 	require.NoError(t, s2.Close())
 }
 
-// TestSchemaCoversAdditiveColumns keeps additiveColumns honest: every column the migration may add
-// must actually exist in a freshly-built schema (catches typos / stale entries).
-func TestSchemaCoversAdditiveColumns(t *testing.T) {
+// TestFreshDBFromSchema: a brand-new database is built from the current `schema` and stamped at the
+// latest version. It also pins the regression that broke the Agents screen — the current schema must
+// include access_requests.reason.
+func TestFreshDBFromSchema(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "fresh.db"))
 	require.NoError(t, err)
 	defer s.Close()
-	for _, c := range additiveColumns {
-		has, err := columnExists(s.DB(), c.table, c.name)
-		require.NoError(t, err)
-		require.True(t, has, "additive column %s.%s is missing from the fresh schema", c.table, c.name)
-	}
+	// A column the app queries (whose absence raised "no such column: reason") exists in the schema.
+	_, err = s.DB().Exec(`SELECT reason FROM access_requests LIMIT 0`)
+	require.NoError(t, err)
+	require.Equal(t, len(migrations), userVersion(t, s), "fresh DB stamped at the latest version")
 }
 
-// TestMigrationsUpgradeOldDB simulates a database created by an older build (tables lacking the
-// later additive columns) and verifies Open's version-gated steps add them — no reset needed.
-func TestMigrationsUpgradeOldDB(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "old.db")
+// TestFreshDBSkipsUpgradeSteps is the core property of the model: a fresh database is built from the
+// current `schema` (which already reflects every change) and stamped at the latest version, so the
+// per-step ALTERs — which exist only to upgrade OLD databases — never run on it.
+func TestFreshDBSkipsUpgradeSteps(t *testing.T) {
+	orig := migrations
+	t.Cleanup(func() { migrations = orig })
+	ran := false
+	migrations = append(append([]migration{}, orig...), migration{"should_not_run_on_fresh", func(tx *sql.Tx) error {
+		ran = true
+		_, err := tx.Exec(`ALTER TABLE settings ADD COLUMN extra TEXT NOT NULL DEFAULT ''`)
+		return err
+	}})
 
-	// Build an "old" DB by hand: audit_log without operation/vars_json, rules without
-	// op_body_template, upstreams without kind. Insert a row so the table is non-empty (the
-	// stricter ADD COLUMN path).
-	raw, err := sql.Open("sqlite", path)
-	require.NoError(t, err)
-	_, err = raw.Exec(`
-		CREATE TABLE audit_log (id TEXT PRIMARY KEY, ts TEXT NOT NULL DEFAULT '', method TEXT NOT NULL DEFAULT '');
-		INSERT INTO audit_log (id, ts, method) VALUES ('a1', '2026-06-19T00:00:00Z', 'GET');
-		CREATE TABLE rules (id TEXT PRIMARY KEY, upstream_id TEXT NOT NULL DEFAULT '', op_method TEXT NOT NULL DEFAULT '');
-		INSERT INTO rules (id, upstream_id, op_method) VALUES ('r1', 'u1', 'GET');
-		CREATE TABLE upstreams (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '');
-		INSERT INTO upstreams (id, name) VALUES ('u1', 'gh');
-	`)
-	require.NoError(t, err)
-	require.NoError(t, raw.Close())
-
-	// Open runs the migration, which must add the missing additive columns to the existing tables.
-	s, err := Open(path)
+	s, err := Open(filepath.Join(t.TempDir(), "fresh.db"))
 	require.NoError(t, err)
 	defer s.Close()
 
-	for _, c := range additiveColumns {
-		has, err := columnExists(s.DB(), c.table, c.name)
-		require.NoError(t, err)
-		require.True(t, has, "%s.%s should have been added by the migration", c.table, c.name)
-	}
-
-	// The pre-existing rows survive and the new columns are usable (default applied).
-	var op string
-	require.NoError(t, s.DB().QueryRow(`SELECT operation FROM audit_log WHERE id='a1'`).Scan(&op))
-	require.Equal(t, "", op)
-	var body string
-	require.NoError(t, s.DB().QueryRow(`SELECT op_body_template FROM rules WHERE id='r1'`).Scan(&body))
-	require.Equal(t, "{}", body)
-}
-
-// TestMigrationAddsColumnToDBStampedAtEarlierVersion reproduces the bug where an additive column
-// appended AFTER a database was already stamped at the baseline version was never added: the
-// reconcile ran only inside the version-1 baseline step, which never re-runs once user_version >= 1.
-// Now each additive column is its own version-gated step, so a DB stamped at an earlier version
-// still gets the pending steps on the next Open (ADR-0027).
-func TestMigrationAddsColumnToDBStampedAtEarlierVersion(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "stamped.db")
-
-	// A realistic DB already past the baseline: the full current schema is present (all tables) but
-	// access_requests predates the later-added `reason` column, and user_version is already stamped
-	// at 1 — as an older versioned-runner build (whose additiveColumns lacked `reason`) would leave
-	// it. Recreate just access_requests without `reason` to simulate that one missing column.
-	raw, err := sql.Open("sqlite", path)
-	require.NoError(t, err)
-	_, err = raw.Exec(schema)
-	require.NoError(t, err)
-	_, err = raw.Exec(`
-		DROP TABLE access_requests;
-		CREATE TABLE access_requests (
-			id TEXT PRIMARY KEY, agent_id TEXT NOT NULL DEFAULT '', upstream_id TEXT NOT NULL DEFAULT '',
-			purpose TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '',
-			created_at TEXT NOT NULL DEFAULT '', resolved_at TEXT NOT NULL DEFAULT '');
-		INSERT INTO access_requests (id) VALUES ('x1');
-		PRAGMA user_version = 1;
-	`)
-	require.NoError(t, err)
-	require.NoError(t, raw.Close())
-
-	s, err := Open(path)
-	require.NoError(t, err)
-	defer s.Close()
-
-	has, err := columnExists(s.DB(), "access_requests", "reason")
-	require.NoError(t, err)
-	require.True(t, has, "a later additive column must be added by its pending version-gated step")
-	// And the DB is now stamped at the latest version (all pending steps ran).
-	require.Equal(t, len(migrations), userVersion(t, s))
+	require.False(t, ran, "a fresh DB must be built from schema, not by running upgrade steps")
+	require.Equal(t, len(migrations), userVersion(t, s), "fresh DB stamped at the latest version")
 }
 
 func userVersion(t *testing.T, s *Store) int {

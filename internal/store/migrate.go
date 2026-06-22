@@ -93,63 +93,55 @@ CREATE TABLE IF NOT EXISTS audit_bodies (
 );
 `
 
-// sqlExecQuerier is the subset of *sql.DB / *sql.Tx the migration helpers use, so a step can run
-// its statements inside the migration transaction.
-type sqlExecQuerier interface {
-	Exec(query string, args ...any) (sql.Result, error)
-	Query(query string, args ...any) (*sql.Rows, error)
-}
-
-// migration is one ordered, run-once schema step. Its 1-based position in `migrations` is its
-// version; `up` runs inside a transaction and may do anything SQL can (create/alter/rename/backfill).
+// migration is one ordered, run-once upgrade step for EXISTING databases. Its 1-based position in
+// `migrations` is its version; `up` runs inside a transaction and may do anything SQL can
+// (ALTER/backfill/rename).
 type migration struct {
 	name string
 	up   func(tx *sql.Tx) error
 }
 
-// migrations is the ordered list of schema steps. The runner applies every step whose version
-// (its 1-based position) is greater than the database's `PRAGMA user_version`, each in its own
-// transaction, bumping user_version on success — so a step runs exactly once per database, fresh
-// or upgraded.
+// migrations is the ordered list of schema versions.
 //
-//   - Step 1 is the **baseline**: the full current `schema` (idempotent `CREATE TABLE IF NOT
-//     EXISTS`). A fresh DB gets every table+column here; an old DB only gets tables it was missing.
-//   - Each later **additive column** is its own subsequent step, built from `additiveColumns`
-//     (ADR-0022 / ADR-0027). It is a *guarded* ADD COLUMN — a no-op when the column is already
-//     present (e.g. a fresh DB whose baseline just created it, or an old DB already carrying it).
-//     The guard is needed because the baseline is the *current* schema, so a fresh DB already has
-//     the column; it also tolerates the historically-moving baseline (different old DBs hold
-//     different column subsets at the same version).
+//   - Version 1 is the **baseline**: the full `schema` (CREATE TABLE IF NOT EXISTS).
+//   - Each later entry is a forward upgrade step that brings a database created by an EARLIER
+//     version up by one (an ALTER, a backfill, a rename, …).
 //
-// Append later **structural** changes (renames, backfills, drops) as new explicit entries after the
-// generated additive steps. **Never edit or reorder a released step** — its position is its version.
-var migrations = buildMigrations()
-
-func buildMigrations() []migration {
-	migs := []migration{
-		{"baseline", func(tx *sql.Tx) error {
-			if _, err := tx.Exec(schema); err != nil {
-				return fmt.Errorf("baseline schema: %w", err)
-			}
-			return nil
-		}},
-	}
-	for _, c := range additiveColumns {
-		c := c // capture per-iteration for the closure
-		migs = append(migs, migration{
-			name: "add " + c.table + "." + c.name,
-			up:   func(tx *sql.Tx) error { return addColumnIfMissing(tx, c.table, c.name, c.ddl) },
-		})
-	}
-	return migs
+// `schema` above is always the CURRENT shape. A brand-new database is built straight from it and
+// stamped at the latest version (see migrate), so it NEVER runs the upgrade steps — those exist only
+// to catch up OLD databases. Therefore, when you change the schema: (1) edit `schema` to the new
+// current shape, AND (2) append a migration step performing the same change via ALTER for existing
+// databases. **Never edit or reorder a released step** — its position is its version.
+var migrations = []migration{
+	{"baseline", func(tx *sql.Tx) error {
+		if _, err := tx.Exec(schema); err != nil {
+			return fmt.Errorf("baseline schema: %w", err)
+		}
+		return nil
+	}},
 }
 
-// migrate brings db up to len(migrations) by running each pending step (version > user_version) in a
-// transaction and stamping user_version. A failed step rolls back and leaves the version unchanged.
+// migrate brings db up to the latest version. A brand-new (empty) database is created directly from
+// the current `schema` and stamped at the latest version, so its upgrade steps never run. An
+// existing database runs each pending step (version > user_version) in its own transaction, stamping
+// user_version on success; a failed step rolls back and leaves the version unchanged.
 func migrate(db *sql.DB) error {
 	var ver int
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&ver); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
+	}
+	if ver == 0 {
+		empty, err := isEmpty(db)
+		if err != nil {
+			return err
+		}
+		if empty {
+			// Fresh database: the current schema already reflects every migration.
+			if _, err := db.Exec(schema); err != nil {
+				return fmt.Errorf("apply schema: %w", err)
+			}
+			return setUserVersion(db, len(migrations))
+		}
 	}
 	for i := ver; i < len(migrations); i++ {
 		m := migrations[i]
@@ -173,64 +165,22 @@ func migrate(db *sql.DB) error {
 	return nil
 }
 
-// additiveColumns are columns ADDED to existing tables after the baseline. buildMigrations turns
-// each into its own run-once, version-gated migration step (a guarded ADD COLUMN), so a
-// purely-additive schema change reaches every database — fresh or long-lived — without a reset.
-//
-// APPEND-ONLY: an entry's position fixes its migration version, so never reorder or delete one
-// (that would shift versions and replay the wrong steps). Add new additive columns to the END.
-//
-// SCOPE: additions only. A column REMOVAL or a semantic model change — e.g. the path-glob →
-// operation rule model that dropped `method`/`path_glob` for `op_*` (ADR-0014) — is NOT expressed
-// here; add an explicit structural migration step (and in alpha a one-time reset may still be
-// needed). Every entry MUST also exist in `schema` above (TestSchemaCoversAdditiveColumns enforces
-// this), and the DDL must carry a DEFAULT (SQLite requires one to ADD a NOT NULL column to a
-// non-empty table).
-var additiveColumns = []struct{ table, name, ddl string }{
-	{"audit_log", "operation", "TEXT NOT NULL DEFAULT ''"},
-	{"audit_log", "vars_json", "TEXT NOT NULL DEFAULT ''"},
-	{"rules", "op_body_template", "TEXT NOT NULL DEFAULT '{}'"},
-	{"upstreams", "kind", "TEXT NOT NULL DEFAULT 'http'"},
-	{"access_requests", "reason", "TEXT NOT NULL DEFAULT ''"},
-}
-
-// addColumnIfMissing adds one column via ALTER TABLE … ADD COLUMN, but only if it is absent — so the
-// step is a no-op on a database whose baseline already created the column (a fresh DB) or that an
-// older build already carries it. Table/column names are hardcoded constants, not user input — no
-// injection surface (and ALTER / PRAGMA do not accept bound parameters for identifiers anyway).
-func addColumnIfMissing(q sqlExecQuerier, table, name, ddl string) error {
-	has, err := columnExists(q, table, name)
-	if err != nil {
-		return err
-	}
-	if has {
-		return nil
-	}
-	if _, err := q.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, name, ddl)); err != nil {
-		return fmt.Errorf("add column %s.%s: %w", table, name, err)
+// setUserVersion stamps the schema version. PRAGMA takes no bound parameter; n is an int we control.
+func setUserVersion(db *sql.DB, n int) error {
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", n)); err != nil {
+		return fmt.Errorf("stamp version %d: %w", n, err)
 	}
 	return nil
 }
 
-// columnExists reports whether table has a column named column (via PRAGMA table_info).
-func columnExists(q sqlExecQuerier, table, column string) (bool, error) {
-	rows, err := q.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
-	if err != nil {
-		return false, fmt.Errorf("table_info %s: %w", table, err)
+// isEmpty reports whether the database has no user tables yet (a brand-new file). The internal
+// sqlite_* tables are excluded.
+func isEmpty(db *sql.DB) (bool, error) {
+	var n int
+	if err := db.QueryRow(
+		`SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`,
+	).Scan(&n); err != nil {
+		return false, fmt.Errorf("count tables: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var (
-			cid, notnull, pk int
-			name, ctype      string
-			dflt             sql.NullString
-		)
-		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return false, err
-		}
-		if name == column {
-			return true, nil
-		}
-	}
-	return false, rows.Err()
+	return n == 0, nil
 }
