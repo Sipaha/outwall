@@ -10,29 +10,32 @@ import (
 	"github.com/Sipaha/outwall/internal/upstream"
 )
 
-// Importer registers kubeconfig contexts as kind=k8s upstreams. It is idempotent: a context
-// whose name already names an upstream is skipped, never re-created or mutated.
+// Importer registers kubeconfig contexts as kind=k8s upstreams. Two modes (see ADR-0026):
+//   - update=false (the init auto-scan): a context whose name already names an upstream is skipped,
+//     never mutated — so re-running the scan never clobbers operator state.
+//   - update=true (an explicit operator import/upload): an existing cluster is refreshed in place
+//     (server + auth on the same upstream ID, preserving its rules), so the operator can repair or
+//     rotate credentials.
 type Importer struct {
 	Reg *upstream.Registry
 	Log *slog.Logger
 }
 
-// Import reads each existing path, parses every context, and registers the ones not already
-// present. Missing files are skipped silently (not every discovered path exists). Returns the
-// context names added and the ones skipped because they already existed. A failure to register
+// Import reads each existing path, parses every context, and registers them. Missing files are
+// skipped silently (not every discovered path exists). Returns the context names added, updated
+// (only when update=true), and skipped (already-present, update=false). A failure to register
 // (e.g. the vault is locked, so the auth cannot be encrypted) returns a wrapped error after the
-// names added so far — the caller (the unlock hook) treats it as best-effort. parse warnings are
-// logged, not fatal.
-func (im *Importer) Import(paths []string) (added, skipped []string, err error) {
+// names handled so far — the init caller treats it as best-effort. parse warnings are logged.
+func (im *Importer) Import(paths []string, update bool) (added, updated, skipped []string, err error) {
 	log := im.logger()
 
 	// Non-nil from the start: a nil slice encodes to JSON `null`, which the UI's
 	// res.added.length / res.skipped.length then throws on (false "Failed to import" toast).
-	added, skipped = []string{}, []string{}
+	added, updated, skipped = []string{}, []string{}, []string{}
 
-	have, err := im.existingNames()
+	have, err := im.existing()
 	if err != nil {
-		return added, skipped, err
+		return added, updated, skipped, err
 	}
 
 	for _, path := range paths {
@@ -53,37 +56,38 @@ func (im *Importer) Import(paths []string) (added, skipped []string, err error) 
 		for _, w := range warnings {
 			log.Warn("kubeconfig import: skipped context", "path", path, "reason", w)
 		}
-		if regErr := im.register(log, clusters, have, &added, &skipped); regErr != nil {
-			return added, skipped, regErr
+		if regErr := im.register(log, clusters, have, update, &added, &updated, &skipped); regErr != nil {
+			return added, updated, skipped, regErr
 		}
 	}
-	return added, skipped, nil
+	return added, updated, skipped, nil
 }
 
 // ImportContent parses one kubeconfig document (uploaded by the operator via the file picker) and
-// registers its contexts idempotently. baseDir resolves any file-path refs in the document
-// ("" = none; managed-cluster configs use inline *-data and need no baseDir). Returns non-nil
-// added/skipped. A document that does not parse as a kubeconfig is a real error here (unlike the
-// auto-scan, the operator explicitly chose this file).
-func (im *Importer) ImportContent(data []byte, baseDir string) (added, skipped []string, err error) {
+// registers its contexts. baseDir resolves any file-path refs in the document ("" = none;
+// managed-cluster configs use inline *-data and need no baseDir). Returns non-nil
+// added/updated/skipped. A document that does not parse as a kubeconfig is a real error here
+// (unlike the auto-scan, the operator explicitly chose this file). The operator path passes
+// update=true so a re-upload refreshes an existing cluster.
+func (im *Importer) ImportContent(data []byte, baseDir string, update bool) (added, updated, skipped []string, err error) {
 	log := im.logger()
-	added, skipped = []string{}, []string{}
+	added, updated, skipped = []string{}, []string{}, []string{}
 
-	have, err := im.existingNames()
+	have, err := im.existing()
 	if err != nil {
-		return added, skipped, err
+		return added, updated, skipped, err
 	}
 	clusters, warnings, parseErr := ParseKubeconfig(data, baseDir)
 	if parseErr != nil {
-		return added, skipped, fmt.Errorf("parse uploaded kubeconfig: %w", parseErr)
+		return added, updated, skipped, fmt.Errorf("parse uploaded kubeconfig: %w", parseErr)
 	}
 	for _, w := range warnings {
 		log.Warn("kubeconfig import: skipped context", "reason", w)
 	}
-	if regErr := im.register(log, clusters, have, &added, &skipped); regErr != nil {
-		return added, skipped, regErr
+	if regErr := im.register(log, clusters, have, update, &added, &updated, &skipped); regErr != nil {
+		return added, updated, skipped, regErr
 	}
-	return added, skipped, nil
+	return added, updated, skipped, nil
 }
 
 func (im *Importer) logger() *slog.Logger {
@@ -93,37 +97,47 @@ func (im *Importer) logger() *slog.Logger {
 	return slog.Default()
 }
 
-// existingNames returns the set of upstream names already registered (for skip-existing).
-func (im *Importer) existingNames() (map[string]struct{}, error) {
-	existing, err := im.Reg.List()
+// existing returns the upstreams already registered, keyed by name (for skip / update-in-place).
+func (im *Importer) existing() (map[string]*upstream.Upstream, error) {
+	ups, err := im.Reg.List()
 	if err != nil {
 		return nil, fmt.Errorf("list upstreams: %w", err)
 	}
-	have := make(map[string]struct{}, len(existing))
-	for _, u := range existing {
-		have[u.Name] = struct{}{}
+	have := make(map[string]*upstream.Upstream, len(ups))
+	for _, u := range ups {
+		have[u.Name] = u
 	}
 	return have, nil
 }
 
-// register creates every parsed cluster whose name is not already present, appending to added /
-// skipped and updating have. It is the shared idempotent body of Import and ImportContent.
-func (im *Importer) register(log *slog.Logger, clusters []ParsedCluster, have map[string]struct{}, added, skipped *[]string) error {
+// register creates every parsed cluster not already present; a name that already exists is updated
+// in place (update=true) or skipped (update=false). It appends to added/updated/skipped and keeps
+// have current. Shared body of Import and ImportContent.
+func (im *Importer) register(log *slog.Logger, clusters []ParsedCluster, have map[string]*upstream.Upstream, update bool, added, updated, skipped *[]string) error {
 	for _, c := range clusters {
-		if _, ok := have[c.Name]; ok {
-			*skipped = append(*skipped, c.Name)
-			continue
-		}
 		// SECURITY: surface a disabled-verification cluster loudly. The flag came from an
 		// explicit insecure-skip-tls-verify:true in the operator's own kubeconfig.
 		if c.Auth.K8sInsecureSkipVerify {
 			log.Warn("cluster registered with TLS verification DISABLED from its kubeconfig",
 				"cluster", c.Name, "server", c.Server)
 		}
-		if _, createErr := im.Reg.CreateKind(c.Name, c.Server, upstream.KindK8s, c.Auth); createErr != nil {
+		if cur, ok := have[c.Name]; ok {
+			if !update {
+				*skipped = append(*skipped, c.Name)
+				continue
+			}
+			// Refresh server + auth on the SAME upstream ID so the cluster's rules survive.
+			if err := im.Reg.UpdateTarget(cur.ID, c.Server, c.Auth); err != nil {
+				return fmt.Errorf("update cluster %q: %w", c.Name, err)
+			}
+			*updated = append(*updated, c.Name)
+			continue
+		}
+		created, createErr := im.Reg.CreateKind(c.Name, c.Server, upstream.KindK8s, c.Auth)
+		if createErr != nil {
 			return fmt.Errorf("register cluster %q: %w", c.Name, createErr)
 		}
-		have[c.Name] = struct{}{}
+		have[c.Name] = created
 		*added = append(*added, c.Name)
 	}
 	return nil

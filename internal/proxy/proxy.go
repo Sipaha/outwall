@@ -234,6 +234,14 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	auth, err := h.AuthManager.Authenticator(up)
 	if err != nil {
+		// A k8s cluster with no usable k8s_auth (e.g. its credential was overwritten) lands here;
+		// give the operator an actionable message instead of an opaque "auth config error".
+		if isK8s {
+			h.Logger.Error("k8s cluster credential unusable", "cluster", up.Name, "err", err)
+			writeErr(w, http.StatusBadGateway,
+				"cluster credential not configured — operator must re-import its kubeconfig")
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, "auth config error")
 		return
 	}

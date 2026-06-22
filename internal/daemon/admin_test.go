@@ -18,6 +18,7 @@ import (
 	"github.com/Sipaha/outwall/internal/approval"
 	"github.com/Sipaha/outwall/internal/events"
 	"github.com/Sipaha/outwall/internal/policy"
+	"github.com/Sipaha/outwall/internal/upstream"
 )
 
 func newDaemon(t *testing.T) *Daemon {
@@ -366,67 +367,54 @@ func TestUISSEExemptFromCSRF(t *testing.T) {
 	require.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
 }
 
-func TestVaultUnlockAutoImportsClusters(t *testing.T) {
+// TestVaultUnlockDoesNotAutoImport verifies the auto-scan runs ONLY at init, never on unlock
+// (ADR-0026). A kubeconfig that appears AFTER init is not pulled in by an unlock — the operator
+// must use the explicit Import button.
+func TestVaultUnlockDoesNotAutoImport(t *testing.T) {
 	d := newDaemon(t)
 	h := d.AdminHandler()
 
-	// A kubeconfig with two contexts on disk, pointed at by $KUBECONFIG.
+	// init while KUBECONFIG points at newDaemon's nonexistent path → 0 clusters seeded.
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	// Only NOW does a kubeconfig appear on disk.
 	src := `
 apiVersion: v1
 kind: Config
 clusters:
   - name: c1
-    cluster:
-      server: https://c1.example:6443
-      insecure-skip-tls-verify: true
-  - name: c2
-    cluster:
-      server: https://c2.example:6443
-      insecure-skip-tls-verify: true
+    cluster: { server: https://c1.example:6443, insecure-skip-tls-verify: true }
 users:
   - name: u
-    user:
-      token: t
+    user: { token: t }
 contexts:
   - name: kc-ctx-1
     context: { cluster: c1, user: u }
-  - name: kc-ctx-2
-    context: { cluster: c2, user: u }
 `
 	kcPath := filepath.Join(t.TempDir(), "config")
 	require.NoError(t, os.WriteFile(kcPath, []byte(src), 0o600))
 	t.Setenv("KUBECONFIG", kcPath)
 
-	// init leaves the vault unlocked; lock then unlock to drive the unlock hook.
-	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+	// Lock then unlock — the unlock hook must NOT scan/import.
 	d.vault.Lock()
 	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/unlock", `{"password":"pw"}`).Code)
 
-	// The two kubeconfig contexts are now kind=k8s upstreams.
 	wl := req(t, h, "GET", "/upstreams", "")
 	require.Equal(t, http.StatusOK, wl.Code)
 	var ups []map[string]any
 	require.NoError(t, json.Unmarshal(wl.Body.Bytes(), &ups))
-	names := map[string]any{}
-	for _, u := range ups {
-		names[fmt.Sprint(u["name"])] = u["kind"]
-	}
-	require.Equal(t, "k8s", names["kc-ctx-1"])
-	require.Equal(t, "k8s", names["kc-ctx-2"])
+	require.Empty(t, ups, "unlock must not auto-import a kubeconfig that appeared after init")
 
-	// Unlock again (idempotent) — still exactly the two clusters, no duplicates.
-	d.vault.Lock()
-	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/unlock", `{"password":"pw"}`).Code)
+	// The explicit Import button DOES pull it in.
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/clusters/import", "").Code)
 	wl2 := req(t, h, "GET", "/upstreams", "")
 	var ups2 []map[string]any
 	require.NoError(t, json.Unmarshal(wl2.Body.Bytes(), &ups2))
-	count := 0
+	names := map[string]any{}
 	for _, u := range ups2 {
-		if u["name"] == "kc-ctx-1" || u["name"] == "kc-ctx-2" {
-			count++
-		}
+		names[fmt.Sprint(u["name"])] = u["kind"]
 	}
-	require.Equal(t, 2, count, "auto-import must be idempotent across unlocks")
+	require.Equal(t, "k8s", names["kc-ctx-1"], "explicit import must register the cluster")
 }
 
 // TestVaultInitAutoImportsClusters verifies a fresh `vault init` (no lock/unlock cycle) auto-imports
@@ -501,21 +489,23 @@ contexts:
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
 	require.Contains(t, res.Added, "ep-ctx")
 
-	// Second call → skipped, nothing added.
+	// Second call → the explicit path uses update=true, so the existing cluster is refreshed
+	// in place (reported under "updated"), not skipped, and nothing is added.
 	w2 := req(t, h, "POST", "/clusters/import", "")
 	require.Equal(t, http.StatusOK, w2.Code)
 	var res2 struct {
 		Added   []string `json:"added"`
+		Updated []string `json:"updated"`
 		Skipped []string `json:"skipped"`
 	}
 	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &res2))
-	require.Contains(t, res2.Skipped, "ep-ctx")
+	require.Contains(t, res2.Updated, "ep-ctx")
 	require.Empty(t, res2.Added)
+	require.Empty(t, res2.Skipped)
 
-	// The all-skipped response must encode `added` as an empty JSON array, never `null`:
-	// a nil Go slice serializes to null, and the UI's res.added.length throws on null,
-	// firing a false "Failed to import" toast even though the import succeeded (HTTP 200).
-	require.JSONEq(t, `{"added":[],"skipped":["ep-ctx"]}`, w2.Body.String())
+	// Lists must encode as empty JSON arrays, never `null`: a nil Go slice serializes to null,
+	// and the UI's res.added.length throws on null, firing a false "Failed to import" toast.
+	require.JSONEq(t, `{"added":[],"updated":["ep-ctx"],"skipped":[]}`, w2.Body.String())
 }
 
 // TestClustersImportFromBody drives POST /clusters/import with an uploaded kubeconfig body (the
@@ -550,6 +540,29 @@ contexts: [{ name: body-ctx, context: { cluster: bc, user: bu } }]
 	// A junk body is a 400 (the operator explicitly uploaded a bad file).
 	wbad := req(t, h, "POST", "/clusters/import", "not a kubeconfig: [")
 	require.Equal(t, http.StatusBadRequest, wbad.Code)
+}
+
+// TestHostApproveRefusesK8sCredential is defense-in-depth (ADR-0026): approving a host-access card
+// that targets a k8s cluster must NOT overwrite the cluster's k8s credential with an HTTP one.
+func TestHostApproveRefusesK8sCredential(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	cl, err := d.upstreams.CreateKind("prod-cluster", "https://api.k8s:6443", upstream.KindK8s,
+		upstream.AuthConfig{Type: "none", K8sAuth: "token", Token: "cluster-secret"})
+	require.NoError(t, err)
+
+	err = d.applyApprovalSideEffects(
+		approval.Pending{Kind: approval.KindHostAccess, UpstreamID: cl.ID, Host: cl.Name},
+		&upstream.AuthConfig{Type: "static", Header: "Authorization", Token: "Bearer x"}, nil)
+	require.Error(t, err, "attaching an HTTP credential to a k8s cluster must be refused")
+
+	// The cluster's k8s token credential is intact (not clobbered).
+	after, err := d.upstreams.GetByID(cl.ID)
+	require.NoError(t, err)
+	require.Equal(t, "token", after.Auth.K8sAuth)
+	require.Equal(t, "cluster-secret", after.Auth.Token)
 }
 
 func TestAdminAccessRequests(t *testing.T) {

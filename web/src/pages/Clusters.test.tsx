@@ -24,6 +24,8 @@ describe('<Clusters>', () => {
         k8s_insecure: true,
       },
       { id: 'u1', name: 'github', base_url: 'https://api.github.com', auth_type: 'static', kind: 'http' },
+      // A cluster whose k8s credential was lost (empty k8s_auth) → flagged as misconfigured.
+      { id: 'c3', name: 'broken', base_url: 'https://broken:6443', auth_type: 'static', kind: 'k8s', k8s_auth: '' },
     ])
     vi.spyOn(api, 'listAgents').mockResolvedValue([])
     render(<Clusters />)
@@ -33,6 +35,8 @@ describe('<Clusters>', () => {
     expect(screen.queryByText('github')).not.toBeInTheDocument()
     // the insecure cluster shows a red "insecure" badge
     expect(screen.getByText('insecure')).toBeInTheDocument()
+    // a cluster with no k8s auth is flagged, not shown as a blank badge
+    expect(screen.getByText(/no auth/i)).toBeInTheDocument()
   })
 
   it('picks a kubeconfig file, uploads its content, and toasts the result', async () => {
@@ -40,7 +44,7 @@ describe('<Clusters>', () => {
     vi.spyOn(api, 'listAgents').mockResolvedValue([])
     const importSpy = vi
       .spyOn(api, 'importKubeconfigContent')
-      .mockResolvedValue({ added: ['prod', 'staging'], skipped: ['lab'] })
+      .mockResolvedValue({ added: ['prod', 'staging'], updated: [], skipped: ['lab'] })
     render(
       <>
         <Clusters />
@@ -66,6 +70,7 @@ describe('<Clusters>', () => {
     // null-guard so an HTTP-200 import never fires "Failed to import clusters".
     vi.spyOn(api, 'importKubeconfigContent').mockResolvedValue({
       added: null as unknown as string[],
+      updated: null as unknown as string[],
       skipped: ['lab'],
     })
     render(
@@ -79,7 +84,7 @@ describe('<Clusters>', () => {
     const file = new File(['apiVersion: v1\n'], 'config.yaml', { type: 'text/yaml' })
     fireEvent.change(input, { target: { files: [file] } })
 
-    expect(await screen.findByText(/added 0, skipped 1/i)).toBeInTheDocument()
+    expect(await screen.findByText(/added 0, updated 0, skipped 1/i)).toBeInTheDocument()
     expect(screen.queryByText(/Failed to import/i)).not.toBeInTheDocument()
   })
 

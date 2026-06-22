@@ -31,6 +31,7 @@ blob (so the token is masked at rest exactly like `Create`). See ADR-0015.
 - `(*Registry).CreateKind(name, baseURL, kind string, auth AuthConfig) (*Upstream, error)` — encrypts auth before storing.
 - `(*Registry).GetOrCreateByHost(host string) (*Upstream, bool, error)` — lazy, idempotent host upstream; bool reports creation.
 - `(*Registry).SetAuth(id string, auth AuthConfig) error` — re-encrypts + attaches the credential by ID; `ErrNotFound` if absent.
+- `(*Registry).UpdateTarget(id, baseURL string, auth AuthConfig) error` — replaces base URL + auth in place by ID (keeps the ID so rules survive); used by the explicit kubeconfig re-import (ADR-0026). `ErrNotFound` if absent.
 - `(*Registry).GetByName(name string) (*Upstream, error)` — `ErrNotFound` if absent.
 - `(*Registry).GetByID(id string) (*Upstream, error)` — `ErrNotFound` if absent (used by the OAuth token persister).
 - `(*Registry).DeleteByName(name string) error` — `ErrNotFound` if absent.

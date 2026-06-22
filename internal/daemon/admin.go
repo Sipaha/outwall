@@ -132,10 +132,10 @@ func (d *Daemon) hVaultInit(w http.ResponseWriter, r *http.Request) {
 		adminErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// Init leaves the vault unlocked, so mirror the unlock side effects: announce it and
-	// best-effort auto-import the host's kubeconfig clusters now that the vault can encrypt their
-	// auth. First-run is exactly when there is nothing yet, so this seeds the clusters; a failure
-	// must NEVER fail the init (it is logged only). Further clusters are added manually.
+	// Init leaves the vault unlocked. First run is exactly when there is nothing yet, so this is
+	// the ONE place we auto-import the host's kubeconfig clusters (now that the vault can encrypt
+	// their auth) — seeding an empty vault. A failure must NEVER fail the init (logged only).
+	// Later clusters are added/refreshed via the explicit Import button, not on unlock (ADR-0026).
 	d.publish("vault.unlocked", map[string]any{})
 	d.autoImportClusters()
 	writeJSON(w, http.StatusOK, map[string]bool{"initialized": true})
@@ -152,9 +152,9 @@ func (d *Daemon) hVaultUnlock(w http.ResponseWriter, r *http.Request) {
 	switch err := d.vault.Unlock(body.Password); {
 	case err == nil:
 		d.publish("vault.unlocked", map[string]any{})
-		// Best-effort auto-import of the host's kubeconfig clusters now that the vault can
-		// encrypt their auth. A failure here must NEVER fail the unlock — it is logged only.
-		d.autoImportClusters()
+		// NOTE: no kubeconfig auto-import here. The scan runs ONLY at init (first run) — re-running
+		// it on every unlock would risk clobbering operator state and is unnecessary. To pull in
+		// new/changed clusters later the operator uses the explicit Import button (ADR-0026).
 		writeJSON(w, http.StatusOK, map[string]bool{"locked": false})
 	case errors.Is(err, secret.ErrBadPassword):
 		adminErr(w, http.StatusUnauthorized, "incorrect master password")
@@ -245,10 +245,12 @@ func (d *Daemon) hUpstreamSetAuth(w http.ResponseWriter, r *http.Request) {
 // enough to reject a runaway upload.
 const maxImportBody = 1 << 20
 
-// hClustersImport imports clusters. When the request carries a body it is treated as an uploaded
-// kubeconfig (the file-picker path) and imported via ImportContent; otherwise it auto-discovers
-// and scans the host's kubeconfig files. Either way it returns the (non-nil) names added/skipped.
-// It requires the vault unlocked (Create encrypts).
+// hClustersImport imports clusters at the operator's explicit request. When the request carries a
+// body it is treated as an uploaded kubeconfig (the file-picker path) and imported via
+// ImportContent; otherwise it re-scans the host's kubeconfig files. Either way it is an explicit
+// operator action, so update=true: an existing cluster is refreshed in place (server + auth on the
+// same upstream ID — its rules survive), which is how the operator repairs or rotates credentials
+// (see ADR-0026). Returns the (non-nil) names added/updated/skipped. Requires the vault unlocked.
 func (d *Daemon) hClustersImport(w http.ResponseWriter, r *http.Request) {
 	body, readErr := io.ReadAll(io.LimitReader(r.Body, maxImportBody))
 	if readErr != nil {
@@ -256,30 +258,33 @@ func (d *Daemon) hClustersImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var added, skipped []string
+	var added, updated, skipped []string
 	var err error
 	if len(body) > 0 {
 		// Operator-uploaded kubeconfig: no baseDir (managed configs use inline *-data).
-		added, skipped, err = d.importer.ImportContent(body, "")
+		added, updated, skipped, err = d.importer.ImportContent(body, "", true)
 	} else {
-		added, skipped, err = d.importer.Import(k8s.DiscoverKubeconfigPaths())
+		added, updated, skipped, err = d.importer.Import(k8s.DiscoverKubeconfigPaths(), true)
 	}
 	if err != nil {
 		adminErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if len(added) > 0 {
-		d.publish("upstream.created", map[string]any{"count": len(added)})
+	if len(added) > 0 || len(updated) > 0 {
+		d.publish("upstream.created", map[string]any{"count": len(added) + len(updated)})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"added": added, "skipped": skipped})
+	writeJSON(w, http.StatusOK, map[string]any{"added": added, "updated": updated, "skipped": skipped})
 }
 
-// autoImportClusters runs the importer best-effort after a successful vault unlock. Any error
-// is logged and swallowed so a kubeconfig problem never blocks unlocking the daemon.
+// autoImportClusters seeds clusters from the host's kubeconfig on first run (vault init), best
+// effort. It runs ONLY at init — not on unlock — because the scan is meant to seed an empty vault,
+// not to re-run on every unlock and risk clobbering operator state (see ADR-0026). update=false:
+// any name already present is skipped. Any error is logged and swallowed so a kubeconfig problem
+// never blocks init.
 func (d *Daemon) autoImportClusters() {
-	added, skipped, err := d.importer.Import(k8s.DiscoverKubeconfigPaths())
+	added, _, skipped, err := d.importer.Import(k8s.DiscoverKubeconfigPaths(), false)
 	if err != nil {
-		slog.Warn("kubeconfig auto-import failed (continuing — unlock unaffected)", "err", err)
+		slog.Warn("kubeconfig auto-import failed (continuing — init unaffected)", "err", err)
 		return
 	}
 	if len(added) > 0 {
@@ -562,6 +567,17 @@ func (d *Daemon) applyApprovalSideEffects(p approval.Pending, auth *upstream.Aut
 	case approval.KindHostAccess:
 		// Attach the operator-entered credential to the lazily-created host upstream (optional).
 		if auth != nil {
+			// Defense-in-depth: never let a host credential overwrite a k8s cluster's auth. A k8s
+			// cluster is pre-credentialed and SetAuth replaces the WHOLE auth config — a static
+			// header would wipe its k8s_auth and break the data plane. request_host_access no longer
+			// raises a host card for k8s (ADR-0025), so this guards a card that should never exist.
+			up, err := d.upstreams.GetByID(p.UpstreamID)
+			if err != nil {
+				return fmt.Errorf("load upstream: %w", err)
+			}
+			if up.Kind == upstream.KindK8s {
+				return fmt.Errorf("refusing to attach an HTTP credential to k8s cluster %q — re-import its kubeconfig instead", up.Name)
+			}
 			if err := d.upstreams.SetAuth(p.UpstreamID, *auth); err != nil {
 				return fmt.Errorf("attach host credential: %w", err)
 			}

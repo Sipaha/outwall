@@ -67,7 +67,7 @@ func TestImporterIdempotent(t *testing.T) {
 	im := &Importer{Reg: reg, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	path := writeKubeconfig(t)
 
-	added, skipped, err := im.Import([]string{path})
+	added, _, skipped, err := im.Import([]string{path}, false)
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"a-ctx", "b-ctx"}, added)
 	require.Empty(t, skipped)
@@ -85,7 +85,7 @@ func TestImporterIdempotent(t *testing.T) {
 	require.True(t, b.Auth.K8sInsecureSkipVerify)
 
 	// Second import: nothing added, both skipped (idempotent).
-	added2, skipped2, err := im.Import([]string{path})
+	added2, _, skipped2, err := im.Import([]string{path}, false)
 	require.NoError(t, err)
 	require.Empty(t, added2)
 	require.ElementsMatch(t, []string{"a-ctx", "b-ctx"}, skipped2)
@@ -100,7 +100,7 @@ func TestImporterMissingPathSkipped(t *testing.T) {
 	_, _, reg := newReg(t)
 	im := &Importer{Reg: reg, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	// A non-existent path is silently skipped (not every discovered path exists).
-	added, skipped, err := im.Import([]string{filepath.Join(t.TempDir(), "does-not-exist")})
+	added, _, skipped, err := im.Import([]string{filepath.Join(t.TempDir(), "does-not-exist")}, false)
 	require.NoError(t, err)
 	require.Empty(t, added)
 	require.Empty(t, skipped)
@@ -112,7 +112,7 @@ func TestImporterLockedVaultErrors(t *testing.T) {
 	im := &Importer{Reg: reg, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	path := writeKubeconfig(t)
 
-	added, _, err := im.Import([]string{path})
+	added, _, _, err := im.Import([]string{path}, false)
 	require.Error(t, err, "a locked vault cannot encrypt new auth → wrapped error")
 	require.ErrorIs(t, err, secret.ErrLocked)
 	require.Empty(t, added)
@@ -147,7 +147,7 @@ contexts: [{ name: ctx-two, context: { cluster: c2, user: u2 } }]
 	require.NoError(t, os.MkdirAll(filepath.Join(kubeDir, "cache"), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(kubeDir, "cache", "x"), []byte("nope"), 0o600))
 
-	added, skipped, err := im.Import(discoverKubeconfigPathsIn(kubeDir, ""))
+	added, _, skipped, err := im.Import(discoverKubeconfigPathsIn(kubeDir, ""), false)
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"ctx-one", "ctx-two"}, added)
 	require.Empty(t, skipped)
@@ -169,7 +169,7 @@ clusters: [{ name: up-c, cluster: { server: https://up.example:6443, insecure-sk
 users: [{ name: up-u, user: { token: up-token } }]
 contexts: [{ name: uploaded-ctx, context: { cluster: up-c, user: up-u } }]
 `
-	added, skipped, err := im.ImportContent([]byte(src), "")
+	added, _, skipped, err := im.ImportContent([]byte(src), "", false)
 	require.NoError(t, err)
 	require.Equal(t, []string{"uploaded-ctx"}, added)
 	require.Empty(t, skipped)
@@ -182,10 +182,52 @@ contexts: [{ name: uploaded-ctx, context: { cluster: up-c, user: up-u } }]
 	require.Equal(t, "up-token", c.Auth.Token)
 
 	// Idempotent: a second upload of the same body skips, adds nothing.
-	added2, skipped2, err := im.ImportContent([]byte(src), "")
+	added2, _, skipped2, err := im.ImportContent([]byte(src), "", false)
 	require.NoError(t, err)
 	require.Empty(t, added2)
 	require.Equal(t, []string{"uploaded-ctx"}, skipped2)
+}
+
+// TestImporterUpdatesOnReimport: with update=true an existing cluster is refreshed in place —
+// same upstream ID (so its rules survive), new server + auth. This is the repair/rotate path.
+func TestImporterUpdatesOnReimport(t *testing.T) {
+	_, _, reg := newReg(t)
+	im := &Importer{Reg: reg, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	v1 := `
+apiVersion: v1
+kind: Config
+clusters: [{ name: cc, cluster: { server: https://old.example:6443, insecure-skip-tls-verify: true } }]
+users: [{ name: cu, user: { token: old-token } }]
+contexts: [{ name: cc-ctx, context: { cluster: cc, user: cu } }]
+`
+	added, updated, _, err := im.ImportContent([]byte(v1), "", true)
+	require.NoError(t, err)
+	require.Equal(t, []string{"cc-ctx"}, added)
+	require.Empty(t, updated)
+	before, err := reg.GetByName("cc-ctx")
+	require.NoError(t, err)
+
+	// Re-import the SAME context name with a new server + token and update=true.
+	v2 := `
+apiVersion: v1
+kind: Config
+clusters: [{ name: cc, cluster: { server: https://new.example:6443, insecure-skip-tls-verify: true } }]
+users: [{ name: cu, user: { token: new-token } }]
+contexts: [{ name: cc-ctx, context: { cluster: cc, user: cu } }]
+`
+	added2, updated2, skipped2, err := im.ImportContent([]byte(v2), "", true)
+	require.NoError(t, err)
+	require.Empty(t, added2)
+	require.Empty(t, skipped2)
+	require.Equal(t, []string{"cc-ctx"}, updated2)
+
+	after, err := reg.GetByName("cc-ctx")
+	require.NoError(t, err)
+	require.Equal(t, before.ID, after.ID, "update must keep the same upstream ID so rules survive")
+	require.Equal(t, "https://new.example:6443", after.BaseURL)
+	require.Equal(t, "new-token", after.Auth.Token)
+	require.Equal(t, "token", after.Auth.K8sAuth)
 }
 
 // TestImporterImportContentRejectsJunk: an explicitly-uploaded non-kubeconfig is a real error
@@ -193,7 +235,7 @@ contexts: [{ name: uploaded-ctx, context: { cluster: up-c, user: up-u } }]
 func TestImporterImportContentRejectsJunk(t *testing.T) {
 	_, _, reg := newReg(t)
 	im := &Importer{Reg: reg, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	added, skipped, err := im.ImportContent([]byte("not a kubeconfig: ["), "")
+	added, _, skipped, err := im.ImportContent([]byte("not a kubeconfig: ["), "", false)
 	require.Error(t, err)
 	require.Empty(t, added)
 	require.Empty(t, skipped)

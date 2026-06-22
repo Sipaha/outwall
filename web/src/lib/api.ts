@@ -164,7 +164,7 @@ export async function importKubeconfigContent(content: string): Promise<ClusterI
   })
   if (!res.ok) throw await extractApiError(res)
   const text = await res.text()
-  return (text ? JSON.parse(text) : { added: [], skipped: [] }) as ClusterImportResult
+  return (text ? JSON.parse(text) : { added: [], updated: [], skipped: [] }) as ClusterImportResult
 }
 
 /** Assemble an agent kubeconfig for a cluster (agent token + the local CA). */

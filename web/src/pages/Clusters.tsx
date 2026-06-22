@@ -131,7 +131,7 @@ export function Clusters() {
       const res = await importKubeconfigContent(content)
       push(
         'success',
-        `Imported clusters — added ${(res.added ?? []).length}, skipped ${(res.skipped ?? []).length}`,
+        `Imported clusters — added ${(res.added ?? []).length}, updated ${(res.updated ?? []).length}, skipped ${(res.skipped ?? []).length}`,
       )
       load()
     } catch (err) {
@@ -237,7 +237,20 @@ export function Clusters() {
               ),
             },
             { header: 'API URL', cell: (c) => c.base_url, className: 'font-mono text-muted-foreground' },
-            { header: 'Auth', cell: (c) => <StatusBadge status={c.k8s_auth ?? 'none'} /> },
+            {
+              header: 'Auth',
+              cell: (c) =>
+                c.k8s_auth ? (
+                  <StatusBadge status={c.k8s_auth} />
+                ) : (
+                  <span
+                    className="rounded bg-destructive/15 px-1.5 py-0 text-[11px] font-medium text-destructive"
+                    title="No k8s credential — re-import this cluster's kubeconfig (Import from kubeconfig)"
+                  >
+                    ⚠ no auth
+                  </span>
+                ),
+            },
             {
               header: '',
               cell: (c) => (

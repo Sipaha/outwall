@@ -67,9 +67,10 @@ export interface ClusterAuthConfig {
   exec_args?: string[]
 }
 
-/** POST /api/clusters/import response — cluster names added / already-present. */
+/** POST /api/clusters/import response — cluster names added / refreshed-in-place / already-present. */
 export interface ClusterImportResult {
   added: string[]
+  updated: string[]
   skipped: string[]
 }
 

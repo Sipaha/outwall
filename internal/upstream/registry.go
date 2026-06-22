@@ -185,6 +185,32 @@ func (r *Registry) SetAuth(id string, auth AuthConfig) error {
 	return nil
 }
 
+// UpdateTarget replaces an existing upstream's base URL and (encrypted) auth config in place,
+// keyed by ID — so the upstream keeps its ID and every policy rule that references it. Used by the
+// explicit kubeconfig re-import path to refresh a cluster's server + credential without a
+// delete+recreate that would orphan its rules (see ADR-0026).
+func (r *Registry) UpdateTarget(id, baseURL string, auth AuthConfig) error {
+	raw, err := json.Marshal(auth)
+	if err != nil {
+		return fmt.Errorf("marshal auth: %w", err)
+	}
+	enc, err := r.vault.Encrypt(raw)
+	if err != nil {
+		return fmt.Errorf("encrypt auth: %w", err)
+	}
+	res, err := r.store.DB().Exec(
+		`UPDATE upstreams SET base_url=?, auth_type=?, auth_config=? WHERE id=?`,
+		baseURL, auth.Type, enc, id)
+	if err != nil {
+		return fmt.Errorf("update upstream target: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *Registry) scan(row interface{ Scan(...any) error }) (*Upstream, error) {
 	var (
 		up      Upstream
