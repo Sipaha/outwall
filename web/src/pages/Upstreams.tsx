@@ -5,6 +5,7 @@ import {
   setUpstreamAuth,
   deleteUpstream,
   oauthLogin,
+  discoverOIDC,
   ApiError,
 } from '../lib/api'
 import type { Upstream, UpstreamAuthConfig } from '../lib/types'
@@ -28,6 +29,30 @@ interface AuthFieldsProps {
 /** The auth-type <select> + the conditional credential fields, shared by the add-host and
  *  set-credential modals (static header/value, basic user/pass, oidc client-credentials). */
 function AuthFields({ auth, setAuth }: AuthFieldsProps) {
+  const push = useToastStore((s) => s.push)
+  const [issuer, setIssuer] = useState('')
+  const [discovering, setDiscovering] = useState(false)
+
+  // discover fetches the OIDC well-known document for the issuer URL and fills the endpoints + scope.
+  async function discover() {
+    if (!issuer.trim()) return
+    setDiscovering(true)
+    try {
+      const d = await discoverOIDC(issuer.trim())
+      setAuth({
+        ...auth,
+        auth_url: d.authorization_endpoint,
+        token_url: d.token_endpoint,
+        scope: auth.scope || (d.scopes_supported?.includes('openid') ? 'openid profile' : auth.scope),
+      })
+      push('success', 'OIDC endpoints discovered')
+    } catch (err) {
+      push('error', err instanceof ApiError ? err.message : 'Discovery failed')
+    } finally {
+      setDiscovering(false)
+    }
+  }
+
   return (
     <>
       <FormField label="Auth type">
@@ -129,6 +154,25 @@ function AuthFields({ auth, setAuth }: AuthFieldsProps) {
       )}
       {auth.type === 'oidc-authorization-code' && (
         <>
+          <FormField label="Issuer / discovery URL (auto-fill)">
+            <div className="flex gap-2">
+              <input
+                className={fieldControlClass}
+                value={issuer}
+                onChange={(e) => setIssuer(e.target.value)}
+                placeholder="https://idp.example/realms/myrealm"
+                aria-label="Issuer or discovery URL"
+              />
+              <button
+                type="button"
+                onClick={discover}
+                disabled={discovering || !issuer.trim()}
+                className="shrink-0 rounded bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/25 disabled:opacity-50"
+              >
+                {discovering ? 'Discovering…' : 'Discover'}
+              </button>
+            </div>
+          </FormField>
           <FormField label="Authorization URL">
             <input
               className={fieldControlClass}

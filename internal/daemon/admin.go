@@ -14,6 +14,7 @@ import (
 	"github.com/Sipaha/outwall/internal/approval"
 	"github.com/Sipaha/outwall/internal/audit"
 	"github.com/Sipaha/outwall/internal/k8s"
+	"github.com/Sipaha/outwall/internal/oidcdisc"
 	"github.com/Sipaha/outwall/internal/optemplate"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/secret"
@@ -35,6 +36,7 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /upstreams/{name}", d.hUpstreamDelete)
 	mux.HandleFunc("POST /upstreams/{name}/auth", d.hUpstreamSetAuth)
 	mux.HandleFunc("POST /upstreams/{name}/oauth/login", d.hOAuthLogin)
+	mux.HandleFunc("POST /oidc/discover", d.hOIDCDiscover)
 	mux.HandleFunc("POST /agents/register", d.hAgentRegister)
 	mux.HandleFunc("GET /agents", d.hAgentList)
 	mux.HandleFunc("POST /clusters/import", d.hClustersImport)
@@ -773,6 +775,31 @@ func (d *Daemon) hAccessRequestResolve(w http.ResponseWriter, r *http.Request) {
 	default:
 		adminErr(w, http.StatusBadRequest, err.Error())
 	}
+}
+
+// hOIDCDiscover fetches an OpenID Connect provider's discovery document for an operator-entered
+// issuer (or full discovery) URL and returns the endpoints, so the Add-host form can auto-fill the
+// OIDC fields. Generic OIDC — no provider-specific handling.
+func (d *Daemon) hOIDCDiscover(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		URL string `json:"url"`
+	}
+	if err := decode(r, &body); err != nil {
+		adminErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	cfg, err := oidcdisc.Discover(r.Context(), &http.Client{Timeout: 10 * time.Second}, body.URL)
+	if err != nil {
+		adminErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"issuer":                 cfg.Issuer,
+		"authorization_endpoint": cfg.AuthorizationEndpoint,
+		"token_endpoint":         cfg.TokenEndpoint,
+		"end_session_endpoint":   cfg.EndSessionEndpoint,
+		"scopes_supported":       cfg.ScopesSupported,
+	})
 }
 
 func auditEntryMap(e audit.Entry) map[string]any {

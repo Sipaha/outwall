@@ -565,6 +565,32 @@ func TestHostApproveRefusesK8sCredential(t *testing.T) {
 	require.Equal(t, "cluster-secret", after.Auth.Token)
 }
 
+func TestOIDCDiscoverEndpoint(t *testing.T) {
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/realms/x/.well-known/openid-configuration" {
+			_, _ = w.Write([]byte(`{"issuer":"https://idp/realms/x","authorization_endpoint":"https://idp/auth","token_endpoint":"https://idp/token","scopes_supported":["openid","profile"]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer idp.Close()
+
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	w := req(t, h, "POST", "/oidc/discover", `{"url":"`+idp.URL+`/realms/x"}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var res map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	require.Equal(t, "https://idp/auth", res["authorization_endpoint"])
+	require.Equal(t, "https://idp/token", res["token_endpoint"])
+
+	// A non-resolving / bad issuer → 502, not a crash.
+	wbad := req(t, h, "POST", "/oidc/discover", `{"url":"not-a-url"}`)
+	require.Equal(t, http.StatusBadGateway, wbad.Code)
+}
+
 func TestAdminAccessRequests(t *testing.T) {
 	d := newDaemon(t)
 	h := d.AdminHandler()

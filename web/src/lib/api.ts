@@ -136,6 +136,21 @@ export function oauthLogin(name: string): Promise<{ url: string; opened: boolean
   return request('POST', `/upstreams/${encodeURIComponent(name)}/oauth/login`)
 }
 
+/** OIDC discovery result (the subset of the well-known document outwall uses). */
+export interface OIDCDiscovery {
+  issuer: string
+  authorization_endpoint: string
+  token_endpoint: string
+  end_session_endpoint?: string
+  scopes_supported?: string[]
+}
+
+/** Fetch an OIDC provider's discovery document for an issuer (or full discovery) URL, to auto-fill
+ *  the host form's OIDC endpoints. */
+export function discoverOIDC(url: string): Promise<OIDCDiscovery> {
+  return request('POST', '/oidc/discover', { url })
+}
+
 // --- Clusters (kind=k8s upstreams) ---
 
 /** Create a kind=k8s cluster. Reuses POST /upstreams with kind:"k8s". */

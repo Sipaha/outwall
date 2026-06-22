@@ -45,6 +45,39 @@ describe('<Hosts> (Upstreams.tsx)', () => {
     )
   })
 
+  it('auto-fills OIDC endpoints via Discover', async () => {
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([])
+    const discoverSpy = vi.spyOn(api, 'discoverOIDC').mockResolvedValue({
+      issuer: 'https://idp/realms/x',
+      authorization_endpoint: 'https://idp/realms/x/auth',
+      token_endpoint: 'https://idp/realms/x/token',
+      scopes_supported: ['openid', 'profile'],
+    })
+    render(<Upstreams />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Add host' }))
+    // Switch auth type to OIDC authorization-code.
+    fireEvent.change(screen.getByLabelText('Auth type'), {
+      target: { value: 'oidc-authorization-code' },
+    })
+    // Enter the issuer URL and click Discover.
+    fireEvent.change(screen.getByLabelText('Issuer or discovery URL'), {
+      target: { value: 'https://idp/realms/x' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Discover' }))
+
+    await waitFor(() => expect(discoverSpy).toHaveBeenCalledWith('https://idp/realms/x'))
+    // The endpoint fields are filled from the discovery document.
+    await waitFor(() =>
+      expect((screen.getByLabelText('Authorization URL') as HTMLInputElement).value).toBe(
+        'https://idp/realms/x/auth',
+      ),
+    )
+    expect((screen.getByLabelText('Token URL (auth-code)') as HTMLInputElement).value).toBe(
+      'https://idp/realms/x/token',
+    )
+  })
+
   it('removes a host via deleteUpstream', async () => {
     vi.spyOn(api, 'listUpstreams').mockResolvedValue([
       { id: 'u2', name: 'plain.test', base_url: 'https://plain.test', auth_type: 'none' },
