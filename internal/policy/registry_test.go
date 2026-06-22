@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -112,4 +113,22 @@ func TestSetVariablePolicy(t *testing.T) {
 
 	// An unknown variable is rejected — no silent widening.
 	require.Error(t, reg.SetVariablePolicy(created.ID, "nope", ValuePolicy{Mode: "any"}))
+}
+
+func TestProfileRuleRoundTrip(t *testing.T) {
+	reg := newReg(t)
+	created, err := reg.Create(Rule{
+		UpstreamID:    "up1",
+		Outcome:       Allow,
+		Profile:       "citeck",
+		ProfileParams: json.RawMessage(`{"op":"read","source_id":"emodel/type","workspace":"*"}`),
+	})
+	require.NoError(t, err)
+
+	got, err := reg.ForUpstream("up1")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, "citeck", got[0].Profile)
+	require.JSONEq(t, `{"op":"read","source_id":"emodel/type","workspace":"*"}`, string(got[0].ProfileParams))
+	require.Equal(t, created.ID, got[0].ID)
 }

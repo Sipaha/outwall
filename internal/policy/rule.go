@@ -5,6 +5,7 @@
 package policy
 
 import (
+	"encoding/json"
 	"regexp"
 	"strings"
 	"sync"
@@ -40,6 +41,11 @@ type Rule struct {
 	Namespace string // glob: "", "prod", "prod-*", "*"
 	Resource  string // glob over "resource" or "resource/subresource", e.g. "pods", "pods/log", "*"
 	Verb      string // "", "*", or one verb: get/list/watch/create/update/patch/delete/deletecollection
+
+	// Server-profile rule (empty on raw-http/k8s rules): the profile that owns this rule and its
+	// opaque, profile-defined params (see internal/serverprofile).
+	Profile       string
+	ProfileParams json.RawMessage
 }
 
 // ValuePolicy is the per-variable gating policy on an operation rule. Behaviour by Type:
