@@ -120,3 +120,20 @@ func TestCreateKindK8sRoundTrips(t *testing.T) {
 	require.Equal(t, "k8s", kinds["prod-cluster"])
 	require.Equal(t, "http", kinds["plain"])
 }
+
+func TestUpstreamProfileRoundTrip(t *testing.T) {
+	_, reg := setup(t)
+
+	up, err := reg.CreateProfiled("api.example.test", "https://api.example.test", KindHTTP, "citeck", AuthConfig{Type: "none"})
+	require.NoError(t, err)
+	require.Equal(t, "citeck", up.Profile)
+
+	got, err := reg.GetByName("api.example.test")
+	require.NoError(t, err)
+	require.Equal(t, "citeck", got.Profile)
+
+	// A plain Create defaults to raw-http.
+	def, err := reg.Create("plain.test", "https://plain.test", AuthConfig{Type: "none"})
+	require.NoError(t, err)
+	require.Equal(t, "raw-http", def.Profile)
+}
