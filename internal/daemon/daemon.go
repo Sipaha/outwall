@@ -40,6 +40,12 @@ const DefaultMCPListen = "127.0.0.1:8181"
 // DefaultUIListen is the default localhost address for the desktop-UI control API + SSE listener.
 const DefaultUIListen = "127.0.0.1:8182"
 
+// DefaultCallbackListen is the default localhost address for the OIDC browser-login callback
+// listener. It is a fixed, dedicated loopback port so the redirect URI
+// (http://127.0.0.1:23312/callback) is stable and can be registered once in the IdP, independent of
+// the (possibly customized) UI port.
+const DefaultCallbackListen = "127.0.0.1:23312"
+
 // DefaultPruneInterval is how often the background audit pruner enforces the retention setting.
 const DefaultPruneInterval = time.Hour
 
@@ -50,7 +56,10 @@ type Config struct {
 	Listen     string // data-plane TCP listen address, e.g. 127.0.0.1:8080
 	MCPListen  string // MCP control-plane TCP listen address, e.g. 127.0.0.1:8181
 	UIListen   string // desktop-UI control API + SSE TCP listen address, e.g. 127.0.0.1:8182
-	CADir      string // local-CA dir; defaults to the DB's directory when empty
+	// CallbackListen is the dedicated loopback bind for the OIDC browser-login callback
+	// (default DefaultCallbackListen). Its /callback path is the redirect URI registered in the IdP.
+	CallbackListen string
+	CADir          string // local-CA dir; defaults to the DB's directory when empty
 
 	// PruneInterval is how often the background audit pruner enforces the stored retention. Zero
 	// uses DefaultPruneInterval; a negative value disables the pruner (tests / keep-all).
@@ -103,6 +112,9 @@ func New(cfg Config) (*Daemon, error) {
 	}
 	if cfg.UIListen == "" {
 		cfg.UIListen = DefaultUIListen
+	}
+	if cfg.CallbackListen == "" {
+		cfg.CallbackListen = DefaultCallbackListen
 	}
 	if cfg.Listen == "" {
 		cfg.Listen = DefaultListen
@@ -199,6 +211,11 @@ func (d *Daemon) Serve(ctx context.Context) error {
 	dataSrv := &http.Server{Addr: d.cfg.Listen, Handler: d.dataPlane, TLSConfig: dataTLS}
 	mcpSrv := &http.Server{Addr: d.cfg.MCPListen, Handler: d.mcp}
 	uiSrv := &http.Server{Addr: d.cfg.UIListen, Handler: d.UIHandler()}
+	// Dedicated loopback listener for the OIDC browser-login callback (fixed redirect URI). Only
+	// /callback is served here; it reuses the same handler as the UI-mounted /oauth/callback.
+	cbMux := http.NewServeMux()
+	cbMux.HandleFunc("/callback", d.hOAuthCallback)
+	cbSrv := &http.Server{Addr: d.cfg.CallbackListen, Handler: cbMux}
 
 	// Background audit pruner: enforces the stored retention setting until ctx is canceled.
 	pruneInterval := d.cfg.PruneInterval
@@ -209,11 +226,12 @@ func (d *Daemon) Serve(ctx context.Context) error {
 		go d.audit.RunPruner(ctx, pruneInterval)
 	}
 
-	errc := make(chan error, 4)
+	errc := make(chan error, 5)
 	go func() { errc <- adminSrv.Serve(ln) }()
 	go func() { errc <- dataSrv.ListenAndServeTLS("", "") }()
 	go func() { errc <- mcpSrv.ListenAndServe() }()
 	go func() { errc <- uiSrv.ListenAndServe() }()
+	go func() { errc <- cbSrv.ListenAndServe() }()
 
 	select {
 	case <-ctx.Done():
@@ -221,6 +239,7 @@ func (d *Daemon) Serve(ctx context.Context) error {
 		_ = dataSrv.Close()
 		_ = mcpSrv.Close()
 		_ = uiSrv.Close()
+		_ = cbSrv.Close()
 		_ = os.Remove(d.cfg.SocketPath)
 		return nil
 	case err := <-errc:

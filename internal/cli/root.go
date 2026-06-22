@@ -8,15 +8,17 @@ import (
 
 	"github.com/Sipaha/outwall/internal/client"
 	"github.com/Sipaha/outwall/internal/config"
+	"github.com/Sipaha/outwall/internal/daemon"
 	"github.com/Sipaha/outwall/internal/version"
 )
 
 type globalFlags struct {
-	socket    string
-	db        string
-	listen    string
-	mcpListen string
-	uiListen  string
+	socket         string
+	db             string
+	listen         string
+	mcpListen      string
+	uiListen       string
+	callbackListen string
 }
 
 func defaultDir() string {
@@ -39,6 +41,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&gf.listen, "listen", "127.0.0.1:8080", "data-plane listen address")
 	root.PersistentFlags().StringVar(&gf.mcpListen, "mcp-listen", "127.0.0.1:8181", "MCP control-plane listen address")
 	root.PersistentFlags().StringVar(&gf.uiListen, "ui-listen", "127.0.0.1:8182", "desktop-UI control API + SSE listen address")
+	root.PersistentFlags().StringVar(&gf.callbackListen, "callback-listen", daemon.DefaultCallbackListen, "OIDC browser-login callback listen address (its /callback is the IdP redirect URI)")
 
 	root.AddCommand(
 		newServeCmd(gf),

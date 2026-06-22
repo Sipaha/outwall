@@ -57,6 +57,37 @@ func TestOAuthLoginAndCallbackStoresTokens(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, cb2.Code)
 }
 
+func TestOAuthRedirectURIFixedCallback(t *testing.T) {
+	d := newDaemon(t) // CallbackListen defaults to DefaultCallbackListen
+	require.NoError(t, d.vault.Init("pw"))
+	want := "http://" + DefaultCallbackListen + "/callback"
+
+	// The endpoint reports the fixed redirect URI to register in the IdP.
+	w := req(t, d.AdminHandler(), "GET", "/oidc/redirect-uri", "")
+	require.Equal(t, http.StatusOK, w.Code)
+	var rr struct {
+		RedirectURI string `json:"redirect_uri"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &rr))
+	require.Equal(t, want, rr.RedirectURI)
+
+	// The authorize URL carries that exact redirect_uri.
+	_, err := d.upstreams.Create("api.test", "https://api.test", upstream.AuthConfig{
+		Type: "oidc-authorization-code", ClientID: "cid",
+		AuthURL: "https://idp/authorize", TokenURL: "https://idp/token",
+	})
+	require.NoError(t, err)
+	w2 := req(t, d.AdminHandler(), "POST", "/upstreams/api.test/oauth/login", "")
+	require.Equal(t, http.StatusOK, w2.Code, w2.Body.String())
+	var lr struct {
+		URL string `json:"url"`
+	}
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &lr))
+	u, err := url.Parse(lr.URL)
+	require.NoError(t, err)
+	require.Equal(t, want, u.Query().Get("redirect_uri"))
+}
+
 func TestOAuthCallbackEscapesReflectedError(t *testing.T) {
 	d := newDaemon(t)
 	cb := httptest.NewRecorder()

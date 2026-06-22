@@ -47,6 +47,9 @@ const (
 	uiListen   = "127.0.0.1:8182"
 	dataListen = "127.0.0.1:8099"
 	mcpListen  = "127.0.0.1:8181"
+	// cbListen is the fixed OIDC browser-login callback bind; its /callback is the redirect URI
+	// registered in the IdP.
+	cbListen = "127.0.0.1:23312"
 )
 
 func main() {
@@ -107,6 +110,7 @@ func run() error {
 		Listen:         dataListen,
 		UIListen:       uiListen,
 		MCPListen:      mcpListen,
+		CallbackListen: cbListen,
 		OnFocusRequest: func() { application.InvokeAsync(raiseToFront) },
 		// The embedded webview drops window.open, so OIDC browser-login URLs are opened in the
 		// operator's real system browser from the Go side (ADR-0021).

@@ -45,12 +45,16 @@ goroutine: every interval (default `DefaultPruneInterval` = 1h) it reads the sto
 deletes entries older than it (no-op when retention is 0). The goroutine exits on `ctx.Done()`.
 `Config.PruneInterval` overrides the cadence; a negative value disables the pruner (tests).
 
-**OIDC browser login (ADR-0021).** `POST /upstreams/{name}/oauth/login` starts an
-authorization-code login (mints a CSRF `state` + PKCE verifier, returns the IdP authorize URL).
-`GET /oauth/callback` is served **top-level on the UI listener** (not under `/api`, CSRF-exempt —
-a browser redirect; the random state is the binding) and exchanges the code for tokens, persisting
-them encrypted on the upstream. The daemon wires `authn.Manager.SetOAuthPersister` so refreshed
-tokens are written back.
+**OIDC browser login (ADR-0021, ADR-0031).** `POST /upstreams/{name}/oauth/login` starts an
+authorization-code login (mints a CSRF `state` + PKCE verifier, returns the IdP authorize URL). The
+callback (`/callback`) is served on a **dedicated loopback listener** (`Config.CallbackListen`,
+default `127.0.0.1:23312`) so the redirect URI is a fixed, registerable value independent of the UI
+port; it is CSRF-exempt (a browser redirect; the random state is the binding) and exchanges the code
+for tokens, persisting them encrypted on the upstream. `GET /oidc/redirect-uri` returns that URI for
+the UI to show; `POST /oidc/discover {url}` fetches the provider's well-known document to auto-fill
+the endpoints (ADR-0030). The daemon wires `authn.Manager.SetOAuthPersister` so refreshed tokens are
+written back. (The same handler is also still mounted at `/oauth/callback` on the UI listener for a
+custom RedirectURL.)
 
 **Headless / server mode.** `outwall serve` (or `make run-server`) runs the full daemon — data
 plane (HTTPS), MCP control plane, UI control-API+SSE listener, and the unix admin socket — with **no
@@ -65,8 +69,8 @@ store and passes it to the proxy (see `audit.md`, ADR-0004).
 
 ## Public API
 
-- `DefaultMCPListen = "127.0.0.1:8181"`; `DefaultUIListen = "127.0.0.1:8182"`.
-- `Config struct { DBPath, SocketPath, Listen, MCPListen, UIListen, CADir string; PruneInterval time.Duration; OnFocusRequest func() }` (`MCPListen`/`UIListen` default to their `Default*` consts; `PruneInterval` 0 → `DefaultPruneInterval`, negative disables).
+- `DefaultMCPListen = "127.0.0.1:8181"`; `DefaultUIListen = "127.0.0.1:8182"`; `DefaultCallbackListen = "127.0.0.1:23312"`.
+- `Config struct { DBPath, SocketPath, Listen, MCPListen, UIListen, CallbackListen, CADir string; PruneInterval time.Duration; OnFocusRequest func(); OpenURL func(string) error }` (`MCPListen`/`UIListen`/`CallbackListen` default to their `Default*` consts; `PruneInterval` 0 → `DefaultPruneInterval`, negative disables).
 - `DefaultPruneInterval = time.Hour`.
 - `New(cfg Config) (*Daemon, error)` — opens the store, builds vault + registries + proxy + MCP handler + event bus (no listeners).
 - `(*Daemon).AdminHandler() http.Handler` — the CSRF-free `apiMux` at root (unix socket).

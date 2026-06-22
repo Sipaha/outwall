@@ -37,6 +37,7 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	mux.HandleFunc("POST /upstreams/{name}/auth", d.hUpstreamSetAuth)
 	mux.HandleFunc("POST /upstreams/{name}/oauth/login", d.hOAuthLogin)
 	mux.HandleFunc("POST /oidc/discover", d.hOIDCDiscover)
+	mux.HandleFunc("GET /oidc/redirect-uri", d.hOIDCRedirectURI)
 	mux.HandleFunc("POST /agents/register", d.hAgentRegister)
 	mux.HandleFunc("GET /agents", d.hAgentList)
 	mux.HandleFunc("POST /clusters/import", d.hClustersImport)

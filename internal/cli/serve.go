@@ -22,7 +22,7 @@ func newServeCmd(gf *globalFlags) *cobra.Command {
 			}
 			d, err := daemon.New(daemon.Config{
 				DBPath: gf.db, SocketPath: gf.socket, Listen: gf.listen,
-				MCPListen: gf.mcpListen, UIListen: gf.uiListen,
+				MCPListen: gf.mcpListen, UIListen: gf.uiListen, CallbackListen: gf.callbackListen,
 			})
 			if err != nil {
 				return err

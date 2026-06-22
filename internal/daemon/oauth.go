@@ -62,14 +62,27 @@ func randToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// effectiveOAuthCfg returns the upstream auth config with a defaulted RedirectURL (the UI listener's
-// /oauth/callback) when the operator did not set one. The same value MUST be used for the authorize
-// URL and the token exchange, so both handlers go through here.
+// defaultRedirectURI is the fixed loopback callback the OIDC flow uses when the operator did not set
+// a custom RedirectURL — served by the dedicated callback listener (Serve). This exact value must be
+// registered as a redirect URI in the IdP client.
+func (d *Daemon) defaultRedirectURI() string {
+	return "http://" + d.cfg.CallbackListen + "/callback"
+}
+
+// effectiveOAuthCfg returns the upstream auth config with a defaulted RedirectURL (the dedicated
+// callback listener's /callback) when the operator did not set one. The same value MUST be used for
+// the authorize URL and the token exchange, so both handlers go through here.
 func (d *Daemon) effectiveOAuthCfg(cfg upstream.AuthConfig) upstream.AuthConfig {
 	if cfg.RedirectURL == "" {
-		cfg.RedirectURL = "http://" + d.cfg.UIListen + "/oauth/callback"
+		cfg.RedirectURL = d.defaultRedirectURI()
 	}
 	return cfg
+}
+
+// hOIDCRedirectURI returns the redirect URI the operator must register in their IdP, so the UI can
+// show it on the OIDC host form.
+func (d *Daemon) hOIDCRedirectURI(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"redirect_uri": d.defaultRedirectURI()})
 }
 
 // hOAuthLogin (POST /upstreams/{name}/oauth/login) starts a browser authorization-code login: it

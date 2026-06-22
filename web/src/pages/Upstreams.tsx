@@ -6,6 +6,7 @@ import {
   deleteUpstream,
   oauthLogin,
   discoverOIDC,
+  oidcRedirectURI,
   ApiError,
 } from '../lib/api'
 import type { Upstream, UpstreamAuthConfig } from '../lib/types'
@@ -32,6 +33,19 @@ function AuthFields({ auth, setAuth }: AuthFieldsProps) {
   const push = useToastStore((s) => s.push)
   const [issuer, setIssuer] = useState('')
   const [discovering, setDiscovering] = useState(false)
+  const [redirectURI, setRedirectURI] = useState('')
+
+  // The IdP redirect URI to register is fixed per daemon; fetch it when the OIDC form is shown.
+  useEffect(() => {
+    if (auth.type !== 'oidc-authorization-code') return
+    let live = true
+    oidcRedirectURI()
+      .then((r) => live && setRedirectURI(r.redirect_uri))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [auth.type])
 
   // discover fetches the OIDC well-known document for the issuer URL and fills the endpoints + scope.
   async function discover() {
@@ -216,6 +230,12 @@ function AuthFields({ auth, setAuth }: AuthFieldsProps) {
               aria-label="Scope (auth-code)"
             />
           </FormField>
+          {redirectURI && (
+            <div className="rounded border border-border/60 bg-muted/30 p-2 text-[11px] text-muted-foreground">
+              Register this <span className="font-medium">redirect URI</span> in your IdP client:
+              <code className="ml-1 break-all text-foreground">{redirectURI}</code>
+            </div>
+          )}
           <p className="text-[11px] text-muted-foreground">
             After saving, use <span className="font-medium">Log in</span> on the host to open the
             browser sign-in. outwall stores the token — the agent never sees it.

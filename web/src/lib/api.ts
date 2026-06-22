@@ -151,6 +151,11 @@ export function discoverOIDC(url: string): Promise<OIDCDiscovery> {
   return request('POST', '/oidc/discover', { url })
 }
 
+/** The fixed OIDC browser-login redirect URI the operator must register in their IdP. */
+export function oidcRedirectURI(): Promise<{ redirect_uri: string }> {
+  return request('GET', '/oidc/redirect-uri')
+}
+
 // --- Clusters (kind=k8s upstreams) ---
 
 /** Create a kind=k8s cluster. Reuses POST /upstreams with kind:"k8s". */

@@ -53,6 +53,9 @@ describe('<Hosts> (Upstreams.tsx)', () => {
       token_endpoint: 'https://idp/realms/x/token',
       scopes_supported: ['openid', 'profile'],
     })
+    vi.spyOn(api, 'oidcRedirectURI').mockResolvedValue({
+      redirect_uri: 'http://127.0.0.1:23312/callback',
+    })
     render(<Upstreams />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Add host' }))
@@ -60,6 +63,8 @@ describe('<Hosts> (Upstreams.tsx)', () => {
     fireEvent.change(screen.getByLabelText('Auth type'), {
       target: { value: 'oidc-authorization-code' },
     })
+    // The fixed redirect URI to register in the IdP is shown.
+    expect(await screen.findByText('http://127.0.0.1:23312/callback')).toBeInTheDocument()
     // Enter the issuer URL and click Discover.
     fireEvent.change(screen.getByLabelText('Issuer or discovery URL'), {
       target: { value: 'https://idp/realms/x' },
