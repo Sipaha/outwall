@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +13,57 @@ import (
 
 	"github.com/Sipaha/outwall/internal/upstream"
 )
+
+// TestOAuthCallbackDeliversResponseOverListener pins that the on-demand listener delivers the full
+// callback response over a real socket before it is torn down — releasing it must be a graceful
+// Shutdown, not a Close() that aborts the in-flight response (which made the browser show an error
+// for an already-successful login).
+func TestOAuthCallbackDeliversResponseOverListener(t *testing.T) {
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"at1","refresh_token":"rt1","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer idp.Close()
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "none"))
+	dir := t.TempDir()
+	d, err := New(Config{
+		DBPath: filepath.Join(dir, "d.db"), SocketPath: filepath.Join(dir, "d.sock"),
+		Listen: "127.0.0.1:0", MCPListen: "127.0.0.1:0", UIListen: "127.0.0.1:0",
+		CallbackListen: "127.0.0.1:24112", // fixed so the real callback URL is known
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, d.vault.Init("pw"))
+	_, err = d.upstreams.Create("api.test", "https://api.test", upstream.AuthConfig{
+		Type: "oidc-authorization-code", ClientID: "c",
+		AuthURL: idp.URL + "/auth", TokenURL: idp.URL + "/token",
+	})
+	require.NoError(t, err)
+
+	w := req(t, d.AdminHandler(), "POST", "/upstreams/api.test/oauth/login", "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var lr struct {
+		URL string `json:"url"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &lr))
+	u, err := url.Parse(lr.URL)
+	require.NoError(t, err)
+	state := u.Query().Get("state")
+
+	// Hit the real on-demand listener like the browser does — the response must arrive intact.
+	resp, err := http.Get("http://127.0.0.1:24112/callback?code=thecode&state=" + state)
+	require.NoError(t, err, "callback must be reachable and not reset")
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, string(body), "Login complete")
+
+	up, err := d.upstreams.GetByName("api.test")
+	require.NoError(t, err)
+	require.Equal(t, "at1", up.Auth.AccessToken)
+}
 
 // TestDefaultCallbackListen: an empty CallbackListen defaults to the fixed port (no listener bound —
 // the default is only realized when a login starts).

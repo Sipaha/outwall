@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -52,13 +53,27 @@ func (c *callbackServer) acquire() (func(), error) {
 
 func (c *callbackServer) release() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.active > 0 {
 		c.active--
 	}
-	if c.active == 0 && c.srv != nil {
-		_ = c.srv.Close()
+	srv := c.srv
+	stop := c.active == 0 && srv != nil
+	if stop {
 		c.srv = nil
+	}
+	c.mu.Unlock()
+	if stop {
+		// Graceful Shutdown (not Close) and OFF the request goroutine: release runs in the callback
+		// handler's defer, so the in-flight "login complete" response must finish flushing before the
+		// listener goes away — Close() would abort the connection and the browser would show an error
+		// for an already-successful login. Shutdown stops accepting, then drains the active request.
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := srv.Shutdown(ctx); err != nil {
+				_ = srv.Close()
+			}
+		}()
 	}
 }
 
