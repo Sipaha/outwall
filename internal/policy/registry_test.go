@@ -143,3 +143,30 @@ func TestBrowseRuleRoundTrip(t *testing.T) {
 	require.Equal(t, "GET,HEAD", got[0].BrowseMethods)
 	require.Equal(t, "/**", got[0].BrowsePath)
 }
+
+func TestCreateManyAtomic(t *testing.T) {
+	reg := newReg(t)
+
+	// Happy path: two valid rules → both persisted, IDs assigned.
+	out, err := reg.CreateMany([]Rule{
+		{UpstreamID: "u1", Outcome: Allow, BrowseMethods: "GET,HEAD", BrowsePath: "/**"},
+		{UpstreamID: "u1", Outcome: Allow, Profile: "p", ProfileParams: []byte(`{"x":1}`)},
+	})
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+	require.NotEmpty(t, out[0].ID)
+	require.NotEqual(t, out[0].ID, out[1].ID)
+	got, err := reg.ForUpstream("u1")
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+
+	// Atomic rollback: a batch whose 2nd rule is invalid (bad outcome) writes NOTHING.
+	_, err = reg.CreateMany([]Rule{
+		{UpstreamID: "u2", Outcome: Allow, BrowseMethods: "GET", BrowsePath: "/**"},
+		{UpstreamID: "u2", Outcome: "bogus"},
+	})
+	require.Error(t, err)
+	got2, err := reg.ForUpstream("u2")
+	require.NoError(t, err)
+	require.Empty(t, got2) // the first rule must NOT have been committed
+}

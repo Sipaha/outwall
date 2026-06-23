@@ -2,6 +2,7 @@ package policy
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,12 @@ import (
 
 	"github.com/Sipaha/outwall/internal/store"
 )
+
+// rowExecutor is the subset of *sql.DB / *sql.Tx that insertRule needs, so a single insert helper
+// serves both the autocommit Create path and the transactional CreateMany path.
+type rowExecutor interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
 
 // Registry persists policy rules.
 type Registry struct{ store *store.Store }
@@ -25,23 +32,56 @@ func newID() string {
 // Create validates and persists a new rule, assigning an ID and CreatedAt. HTTP operation rules
 // marshal OpQueryTemplate/OpValuePolicies to JSON columns; k8s rules leave them empty.
 func (r *Registry) Create(in Rule) (*Rule, error) {
+	out, err := insertRule(r.store.DB(), in)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CreateMany persists all rules in a single transaction: either every rule is committed or none is
+// (a per-rule validation/insert error rolls the whole batch back). Used by the approval fan-out paths
+// so a mid-batch failure can never leave a partial grant.
+func (r *Registry) CreateMany(ins []Rule) ([]Rule, error) {
+	tx, err := r.store.DB().Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	out := make([]Rule, 0, len(ins))
+	for _, in := range ins {
+		ruleOut, ierr := insertRule(tx, in)
+		if ierr != nil {
+			_ = tx.Rollback()
+			return nil, ierr
+		}
+		out = append(out, ruleOut)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit tx: %w", err)
+	}
+	return out, nil
+}
+
+// insertRule validates `in`, assigns its ID + CreatedAt, and inserts it via exec (a *sql.DB for the
+// autocommit path or a *sql.Tx for a batch). The 18-column INSERT lives here only.
+func insertRule(exec rowExecutor, in Rule) (Rule, error) {
 	if !ValidOutcome(in.Outcome) {
-		return nil, fmt.Errorf("invalid outcome %q", in.Outcome)
+		return Rule{}, fmt.Errorf("invalid outcome %q", in.Outcome)
 	}
 	if in.RateLimitPerMin < 0 {
-		return nil, fmt.Errorf("rate limit must be >= 0")
+		return Rule{}, fmt.Errorf("rate limit must be >= 0")
 	}
 	queryJSON, err := marshalJSONMap(in.OpQueryTemplate)
 	if err != nil {
-		return nil, fmt.Errorf("marshal op_query_template: %w", err)
+		return Rule{}, fmt.Errorf("marshal op_query_template: %w", err)
 	}
 	bodyJSON, err := marshalJSONMap(in.OpBodyTemplate)
 	if err != nil {
-		return nil, fmt.Errorf("marshal op_body_template: %w", err)
+		return Rule{}, fmt.Errorf("marshal op_body_template: %w", err)
 	}
 	policiesJSON, err := marshalValuePolicies(in.OpValuePolicies)
 	if err != nil {
-		return nil, fmt.Errorf("marshal op_value_policies: %w", err)
+		return Rule{}, fmt.Errorf("marshal op_value_policies: %w", err)
 	}
 	params := in.ProfileParams
 	if len(params) == 0 {
@@ -49,7 +89,7 @@ func (r *Registry) Create(in Rule) (*Rule, error) {
 	}
 	in.ID = newID()
 	in.CreatedAt = time.Now().UTC()
-	_, err = r.store.DB().Exec(
+	_, err = exec.Exec(
 		`INSERT INTO rules (id, subject_agent_id, upstream_id, op_method, op_path_template, op_query_template, op_body_template, op_value_policies, outcome, rate_limit_per_min, k8s_namespace, k8s_resource, k8s_verb, profile, profile_params, browse_methods, browse_path, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.ID, in.SubjectAgentID, in.UpstreamID, in.OpMethod, in.OpPathTemplate, queryJSON, bodyJSON, policiesJSON,
@@ -60,9 +100,9 @@ func (r *Registry) Create(in Rule) (*Rule, error) {
 		in.CreatedAt.Format(time.RFC3339Nano),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("insert rule: %w", err)
+		return Rule{}, fmt.Errorf("insert rule: %w", err)
 	}
-	return &in, nil
+	return in, nil
 }
 
 // updatePolicies loads a rule's value policies, applies mutate, and persists the result. mutate
