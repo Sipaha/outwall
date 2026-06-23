@@ -38,10 +38,10 @@ and the in-memory `approval.Queue`.
 ```go
 // internal/serverprofile (alongside RuleSchema)
 type Preset struct {
-    ID    string                                 // stable: "browse-get", "citeck-readonly", "citeck-readwrite"
-    Label string                                 // "Browse (GET)", "ReadOnly", "ReadWrite"
+    ID    string                                   // stable: "browse-get", "citeck-readonly", "citeck-readwrite"
+    Label string                                   // "Browse (GET)", "ReadOnly", "ReadWrite"
     Slots []PresetSlot
-    Build func(b Bindings) ([]policy.Rule, error) // expands to rules (subject/upstream left unset)
+    Build func(b Bindings) ([]RuleTemplate, error) // expands to neutral rule templates
 }
 
 type PresetSlot struct {
@@ -54,15 +54,27 @@ type PresetSlot struct {
 }
 
 type Bindings map[string]string // slot key -> value ("*" or concrete)
+
+// RuleTemplate is a profile-NEUTRAL rule shape. serverprofile must NOT import policy (policy imports
+// serverprofile — an import cycle), so Build returns these and the daemon maps each to a policy.Rule
+// at fan-out (setting subject = the requesting agent, upstream = the request's upstream).
+type RuleTemplate struct {
+    Outcome       string          // Allow | Deny | RequireApproval
+    BrowseMethods string          // browse rule, e.g. "GET,HEAD"
+    BrowsePath    string          // browse rule glob, e.g. "/**"
+    Profile       string          // profile rule: the profile name
+    ProfileParams json.RawMessage // profile rule params blob
+}
 ```
 
 - **Available presets for an upstream** = core presets (for `kind == http`) **+** `Profile.Presets()`
   of the upstream's profile. The `Profile` interface gains `Presets() []Preset` next to
   `RuleSchema()`.
-- **`Build`** returns rules of mixed shape: a browse rule (core `BrowseMethods`/`BrowsePath`) and/or a
-  profile rule (`Profile` + `profile_params`). Slot values are substituted into the rule fields.
-  `SubjectAgentID` and `UpstreamID` are **left unset by Build** — set at fan-out (subject = the
-  requesting agent; upstream = the request's upstream).
+- **`Build`** returns `RuleTemplate`s of mixed shape: a browse rule (core `BrowseMethods`/`BrowsePath`)
+  and/or a profile rule (`Profile` + `profile_params`). Slot values are substituted into the template
+  fields. Subject and upstream are **not on the template** — the daemon sets them at fan-out (subject =
+  the requesting agent; upstream = the request's upstream) when mapping each `RuleTemplate` to a
+  `policy.Rule`.
 - Presets are pure in-code definitions; the catalog is assembled at runtime per upstream.
 
 ## Control plane (MCP)
