@@ -12,6 +12,7 @@ func (f fakeProfile) Name() string                                { return f.nam
 func (f fakeProfile) Classify(Request) (Operation, bool, error)   { return Operation{}, false, nil }
 func (f fakeProfile) Match(Rule, Operation) (string, bool, error) { return Allow, true, nil }
 func (f fakeProfile) RuleSchema() RuleSchema                      { return RuleSchema{Profile: f.name} }
+func (f fakeProfile) Presets() []Preset                           { return nil }
 
 func TestRegisterAndGet(t *testing.T) {
 	Register("fake-x", fakeProfile{name: "fake-x"})

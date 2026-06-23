@@ -37,6 +37,7 @@ func (fakeProf) Match(rule serverprofile.Rule, op serverprofile.Operation) (stri
 func (fakeProf) RuleSchema() serverprofile.RuleSchema {
 	return serverprofile.RuleSchema{Profile: "fake"}
 }
+func (fakeProf) Presets() []serverprofile.Preset { return nil }
 
 func TestDecideProfileHandledAllow(t *testing.T) {
 	serverprofile.Register("fake", fakeProf{})

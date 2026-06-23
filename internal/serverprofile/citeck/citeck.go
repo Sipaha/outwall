@@ -22,6 +22,8 @@ func (profile) Classify(r serverprofile.Request) (serverprofile.Operation, bool,
 	return classify(r)
 }
 
+func (profile) Presets() []serverprofile.Preset { return nil }
+
 func (profile) RuleSchema() serverprofile.RuleSchema {
 	return serverprofile.RuleSchema{
 		Profile: "citeck",

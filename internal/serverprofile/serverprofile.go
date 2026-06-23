@@ -5,6 +5,7 @@ package serverprofile
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"sync"
 )
@@ -63,6 +64,116 @@ type RuleSchema struct {
 	Fields  []RuleField `json:"fields"`
 }
 
+// Bindings maps a preset slot key to its chosen value ("*" or a concrete value).
+type Bindings map[string]string
+
+// PresetSlot is one typed variable a preset exposes for the agent/operator to fill.
+type PresetSlot struct {
+	Key      string   `json:"key"`
+	Label    string   `json:"label"`
+	Type     string   `json:"type"` // "text" | "enum"
+	Options  []string `json:"options,omitempty"`
+	AllowAny bool     `json:"allow_any"` // is "*" a permitted value for this slot?
+	Required bool     `json:"required"`
+}
+
+// RuleTemplate is a profile-neutral rule a preset expands to. The daemon maps it to a policy.Rule
+// (serverprofile must not import policy — policy imports serverprofile). Subject/upstream are set by
+// the daemon at fan-out; this carries only the rule's shape.
+type RuleTemplate struct {
+	Outcome       string          // Allow | Deny | RequireApproval
+	BrowseMethods string          // browse rule (coarse method-set), e.g. "GET,HEAD"
+	BrowsePath    string          // browse rule path glob, e.g. "/**"
+	Profile       string          // profile rule: the profile name (e.g. "citeck")
+	ProfileParams json.RawMessage // profile rule params blob
+}
+
+// Preset is a named bundle of related rights with typed slots. Build expands it (with bound slot
+// values) into rule templates; Build is not serialized (json:"-") — only ID/Label/Slots reach the UI.
+type Preset struct {
+	ID    string                                 `json:"id"`
+	Label string                                 `json:"label"`
+	Slots []PresetSlot                           `json:"slots"`
+	Build func(Bindings) ([]RuleTemplate, error) `json:"-"`
+}
+
+// ValidateBindings checks b against slots: every Required slot present and non-empty; "*" allowed
+// only when the slot's AllowAny is set; an enum value must be one of Options; unknown keys are an
+// error. An empty value for a non-required slot is allowed (skipped).
+func ValidateBindings(slots []PresetSlot, b Bindings) error {
+	allowed := make(map[string]PresetSlot, len(slots))
+	for _, s := range slots {
+		allowed[s.Key] = s
+	}
+	for k := range b {
+		if _, ok := allowed[k]; !ok {
+			return fmt.Errorf("unknown slot %q", k)
+		}
+	}
+	for _, s := range slots {
+		v := b[s.Key]
+		if v == "" {
+			if s.Required {
+				return fmt.Errorf("slot %q is required", s.Key)
+			}
+			continue
+		}
+		if v == "*" {
+			if !s.AllowAny {
+				return fmt.Errorf("slot %q does not allow %q", s.Key, "*")
+			}
+			continue
+		}
+		if s.Type == "enum" {
+			ok := false
+			for _, o := range s.Options {
+				if o == v {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				return fmt.Errorf("slot %q value %q is not an allowed option", s.Key, v)
+			}
+		}
+	}
+	return nil
+}
+
+// CoreHTTPPresets are the generic presets available on any http upstream regardless of profile.
+func CoreHTTPPresets() []Preset {
+	return []Preset{{
+		ID:    "browse-get",
+		Label: "Browse (GET)",
+		Build: func(Bindings) ([]RuleTemplate, error) {
+			return []RuleTemplate{{Outcome: Allow, BrowseMethods: "GET,HEAD", BrowsePath: "/**"}}, nil
+		},
+	}}
+}
+
+// AvailablePresets is the preset catalog for an upstream: the core http presets (when includeCoreHTTP)
+// plus the named profile's presets (if that profile is registered).
+func AvailablePresets(includeCoreHTTP bool, profile string) []Preset {
+	var out []Preset
+	if includeCoreHTTP {
+		out = append(out, CoreHTTPPresets()...)
+	}
+	if p, ok := Get(profile); ok {
+		out = append(out, p.Presets()...)
+	}
+	return out
+}
+
+// FindPreset returns the preset with id from the upstream's available catalog.
+func FindPreset(includeCoreHTTP bool, profile, id string) (Preset, bool) {
+	for _, p := range AvailablePresets(includeCoreHTTP, profile) {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return Preset{}, false
+}
+
 // Profile classifies and authorizes requests for one kind of upstream server.
 type Profile interface {
 	Name() string
@@ -73,6 +184,8 @@ type Profile interface {
 	// (Allow/Deny/RequireApproval) and whether the rule matched at all.
 	Match(rule Rule, op Operation) (outcome string, matched bool, err error)
 	RuleSchema() RuleSchema
+	// Presets returns this profile's named rule bundles (may be empty).
+	Presets() []Preset
 }
 
 var (
