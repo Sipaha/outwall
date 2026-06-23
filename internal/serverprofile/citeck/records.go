@@ -28,11 +28,12 @@ func refSource(ref string) (source, localID string) {
 	return ref[:at], ref[at+1:]
 }
 
-// recordsOp returns the Records operation ("query"/"mutate"/"delete") for a path, matching both the
-// direct (/api/records/...) and gateway-prefixed (/gateway/.../api/records/...) forms.
+// recordsOp returns the Records operation ("query"/"mutate"/"delete") for a path, matching the
+// /records/{op} suffix to cover all gateway variants (/api/records/op, /gateway/records/op,
+// /gateway/emodel/api/records/op, etc.).
 func recordsOp(path string) (string, bool) {
 	for _, op := range []string{"query", "mutate", "delete"} {
-		if strings.HasSuffix(path, "/api/records/"+op) {
+		if strings.HasSuffix(path, "/records/"+op) {
 			return op, true
 		}
 	}

@@ -90,3 +90,19 @@ func TestClassifyGatewayPrefixHandled(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, []serverprofile.ResourceScope{{Resource: "emodel/type", Scope: scopeAll}}, op.Resources)
 }
+
+func TestRecordsOpPathVariants(t *testing.T) {
+	for _, p := range []string{
+		"/api/records/query",
+		"/gateway/records/query",
+		"/gateway/emodel/api/records/query",
+	} {
+		op, ok := recordsOp(p)
+		if !ok || op != "query" {
+			t.Fatalf("recordsOp(%q) = (%q,%v), want (query,true)", p, op, ok)
+		}
+	}
+	if _, ok := recordsOp("/gateway/observer/events"); ok {
+		t.Fatalf("non-records path must not match")
+	}
+}
