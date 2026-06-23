@@ -22,7 +22,46 @@ func (profile) Classify(r serverprofile.Request) (serverprofile.Operation, bool,
 	return classify(r)
 }
 
-func (profile) Presets() []serverprofile.Preset { return nil }
+func (profile) Presets() []serverprofile.Preset {
+	slots := []serverprofile.PresetSlot{
+		{Key: "sourceId", Label: "Source ID (glob)", Type: "text", AllowAny: true, Required: true},
+		{Key: "workspace", Label: "Workspace", Type: "text", AllowAny: false, Required: true},
+	}
+	browse := serverprofile.RuleTemplate{Outcome: serverprofile.Allow, BrowseMethods: "GET,HEAD", BrowsePath: "/**"}
+	opTmpl := func(op string, b serverprofile.Bindings) (serverprofile.RuleTemplate, error) {
+		params, err := json.Marshal(ruleParams{Op: op, SourceID: b["sourceId"], Workspace: b["workspace"]})
+		if err != nil {
+			return serverprofile.RuleTemplate{}, err
+		}
+		return serverprofile.RuleTemplate{Outcome: serverprofile.Allow, Profile: "citeck", ProfileParams: params}, nil
+	}
+	return []serverprofile.Preset{
+		{
+			ID: "citeck-readonly", Label: "ReadOnly", Slots: slots,
+			Build: func(b serverprofile.Bindings) ([]serverprofile.RuleTemplate, error) {
+				read, err := opTmpl("read", b)
+				if err != nil {
+					return nil, err
+				}
+				return []serverprofile.RuleTemplate{browse, read}, nil
+			},
+		},
+		{
+			ID: "citeck-readwrite", Label: "ReadWrite", Slots: slots,
+			Build: func(b serverprofile.Bindings) ([]serverprofile.RuleTemplate, error) {
+				read, err := opTmpl("read", b)
+				if err != nil {
+					return nil, err
+				}
+				write, err := opTmpl("write", b)
+				if err != nil {
+					return nil, err
+				}
+				return []serverprofile.RuleTemplate{browse, read, write}, nil
+			},
+		},
+	}
+}
 
 func (profile) RuleSchema() serverprofile.RuleSchema {
 	return serverprofile.RuleSchema{
