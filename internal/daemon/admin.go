@@ -50,6 +50,7 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /rules/{id}", d.hRuleDelete)
 	mux.HandleFunc("POST /rules/{id}/value-policy", d.hRuleSetVariablePolicy)
 	mux.HandleFunc("GET /profiles", d.hProfileList)
+	mux.HandleFunc("POST /presets/preview", d.hPresetPreview)
 	mux.HandleFunc("GET /approvals", d.hApprovalList)
 	mux.HandleFunc("POST /approvals/{id}/resolve", d.hApprovalResolve)
 	mux.HandleFunc("GET /access-requests", d.hAccessRequestList)
@@ -1048,6 +1049,60 @@ func (d *Daemon) hAuditPrune(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int64{"deleted": n})
+}
+
+// hPresetPreview dry-runs a preset's Build with the given bindings and returns a human-readable
+// summary per rule it would create — so the approval card shows the concrete grant (reflecting any
+// operator edits) before approving. It creates nothing.
+func (d *Daemon) hPresetPreview(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UpstreamID string            `json:"upstream_id"`
+		PresetID   string            `json:"preset_id"`
+		Bindings   map[string]string `json:"bindings"`
+	}
+	if err := decode(r, &body); err != nil {
+		adminErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	preset, ok, err := d.presetForUpstream(body.UpstreamID, body.PresetID)
+	if err != nil {
+		adminErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !ok {
+		adminErr(w, http.StatusBadRequest, "unknown preset")
+		return
+	}
+	if err := serverprofile.ValidateBindings(preset.Slots, serverprofile.Bindings(body.Bindings)); err != nil {
+		adminErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	tmpls, err := preset.Build(serverprofile.Bindings(body.Bindings))
+	if err != nil {
+		adminErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	rules := make([]string, 0, len(tmpls))
+	for _, t := range tmpls {
+		rules = append(rules, summarizeTemplate(t))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rules": rules})
+}
+
+// summarizeTemplate renders a one-line human summary of a preset rule template for the preview.
+func summarizeTemplate(t serverprofile.RuleTemplate) string {
+	switch {
+	case t.BrowsePath != "":
+		methods := t.BrowseMethods
+		if methods == "" {
+			methods = "*"
+		}
+		return fmt.Sprintf("%s browse %s %s", t.Outcome, methods, t.BrowsePath)
+	case t.Profile != "":
+		return fmt.Sprintf("%s %s %s", t.Outcome, t.Profile, string(t.ProfileParams))
+	default:
+		return t.Outcome
+	}
 }
 
 // dnsHostRe matches names safe for use as a DNS label prefix (no @, /, etc.).

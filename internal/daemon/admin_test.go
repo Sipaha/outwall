@@ -797,3 +797,21 @@ func TestApprovePresetFansOutAgentScopedRules(t *testing.T) {
 	require.Equal(t, 1, browse)
 	require.Equal(t, 1, citeckRead)
 }
+
+func TestPresetPreview(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, 200, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+	up := d.mustUpstreamProfiled(t, "cite.test", "https://cite.test", "http", "citeck")
+
+	body := `{"upstream_id":"` + up.ID + `","preset_id":"citeck-readonly","bindings":{"sourceId":"*","workspace":"proj-x"}}`
+	rec := req(t, h, "POST", "/presets/preview", body)
+	require.Equal(t, 200, rec.Code)
+	out := rec.Body.String()
+	require.Contains(t, out, "GET,HEAD") // browse rule summarized
+	require.Contains(t, out, "proj-x")   // citeck read rule with the bound workspace
+
+	// Invalid bindings → 400.
+	bad := `{"upstream_id":"` + up.ID + `","preset_id":"citeck-readonly","bindings":{"sourceId":"*","workspace":"*"}}`
+	require.Equal(t, 400, req(t, h, "POST", "/presets/preview", bad).Code)
+}
