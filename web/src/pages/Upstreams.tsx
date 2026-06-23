@@ -482,12 +482,11 @@ export function Upstreams() {
                   {u.browse_url && (
                     <div className="mt-0.5 text-[11px]">
                       <span className="text-muted-foreground">Browse: </span>
-                      <a
-                        href={u.browse_url}
-                        className="font-mono text-primary hover:underline"
-                      >
-                        {u.browse_url}
-                      </a>
+                      {/* Plain selectable text, NOT a link: this origin is for the agent's browser
+                          (Playwright) to navigate to. Clicking it inside the desktop webview would
+                          navigate the whole app to a local-CA origin WebKitGTK rejects ("Unacceptable
+                          TLS certificate"). The operator copies it instead. */}
+                      <span className="select-all font-mono">{u.browse_url}</span>
                     </div>
                   )}
                 </div>
