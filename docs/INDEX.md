@@ -71,6 +71,7 @@ Stage: alpha (pre-Plan-1).
   - [`2026-06-23-browse-policy-and-upstream-zones-design.md`](superpowers/specs/2026-06-23-browse-policy-and-upstream-zones-design.md) — browse rule primitive (allow-method × path-glob) for browsing; Citeck ReadOnly / Allow-GET presets; `recordsOp` path broadening; Upstreams page split into HTTP/Citeck/Kubernetes tabs. ADR-0036.
 - `plans/` — bite-sized implementation plans.
   - Server profiles: [`2026-06-22-server-profiles-citeck.md`](superpowers/plans/2026-06-22-server-profiles-citeck.md) (Parts A/B/C — shipped, ADR-0034), [`2026-06-22-per-upstream-origin.md`](superpowers/plans/2026-06-22-per-upstream-origin.md) (Part D — subdomain data plane, ADR-0035).
+  - Browse policy + zones: [`2026-06-23-browse-policy-and-upstream-zones.md`](superpowers/plans/2026-06-23-browse-policy-and-upstream-zones.md) (browse rule, Citeck ReadOnly preset, recordsOp broadening, Upstreams tabs; ADR-0036).
   - Phase 1: the `2026-06-17-outwall-*` plans (foundation … wails-desktop), all shipped.
   - Phase 3 (operation-access): [`…-opaccess-h1-engine.md`](superpowers/plans/2026-06-18-outwall-opaccess-h1-engine.md) (active),
     [`…-opaccess-h2-mcp-approval.md`](superpowers/plans/2026-06-18-outwall-opaccess-h2-mcp-approval.md),
