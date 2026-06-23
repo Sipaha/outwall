@@ -121,6 +121,65 @@ func TestCreateKindK8sRoundTrips(t *testing.T) {
 	require.Equal(t, "http", kinds["plain"])
 }
 
+// TestGetOrCreateByHostMatchesExistingByBaseURLHost ensures that when an upstream is already
+// registered under a different name (e.g. "enterprise") but its base_url hostname matches the
+// requested host ("enterprise.ecos24.ru"), GetOrCreateByHost returns the existing upstream
+// without creating a credential-less duplicate.
+func TestGetOrCreateByHostMatchesExistingByBaseURLHost(t *testing.T) {
+	s, reg := setup(t)
+
+	// Register a credentialed upstream with a name that differs from its hostname.
+	existing, err := reg.Create("enterprise", "https://enterprise.ecos24.ru/", AuthConfig{
+		Type: "static", Header: "Authorization", Token: "Bearer secret-token",
+	})
+	require.NoError(t, err)
+
+	// GetOrCreateByHost with the bare hostname should return the existing upstream, NOT create a dup.
+	got, created, err := reg.GetOrCreateByHost("enterprise.ecos24.ru")
+	require.NoError(t, err)
+	require.False(t, created, "should not have created a new upstream")
+	require.Equal(t, existing.ID, got.ID, "should return the existing upstream by base_url host match")
+
+	// Only one http upstream must exist — no credential-less stub was created.
+	all, err := reg.List()
+	require.NoError(t, err)
+	var httpCount int
+	for _, u := range all {
+		if u.Kind == KindHTTP || u.Kind == "" {
+			httpCount++
+		}
+	}
+	require.Equal(t, 1, httpCount, "no duplicate upstream must have been created")
+
+	_ = s // keep setup import used
+}
+
+// TestGetByHostExactMatchOnly verifies that GetByHost uses exact hostname matching only —
+// no substring, suffix, or prefix matching that could route credentials to a look-alike host.
+func TestGetByHostExactMatchOnly(t *testing.T) {
+	_, reg := setup(t)
+
+	_, err := reg.Create("enterprise", "https://enterprise.ecos24.ru/", AuthConfig{
+		Type: "static", Header: "Authorization", Token: "Bearer secret-token",
+	})
+	require.NoError(t, err)
+
+	// Exact match must succeed.
+	got, err := reg.GetByHost("enterprise.ecos24.ru")
+	require.NoError(t, err)
+	require.Equal(t, "enterprise", got.Name)
+
+	// Look-alike hosts must NOT match (security: no credential routing to wrong host).
+	for _, bad := range []string{
+		"evil-enterprise.ecos24.ru",
+		"enterprise.ecos24.ru.evil.com",
+		"ecos24.ru",
+	} {
+		_, err := reg.GetByHost(bad)
+		require.ErrorIs(t, err, ErrNotFound, "expected ErrNotFound for look-alike host %q", bad)
+	}
+}
+
 func TestUpstreamProfileRoundTrip(t *testing.T) {
 	_, reg := setup(t)
 

@@ -191,27 +191,7 @@ func (s *Service) resolveUpstream(hostOrUpstream string) (*upstream.Upstream, er
 	if err != upstream.ErrNotFound {
 		return nil, err
 	}
-	// Fall back to host matching. Strip a scheme if the agent passed a full URL.
-	want := hostOrUpstream
-	if strings.Contains(want, "://") {
-		if u, perr := url.Parse(want); perr == nil && u.Hostname() != "" {
-			want = u.Hostname()
-		}
-	}
-	ups, err := s.upstreams.List()
-	if err != nil {
-		return nil, fmt.Errorf("list upstreams: %w", err)
-	}
-	for _, u := range ups {
-		parsed, perr := url.Parse(u.BaseURL)
-		if perr != nil {
-			continue
-		}
-		if parsed.Hostname() == want {
-			return u, nil
-		}
-	}
-	return nil, upstream.ErrNotFound
+	return s.upstreams.GetByHost(hostOrUpstream)
 }
 
 // ListUpstreams returns every known upstream with the agent's derived status.

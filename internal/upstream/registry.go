@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/Sipaha/outwall/internal/secret"
@@ -163,6 +165,32 @@ func (r *Registry) CreateProfiled(name, baseURL, kind, profile string, auth Auth
 	return up, nil
 }
 
+// GetByHost returns the upstream whose base_url hostname EXACTLY equals host (host may be a bare
+// host or a full URL — a scheme is stripped). Exact match only (no substring/suffix), so it never
+// routes a credential to a look-alike host. Returns ErrNotFound if none matches.
+func (r *Registry) GetByHost(host string) (*Upstream, error) {
+	want := host
+	if strings.Contains(want, "://") {
+		if u, err := url.Parse(want); err == nil && u.Hostname() != "" {
+			want = u.Hostname()
+		}
+	}
+	ups, err := r.List()
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range ups {
+		parsed, perr := url.Parse(u.BaseURL)
+		if perr != nil {
+			continue
+		}
+		if parsed.Hostname() == want {
+			return u, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
 // GetOrCreateByHost returns the http upstream for the given host, creating a credential-less one
 // (name = host, BaseURL = "https://<host>", auth type "none") if it does not yet exist. The
 // boolean reports whether it was created. Used by the MCP host-access path: a host is registered
@@ -170,13 +198,16 @@ func (r *Registry) CreateProfiled(name, baseURL, kind, profile string, auth Auth
 // SetAuth at host-approval time. Idempotent — a second call for the same host returns the existing
 // upstream with created=false.
 func (r *Registry) GetOrCreateByHost(host string) (*Upstream, bool, error) {
-	up, err := r.GetByName(host)
-	switch {
-	case err == nil:
+	if up, err := r.GetByName(host); err == nil {
 		return up, false, nil
-	case errors.Is(err, ErrNotFound):
-		// fall through to create
-	default:
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, false, err
+	}
+	// Match an already-registered upstream (possibly under a different NAME) by its base_url host
+	// before creating, so we never duplicate a credentialed upstream as a credential-less stub.
+	if up, err := r.GetByHost(host); err == nil {
+		return up, false, nil
+	} else if !errors.Is(err, ErrNotFound) {
 		return nil, false, err
 	}
 	created, err := r.Create(host, "https://"+host, AuthConfig{Type: "none"})
