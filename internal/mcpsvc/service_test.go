@@ -16,7 +16,52 @@ import (
 	"github.com/Sipaha/outwall/internal/secret"
 	"github.com/Sipaha/outwall/internal/store"
 	"github.com/Sipaha/outwall/internal/upstream"
+
+	_ "github.com/Sipaha/outwall/internal/serverprofile/citeck" // register the citeck profile
 )
+
+// testDeps holds all registries + the queue produced by newTestService.
+type testDeps struct {
+	agents    *agent.Registry
+	upstreams *upstream.Registry
+	pol       *policy.Registry
+	queue     *approval.Queue
+}
+
+// mustUpstream creates a profiled upstream (kind + profile) and returns it.
+func (d *testDeps) mustUpstream(t *testing.T, name, baseURL, kind, profile string) *upstream.Upstream {
+	t.Helper()
+	up, err := d.upstreams.CreateProfiled(name, baseURL, kind, profile, upstream.AuthConfig{Type: "none"})
+	require.NoError(t, err)
+	return up
+}
+
+// mustAgent registers an agent and returns its ID.
+func (d *testDeps) mustAgent(t *testing.T, name string) string {
+	t.Helper()
+	a, _, err := d.agents.Register(name)
+	require.NoError(t, err)
+	return a.ID
+}
+
+// newTestService constructs a Service with a fast-timeout queue, mirroring buildWithQueue.
+func newTestService(t *testing.T) (*Service, *testDeps) {
+	t.Helper()
+	s, err := store.Open(filepath.Join(t.TempDir(), "m.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	v := secret.NewVault(s)
+	require.NoError(t, v.Init("pw"))
+	ag := agent.NewRegistry(s)
+	up := upstream.NewRegistry(s, v)
+	pol := policy.NewRegistry(s)
+	acc := access.NewRegistry(s)
+	svc := New(ag, up, pol, acc)
+	q := approval.NewQueueWithTimeout(2 * time.Second)
+	svc.SetApprovals(q)
+	deps := &testDeps{agents: ag, upstreams: up, pol: pol, queue: q}
+	return svc, deps
+}
 
 func build(t *testing.T) (*Service, *agent.Registry, *upstream.Registry, *policy.Registry) {
 	t.Helper()
@@ -438,4 +483,58 @@ func TestRequestHostAccessOnCredentialedHTTPHostReturnsGuidanceNoCard(t *testing
 	require.Equal(t, "granted", res.Status)
 	require.Contains(t, res.Memo, "request_access")
 	require.Empty(t, q.List())
+}
+
+func TestRequestPresetEnqueuesAndValidates(t *testing.T) {
+	svc, deps := newTestService(t)
+	up := deps.mustUpstream(t, "cite.test", "https://cite.test", "http", "citeck")
+	agentID := deps.mustAgent(t, "a1")
+
+	// Unknown preset → error, no card.
+	_, err := svc.RequestPreset(agentID, RequestPresetInput{Host: "cite.test", PresetID: "nope", Purpose: "x"})
+	require.Error(t, err)
+
+	// "*" workspace is not allowed for the citeck presets → error.
+	_, err = svc.RequestPreset(agentID, RequestPresetInput{
+		Host: "cite.test", PresetID: "citeck-readonly",
+		Bindings: map[string]string{"sourceId": "*", "workspace": "*"}, Purpose: "x"})
+	require.Error(t, err)
+
+	// Valid → pending + one KindPreset card carrying the preset id + bindings.
+	res, err := svc.RequestPreset(agentID, RequestPresetInput{
+		Host: "cite.test", PresetID: "citeck-readonly",
+		Bindings: map[string]string{"sourceId": "*", "workspace": "proj-x"}, Purpose: "read prod"})
+	require.NoError(t, err)
+	require.Equal(t, "pending", res.Status)
+	var card approval.Pending
+	require.Eventually(t, func() bool {
+		for _, p := range deps.queue.List() {
+			if p.Kind == approval.KindPreset {
+				card = p
+				return true
+			}
+		}
+		return false
+	}, time.Second, 10*time.Millisecond)
+	require.Equal(t, "citeck-readonly", card.PresetID)
+	require.Equal(t, "proj-x", card.Bindings["workspace"])
+	require.Equal(t, agentID, card.AgentID)
+	require.Equal(t, up.ID, card.UpstreamID)
+}
+
+func TestListUpstreamsCarriesPresets(t *testing.T) {
+	svc, deps := newTestService(t)
+	deps.mustUpstream(t, "cite.test", "https://cite.test", "http", "citeck")
+	agentID := deps.mustAgent(t, "a1")
+	infos, err := svc.ListUpstreams(agentID)
+	require.NoError(t, err)
+	require.Len(t, infos, 1)
+	require.Equal(t, "citeck", infos[0].Profile)
+	ids := map[string]bool{}
+	for _, p := range infos[0].Presets {
+		ids[p.ID] = true
+	}
+	require.True(t, ids["browse-get"])
+	require.True(t, ids["citeck-readonly"])
+	require.True(t, ids["citeck-readwrite"])
 }

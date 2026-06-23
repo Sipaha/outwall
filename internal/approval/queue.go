@@ -55,6 +55,9 @@ const (
 	// approve the resolve path creates an agent-scoped allow k8s rule for that tuple. k8s clusters
 	// are pre-credentialed, so there is no separate host tier for them (see ADR-0025).
 	KindK8sAccess = "k8s-access"
+	// KindPreset is an MCP preset request carrying a preset id + slot bindings: on approve the
+	// resolve path expands the preset into agent-scoped rules (see ADR-0037).
+	KindPreset = "preset"
 )
 
 // Pending describes a request awaiting approval.
@@ -96,6 +99,11 @@ type Pending struct {
 	// K8sGrants is the set of (namespace, resource, verb) tuples on a KindK8sAccess approval — one
 	// card can request several at once (ADR-0029). On approve each becomes an allow rule.
 	K8sGrants []K8sGrant
+
+	// Preset fields (set for KindPreset): the requested preset and its slot bindings. On approve the
+	// resolve path re-validates the (possibly operator-edited) bindings and fans them out into rules.
+	PresetID string
+	Bindings map[string]string
 
 	// HTTP operation fields (set for an http new-value approval; empty otherwise). RuleID is the
 	// matched operation rule; NewValues are the not-yet-allowed (variable, value) pairs the

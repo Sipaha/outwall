@@ -21,6 +21,7 @@ import (
 	"github.com/Sipaha/outwall/internal/k8s"
 	"github.com/Sipaha/outwall/internal/optemplate"
 	"github.com/Sipaha/outwall/internal/policy"
+	"github.com/Sipaha/outwall/internal/serverprofile"
 	"github.com/Sipaha/outwall/internal/upstream"
 )
 
@@ -83,10 +84,12 @@ func (s *Service) SetEvents(subscribe func() (<-chan events.Event, func())) { s.
 // UpstreamInfo describes a known upstream and the agent's status against it.
 // Status: open | needs-request | denied.
 type UpstreamInfo struct {
-	Name    string `json:"name"`
-	BaseURL string `json:"base_url"`
-	Kind    string `json:"kind"`
-	Status  string `json:"status"`
+	Name    string                 `json:"name"`
+	BaseURL string                 `json:"base_url"`
+	Kind    string                 `json:"kind"`
+	Profile string                 `json:"profile"`
+	Status  string                 `json:"status"`
+	Presets []serverprofile.Preset `json:"presets"`
 }
 
 // AccessResult is the outcome of request_access / get_access.
@@ -227,7 +230,12 @@ func (s *Service) ListUpstreams(agentID string) ([]UpstreamInfo, error) {
 		if kind == "" {
 			kind = upstream.KindHTTP
 		}
-		out = append(out, UpstreamInfo{Name: u.Name, BaseURL: u.BaseURL, Kind: kind, Status: st})
+		profileName := u.Profile
+		presets := serverprofile.AvailablePresets(kind != upstream.KindK8s, profileName)
+		out = append(out, UpstreamInfo{
+			Name: u.Name, BaseURL: u.BaseURL, Kind: kind, Profile: profileName,
+			Status: st, Presets: presets,
+		})
 	}
 	return out, nil
 }
@@ -481,6 +489,62 @@ func (s *Service) RequestK8sAccess(agentID, cluster, namespace string, specs []K
 	}
 	return AccessResult{Status: "pending", BasePath: "/" + up.Name,
 		Memo: "k8s access submitted for approval — call get_access (it waits for the decision)"}, nil
+}
+
+// RequestPresetInput is the request_preset payload: the upstream, the preset id, the slot bindings
+// ("*" or concrete per slot), and the purpose.
+type RequestPresetInput struct {
+	Host     string
+	PresetID string
+	Bindings map[string]string
+	Purpose  string
+}
+
+// RequestPreset validates a preset request against the upstream's available catalog and the preset's
+// slot schema (a bad preset id or invalid bindings is a tool error, NOT a pending), then enqueues a
+// KindPreset approval carrying the preset id + bindings. The MCP call does not block — the agent
+// polls get_access. On approve the daemon expands the preset into agent-scoped rules (ADR-0037).
+func (s *Service) RequestPreset(agentID string, in RequestPresetInput) (AccessResult, error) {
+	up, err := s.resolveUpstream(in.Host)
+	if err == upstream.ErrNotFound {
+		return AccessResult{Status: "denied", Memo: "no such host — request_host_access first"}, nil
+	}
+	if err != nil {
+		return AccessResult{}, err
+	}
+	includeCore := up.Kind != upstream.KindK8s
+	preset, ok := serverprofile.FindPreset(includeCore, up.Profile, in.PresetID)
+	if !ok {
+		return AccessResult{}, fmt.Errorf("unknown preset %q for upstream %q", in.PresetID, up.Name)
+	}
+	if err := serverprofile.ValidateBindings(preset.Slots, serverprofile.Bindings(in.Bindings)); err != nil {
+		return AccessResult{}, fmt.Errorf("invalid preset bindings: %w", err)
+	}
+
+	// Dedupe: the same preset already awaiting a decision for this agent+upstream → don't raise a second.
+	if s.pendingExists(func(p approval.Pending) bool {
+		return p.Kind == approval.KindPreset && p.AgentID == agentID && p.UpstreamID == up.ID &&
+			p.PresetID == in.PresetID
+	}) {
+		res := AccessResult{Status: "pending", BasePath: "/" + up.Name,
+			Memo: "preset already submitted — call get_access (it waits for the decision)"}
+		res.BrowseURL = s.browseURL(up)
+		return res, nil
+	}
+
+	if _, err := s.access.Create(agentID, up.ID, in.Purpose); err != nil {
+		return AccessResult{}, fmt.Errorf("log access request: %w", err)
+	}
+	if err := s.enqueue(agentID, approval.Pending{
+		Kind: approval.KindPreset, AgentID: agentID, UpstreamID: up.ID, Host: up.Name,
+		Purpose: in.Purpose, PresetID: in.PresetID, Bindings: in.Bindings,
+	}); err != nil {
+		return AccessResult{}, err
+	}
+	res := AccessResult{Status: "pending", BasePath: "/" + up.Name,
+		Memo: "preset submitted for approval — call get_access (it waits for the decision)"}
+	res.BrowseURL = s.browseURL(up)
+	return res, nil
 }
 
 // grantKey is the comparison key for a k8s grant tuple (used for dedup / set equality).
