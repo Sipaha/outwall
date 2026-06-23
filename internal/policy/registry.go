@@ -42,6 +42,10 @@ func (r *Registry) Create(in Rule) (*Rule, error) {
 // CreateMany persists all rules in a single transaction: either every rule is committed or none is
 // (a per-rule validation/insert error rolls the whole batch back). Used by the approval fan-out paths
 // so a mid-batch failure can never leave a partial grant.
+//
+// The store runs on a single shared connection (maxOpenConns=1), so a caller must NOT hold an open
+// *sql.Rows on that connection across this call — materialize any prior read (as ForUpstream does)
+// before invoking CreateMany, or the write transaction will block on the same connection.
 func (r *Registry) CreateMany(ins []Rule) ([]Rule, error) {
 	tx, err := r.store.DB().Begin()
 	if err != nil {
