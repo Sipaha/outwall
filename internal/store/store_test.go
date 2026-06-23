@@ -136,6 +136,15 @@ func TestServerProfileColumns(t *testing.T) {
 	require.Equal(t, len(migrations), userVersion(t, s2))
 }
 
+func TestBrowseRuleColumns(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "fresh.db"))
+	require.NoError(t, err)
+	defer s.Close()
+	_, err = s.DB().Exec(`SELECT browse_methods, browse_path FROM rules LIMIT 0`)
+	require.NoError(t, err)
+	require.Equal(t, len(migrations), userVersion(t, s))
+}
+
 func TestSettingsRoundTrip(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "outwall.db"))
 	require.NoError(t, err)
