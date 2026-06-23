@@ -89,7 +89,7 @@ type requestK8sAccessIn struct {
 
 type requestPresetIn struct {
 	Upstream string            `json:"upstream" jsonschema:"the upstream name the preset applies to"`
-	Preset   string            `json:"preset" jsonschema:"the preset id from list_upstreams (e.g. citeck-readonly)"`
+	Preset   string            `json:"preset" jsonschema:"the preset id from list_upstreams (e.g. browse-get)"`
 	Vars     map[string]string `json:"vars" jsonschema:"slot values for the preset; each is a concrete value or \"*\" where allowed (e.g. {sourceId: \"*\", workspace: \"proj-x\"})"`
 	Purpose  string            `json:"purpose" jsonschema:"why the agent needs this preset (required)"`
 }
