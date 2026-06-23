@@ -719,3 +719,14 @@ func TestProfilesEndpoint(t *testing.T) {
 	}
 	require.Contains(t, names, "citeck")
 }
+
+func TestRuleCreateWithBrowseFields(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, 200, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+	require.Equal(t, 200, req(t, h, "POST", "/rules",
+		`{"upstream_id":"u1","outcome":"allow","browse_methods":"GET,HEAD","browse_path":"/**"}`).Code)
+	body := req(t, h, "GET", "/rules", "").Body.String()
+	require.Contains(t, body, `"browse_path":"/**"`)
+	require.Contains(t, body, `"browse_methods":"GET,HEAD"`)
+}

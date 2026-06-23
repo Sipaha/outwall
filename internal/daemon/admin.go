@@ -421,6 +421,9 @@ func (d *Daemon) hRuleCreate(w http.ResponseWriter, r *http.Request) {
 		// server-profile rule fields:
 		Profile       string          `json:"profile"`
 		ProfileParams json.RawMessage `json:"profile_params"`
+		// browse policy fields:
+		BrowseMethods string `json:"browse_methods"`
+		BrowsePath    string `json:"browse_path"`
 	}
 	if err := decode(r, &body); err != nil {
 		adminErr(w, http.StatusBadRequest, "bad json")
@@ -434,6 +437,7 @@ func (d *Daemon) hRuleCreate(w http.ResponseWriter, r *http.Request) {
 		OpValuePolicies: body.OpValuePolicies,
 		Namespace:       body.Namespace, Resource: body.Resource, Verb: body.Verb,
 		Profile: body.Profile, ProfileParams: body.ProfileParams,
+		BrowseMethods: body.BrowseMethods, BrowsePath: body.BrowsePath,
 	})
 	if err != nil {
 		adminErr(w, http.StatusBadRequest, err.Error())
@@ -459,6 +463,7 @@ func (d *Daemon) hRuleList(w http.ResponseWriter, _ *http.Request) {
 			"outcome":           rule.Outcome, "rate_limit_per_min": rule.RateLimitPerMin,
 			"namespace": rule.Namespace, "resource": rule.Resource, "verb": rule.Verb,
 			"profile": rule.Profile, "profile_params": rule.ProfileParams,
+			"browse_methods": rule.BrowseMethods, "browse_path": rule.BrowsePath,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
