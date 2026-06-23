@@ -128,14 +128,10 @@ Validation failure returns an error to the agent; **no approval card is created*
 This mirrors the `KindK8sAccess → K8sGrants → many policy.Rule` path (ADR-0029). `get_access` then
 shows the agent its newly granted, agent-scoped rules as usual.
 
-**Fan-out atomicity (known limitation).** Rules are created sequentially in a loop, with no enclosing
-transaction — exactly as the accepted `approveK8sAccess` path does. If a `policy.Create` fails
-mid-loop the error is surfaced (the card stays unresolved-with-error and `GrantLatest` is not
-called), but rules created before the failure are already committed. A `policy.Create` only fails on
-a rare DB-level error (the templates are pre-built and pre-validated), and a partial result is
-strictly *less* privilege than requested — it can never widen access, so default-deny is preserved.
-Making fan-out truly atomic (a transactional `policy.CreateMany`, which would also benefit the k8s
-path) is deferred as a separate, cross-cutting improvement rather than a preset-only change.
+**Fan-out atomicity.** ~~Known limitation — resolved by ADR-0038.~~ Both `approvePreset` and
+`approveK8sAccess` now call `policy.Registry.CreateMany`, which writes all rules in a single
+SQL transaction (all-or-nothing). A mid-batch failure rolls back the entire batch; no partial
+grant can be left in place. See [ADR-0038](0038-atomic-rule-fanout.md).
 
 If the upstream's profile has changed between request and approve (e.g. the profile was re-assigned
 and the preset no longer exists), `approvePreset` returns a clear error rather than creating partial
