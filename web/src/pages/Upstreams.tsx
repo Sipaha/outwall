@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   listUpstreams,
   createUpstream,
@@ -18,7 +18,7 @@ import { FormField, fieldControlClass } from '../components/FormField'
 import { Select } from '../components/Select'
 import { Tabs } from '../components/Tabs'
 import { useToastStore } from '../lib/toast'
-import { Clusters } from './Clusters'
+import { Clusters, type ClustersHandle } from './Clusters'
 
 /** True when the host carries a (non-"none") credential — drives the credential-status badge. */
 function hasCredential(u: Upstream): boolean {
@@ -371,6 +371,8 @@ export function Upstreams() {
   const [credFor, setCredFor] = useState<Upstream | null>(null)
   const [credAuth, setCredAuth] = useState<UpstreamAuthConfig>({ type: 'static' })
   const [confirmRemove, setConfirmRemove] = useState<Upstream | null>(null)
+  const clustersRef = useRef<ClustersHandle>(null)
+  const [k8sImporting, setK8sImporting] = useState(false)
   const push = useToastStore((s) => s.push)
 
   const counters = useEventStore((s) => s.counters)
@@ -475,7 +477,23 @@ export function Upstreams() {
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold">Upstreams</h1>
-        {tab !== 'k8s' && (
+        {tab === 'k8s' ? (
+          <div className="flex gap-2">
+            <button
+              onClick={() => clustersRef.current?.openImport()}
+              disabled={k8sImporting}
+              className="rounded border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+            >
+              {k8sImporting ? '…' : 'Import from kubeconfig'}
+            </button>
+            <button
+              onClick={() => clustersRef.current?.openAdd()}
+              className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
+            >
+              Add cluster
+            </button>
+          </div>
+        ) : (
           <button
             onClick={openAdd}
             className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
@@ -488,7 +506,7 @@ export function Upstreams() {
       <Tabs tabs={UPSTREAM_TABS} active={tab} onChange={setTab} />
 
       {tab === 'k8s' ? (
-        <Clusters />
+        <Clusters ref={clustersRef} onImportingChange={setK8sImporting} />
       ) : (
       <section className="rounded-lg border border-border bg-card">
         <DataTable

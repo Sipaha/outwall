@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
-import { Clusters } from './Clusters'
+import { createRef } from 'react'
+import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react'
+import { Clusters, type ClustersHandle } from './Clusters'
 import { Upstreams } from './Upstreams'
 import { ToastContainer } from '../components/Toast'
 import * as api from '../lib/api'
@@ -91,8 +92,9 @@ describe('<Clusters>', () => {
   it('shows exec fields when the add-cluster auth type is exec', async () => {
     vi.spyOn(api, 'listUpstreams').mockResolvedValue([])
     vi.spyOn(api, 'listAgents').mockResolvedValue([])
-    render(<Clusters />)
-    fireEvent.click(screen.getByRole('button', { name: 'Add cluster' }))
+    const ref = createRef<ClustersHandle>()
+    render(<Clusters ref={ref} />)
+    act(() => ref.current!.openAdd())
 
     // token is the default → no exec command field yet
     expect(screen.queryByLabelText('Command')).not.toBeInTheDocument()

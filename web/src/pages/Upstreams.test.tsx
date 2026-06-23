@@ -4,6 +4,7 @@ import { Upstreams } from './Upstreams'
 import * as api from '../lib/api'
 
 // Mock Clusters so it doesn't need listUpstreams / listAgents in the k8s tab.
+// React 19 passes ref as a plain prop — no forwardRef wrapper needed.
 vi.mock('./Clusters', () => ({ Clusters: () => <div>Clusters stub</div> }))
 
 afterEach(() => {
