@@ -14,11 +14,51 @@ import (
 	"github.com/Sipaha/outwall/internal/optemplate"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/secret"
+	"github.com/Sipaha/outwall/internal/serverprofile"
 	"github.com/Sipaha/outwall/internal/store"
 	"github.com/Sipaha/outwall/internal/upstream"
-
-	_ "github.com/Sipaha/outwall/internal/serverprofile/citeck" // register the citeck profile
 )
+
+// fakeProfile is a minimal serverprofile.Profile used by preset tests so that mcpsvc stays
+// citeck-free. It registers itself under the name "testprof".
+type fakeProfile struct{}
+
+func (fakeProfile) Name() string { return "testprof" }
+
+func (fakeProfile) Classify(_ serverprofile.Request) (serverprofile.Operation, bool, error) {
+	return serverprofile.Operation{}, false, nil
+}
+
+func (fakeProfile) Match(_ serverprofile.Rule, _ serverprofile.Operation) (string, bool, error) {
+	return "", false, nil
+}
+
+func (fakeProfile) RuleSchema() serverprofile.RuleSchema {
+	return serverprofile.RuleSchema{Profile: "testprof"}
+}
+
+func (fakeProfile) Presets() []serverprofile.Preset {
+	slots := []serverprofile.PresetSlot{
+		{Key: "sourceId", Label: "Source ID", Type: "text", AllowAny: true, Required: true},
+		{Key: "workspace", Label: "Workspace", Type: "text", AllowAny: false, Required: true},
+	}
+	return []serverprofile.Preset{{
+		ID:    "ro",
+		Label: "Read-Only",
+		Slots: slots,
+		Build: func(_ serverprofile.Bindings) ([]serverprofile.RuleTemplate, error) {
+			return []serverprofile.RuleTemplate{{
+				Outcome:       serverprofile.Allow,
+				BrowseMethods: "GET,HEAD",
+				BrowsePath:    "/**",
+			}}, nil
+		},
+	}}
+}
+
+func init() {
+	serverprofile.Register("testprof", fakeProfile{})
+}
 
 // testDeps holds all registries + the queue produced by newTestService.
 type testDeps struct {
@@ -487,22 +527,22 @@ func TestRequestHostAccessOnCredentialedHTTPHostReturnsGuidanceNoCard(t *testing
 
 func TestRequestPresetEnqueuesAndValidates(t *testing.T) {
 	svc, deps := newTestService(t)
-	up := deps.mustUpstream(t, "cite.test", "https://cite.test", "http", "citeck")
+	up := deps.mustUpstream(t, "cite.test", "https://cite.test", "http", "testprof")
 	agentID := deps.mustAgent(t, "a1")
 
 	// Unknown preset → error, no card.
 	_, err := svc.RequestPreset(agentID, RequestPresetInput{Host: "cite.test", PresetID: "nope", Purpose: "x"})
 	require.Error(t, err)
 
-	// "*" workspace is not allowed for the citeck presets → error.
+	// "*" workspace is not allowed for the fake profile's "ro" preset → error.
 	_, err = svc.RequestPreset(agentID, RequestPresetInput{
-		Host: "cite.test", PresetID: "citeck-readonly",
+		Host: "cite.test", PresetID: "ro",
 		Bindings: map[string]string{"sourceId": "*", "workspace": "*"}, Purpose: "x"})
 	require.Error(t, err)
 
 	// Valid → pending + one KindPreset card carrying the preset id + bindings.
 	res, err := svc.RequestPreset(agentID, RequestPresetInput{
-		Host: "cite.test", PresetID: "citeck-readonly",
+		Host: "cite.test", PresetID: "ro",
 		Bindings: map[string]string{"sourceId": "*", "workspace": "proj-x"}, Purpose: "read prod"})
 	require.NoError(t, err)
 	require.Equal(t, "pending", res.Status)
@@ -516,7 +556,7 @@ func TestRequestPresetEnqueuesAndValidates(t *testing.T) {
 		}
 		return false
 	}, time.Second, 10*time.Millisecond)
-	require.Equal(t, "citeck-readonly", card.PresetID)
+	require.Equal(t, "ro", card.PresetID)
 	require.Equal(t, "proj-x", card.Bindings["workspace"])
 	require.Equal(t, agentID, card.AgentID)
 	require.Equal(t, up.ID, card.UpstreamID)
@@ -524,17 +564,18 @@ func TestRequestPresetEnqueuesAndValidates(t *testing.T) {
 
 func TestListUpstreamsCarriesPresets(t *testing.T) {
 	svc, deps := newTestService(t)
-	deps.mustUpstream(t, "cite.test", "https://cite.test", "http", "citeck")
+	deps.mustUpstream(t, "cite.test", "https://cite.test", "http", "testprof")
 	agentID := deps.mustAgent(t, "a1")
 	infos, err := svc.ListUpstreams(agentID)
 	require.NoError(t, err)
 	require.Len(t, infos, 1)
-	require.Equal(t, "citeck", infos[0].Profile)
+	require.Equal(t, "testprof", infos[0].Profile)
 	ids := map[string]bool{}
 	for _, p := range infos[0].Presets {
 		ids[p.ID] = true
 	}
+	// Core HTTP preset always present for http upstreams.
 	require.True(t, ids["browse-get"])
-	require.True(t, ids["citeck-readonly"])
-	require.True(t, ids["citeck-readwrite"])
+	// The fake profile's preset is also present.
+	require.True(t, ids["ro"])
 }
