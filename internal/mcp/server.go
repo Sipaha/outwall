@@ -87,6 +87,13 @@ type requestK8sAccessIn struct {
 	Purpose   string           `json:"purpose" jsonschema:"why the agent needs this access (required)"`
 }
 
+type requestPresetIn struct {
+	Upstream string            `json:"upstream" jsonschema:"the upstream name the preset applies to"`
+	Preset   string            `json:"preset" jsonschema:"the preset id from list_upstreams (e.g. citeck-readonly)"`
+	Vars     map[string]string `json:"vars" jsonschema:"slot values for the preset; each is a concrete value or \"*\" where allowed (e.g. {sourceId: \"*\", workspace: \"proj-x\"})"`
+	Purpose  string            `json:"purpose" jsonschema:"why the agent needs this preset (required)"`
+}
+
 type getAccessIn struct {
 	Upstream string `json:"upstream" jsonschema:"the upstream name to query"`
 }
@@ -131,6 +138,9 @@ func NewHandler(deps Deps) (http.Handler, error) {
 	sdkmcp.AddTool(sdkServer,
 		&sdkmcp.Tool{Name: "request_k8s_access", Description: "Request k8s access on a registered cluster for one namespace: pass `grants` = a list of {resource, verbs} (e.g. [{resource:pods,verbs:[get,list]},{resource:pods/log,verbs:[get]}]) — one call, one approval card. To read a pod's logs with `kubectl logs` you need pods get+list AND pods/log get. k8s clusters are pre-credentialed — do NOT call request_host_access for them. Returns granted|pending|denied; on pending call get_access (it waits). Then call get_kubeconfig and use kubectl."},
 		srv.handleRequestK8sAccess)
+	sdkmcp.AddTool(sdkServer,
+		&sdkmcp.Tool{Name: "request_preset", Description: "Request a named PRESET (a bundle of related rights) on an upstream. Call list_upstreams first to see each upstream's available presets and their slots; pass `vars` with a value per slot (\"*\" only where allowed). The operator approves (and may narrow the values). Returns granted|pending|denied; on pending call get_access (it waits)."},
+		srv.handleRequestPreset)
 	sdkmcp.AddTool(sdkServer,
 		&sdkmcp.Tool{Name: "get_access", Description: "Report your current access status and base path for an upstream. If a decision is still pending this call BLOCKS until the operator decides (up to ~25s) — do NOT poll in a tight loop; just call it again if it returns pending."},
 		srv.handleGetAccess)
@@ -288,6 +298,29 @@ func (s *server) handleRequestK8sAccess(ctx context.Context, req *sdkmcp.CallToo
 		specs = append(specs, mcpsvc.K8sAccessSpec{Resource: g.Resource, Verbs: g.Verbs})
 	}
 	res, err := s.deps.Svc.RequestK8sAccess(id.agentID, in.Cluster, in.Namespace, specs, in.Purpose)
+	if err != nil {
+		return toolError(err.Error()), mcpsvc.AccessResult{}, nil
+	}
+	return nil, res, nil
+}
+
+func (s *server) handleRequestPreset(ctx context.Context, req *sdkmcp.CallToolRequest, in requestPresetIn) (*sdkmcp.CallToolResult, mcpsvc.AccessResult, error) {
+	id, err := s.agentFor(req)
+	if err != nil {
+		return nil, mcpsvc.AccessResult{}, err
+	}
+	if strings.TrimSpace(in.Purpose) == "" {
+		return toolError("purpose is required"), mcpsvc.AccessResult{}, nil
+	}
+	if strings.TrimSpace(in.Preset) == "" {
+		return toolError("preset is required"), mcpsvc.AccessResult{}, nil
+	}
+	if s.locked() {
+		return toolError(lockedMsg), mcpsvc.AccessResult{}, nil
+	}
+	res, err := s.deps.Svc.RequestPreset(id.agentID, mcpsvc.RequestPresetInput{
+		Host: in.Upstream, PresetID: in.Preset, Bindings: in.Vars, Purpose: in.Purpose,
+	})
 	if err != nil {
 		return toolError(err.Error()), mcpsvc.AccessResult{}, nil
 	}
