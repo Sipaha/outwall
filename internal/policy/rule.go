@@ -46,6 +46,11 @@ type Rule struct {
 	// opaque, profile-defined params (see internal/serverprofile).
 	Profile       string
 	ProfileParams json.RawMessage
+
+	// Browse rule (raw-http coarse matcher; empty on template/k8s/profile rules): when BrowsePath
+	// is non-empty the rule matches by method-set + path-glob instead of an operation template.
+	BrowseMethods string // comma-separated, e.g. "GET,HEAD"; "" or "*" = any method
+	BrowsePath    string // path glob, e.g. "/**"; non-empty marks this a browse rule
 }
 
 // ValuePolicy is the per-variable gating policy on an operation rule. Behaviour by Type:

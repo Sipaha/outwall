@@ -50,12 +50,13 @@ func (r *Registry) Create(in Rule) (*Rule, error) {
 	in.ID = newID()
 	in.CreatedAt = time.Now().UTC()
 	_, err = r.store.DB().Exec(
-		`INSERT INTO rules (id, subject_agent_id, upstream_id, op_method, op_path_template, op_query_template, op_body_template, op_value_policies, outcome, rate_limit_per_min, k8s_namespace, k8s_resource, k8s_verb, profile, profile_params, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO rules (id, subject_agent_id, upstream_id, op_method, op_path_template, op_query_template, op_body_template, op_value_policies, outcome, rate_limit_per_min, k8s_namespace, k8s_resource, k8s_verb, profile, profile_params, browse_methods, browse_path, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.ID, in.SubjectAgentID, in.UpstreamID, in.OpMethod, in.OpPathTemplate, queryJSON, bodyJSON, policiesJSON,
 		in.Outcome, in.RateLimitPerMin,
 		in.Namespace, in.Resource, in.Verb,
 		in.Profile, string(params),
+		in.BrowseMethods, in.BrowsePath,
 		in.CreatedAt.Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -207,7 +208,7 @@ func (r *Registry) scanRows(query string, args ...any) ([]*Rule, error) {
 			&rule.OpMethod, &rule.OpPathTemplate, &queryJSON, &bodyJSON, &policiesJSON,
 			&rule.Outcome, &rule.RateLimitPerMin,
 			&rule.Namespace, &rule.Resource, &rule.Verb,
-			&rule.Profile, &profileParam, &created); err != nil {
+			&rule.Profile, &profileParam, &rule.BrowseMethods, &rule.BrowsePath, &created); err != nil {
 			return nil, err
 		}
 		rule.ProfileParams = json.RawMessage(profileParam)
@@ -226,7 +227,7 @@ func (r *Registry) scanRows(query string, args ...any) ([]*Rule, error) {
 	return out, rows.Err()
 }
 
-const ruleCols = `id, subject_agent_id, upstream_id, op_method, op_path_template, op_query_template, op_body_template, op_value_policies, outcome, rate_limit_per_min, k8s_namespace, k8s_resource, k8s_verb, profile, profile_params, created_at`
+const ruleCols = `id, subject_agent_id, upstream_id, op_method, op_path_template, op_query_template, op_body_template, op_value_policies, outcome, rate_limit_per_min, k8s_namespace, k8s_resource, k8s_verb, profile, profile_params, browse_methods, browse_path, created_at`
 
 // List returns all rules ordered by creation time.
 func (r *Registry) List() ([]*Rule, error) {

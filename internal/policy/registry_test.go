@@ -132,3 +132,14 @@ func TestProfileRuleRoundTrip(t *testing.T) {
 	require.JSONEq(t, `{"op":"read","source_id":"emodel/type","workspace":"*"}`, string(got[0].ProfileParams))
 	require.Equal(t, created.ID, got[0].ID)
 }
+
+func TestBrowseRuleRoundTrip(t *testing.T) {
+	reg := newReg(t)
+	_, err := reg.Create(Rule{UpstreamID: "u1", Outcome: Allow, BrowseMethods: "GET,HEAD", BrowsePath: "/**"})
+	require.NoError(t, err)
+	got, err := reg.ForUpstream("u1")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, "GET,HEAD", got[0].BrowseMethods)
+	require.Equal(t, "/**", got[0].BrowsePath)
+}
