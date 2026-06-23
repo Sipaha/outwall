@@ -126,8 +126,16 @@ Validation failure returns an error to the agent; **no approval card is created*
 4. Call `d.access.GrantLatest(...)` to mark the `access_requests` row granted.
 
 This mirrors the `KindK8sAccess → K8sGrants → many policy.Rule` path (ADR-0029). `get_access` then
-shows the agent its newly granted, agent-scoped rules as usual. Fan-out is all-or-nothing in intent:
-if a `policy.Create` fails, the error is surfaced and the request is not left half-granted.
+shows the agent its newly granted, agent-scoped rules as usual.
+
+**Fan-out atomicity (known limitation).** Rules are created sequentially in a loop, with no enclosing
+transaction — exactly as the accepted `approveK8sAccess` path does. If a `policy.Create` fails
+mid-loop the error is surfaced (the card stays unresolved-with-error and `GrantLatest` is not
+called), but rules created before the failure are already committed. A `policy.Create` only fails on
+a rare DB-level error (the templates are pre-built and pre-validated), and a partial result is
+strictly *less* privilege than requested — it can never widen access, so default-deny is preserved.
+Making fan-out truly atomic (a transactional `policy.CreateMany`, which would also benefit the k8s
+path) is deferred as a separate, cross-cutting improvement rather than a preset-only change.
 
 If the upstream's profile has changed between request and approve (e.g. the profile was re-assigned
 and the preset no longer exists), `approvePreset` returns a clear error rather than creating partial
@@ -220,7 +228,10 @@ validation; core `Browse (GET)` catalog; `Build` expansion to expected `RuleTemp
 no card), `internal/daemon` (`approvePreset` fan-out creates agent-scoped rules; reject creates none;
 `list_upstreams` includes `presets`; `POST /presets/preview` returns correct templates),
 `internal/mcp` (`request_preset` registered and wired), and `web/src` (approval card renders editable
-slots + preview; approve payload carries edited bindings).
+slots + preview; approve payload carries edited bindings). The `internal/mcpsvc` preset tests use a
+fake in-test profile to keep that core package citeck-free; the `internal/daemon` tests exercise the
+real citeck `ReadOnly` fan-out end-to-end via the daemon test package's pre-existing citeck
+blank-import (the sanctioned ADR-0034 test exception).
 
 Links: [ADR-0034](0034-server-profiles-and-citeck-plugin.md) (server-profile plugin + citeck Records —
 profile interface and workspace semantics), [ADR-0036](0036-browse-rule-and-readonly-preset.md) (browse

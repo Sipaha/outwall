@@ -84,7 +84,7 @@ type RuleTemplate struct {
 	Outcome       string          // Allow | Deny | RequireApproval
 	BrowseMethods string          // browse rule (coarse method-set), e.g. "GET,HEAD"
 	BrowsePath    string          // browse rule path glob, e.g. "/**"
-	Profile       string          // profile rule: the profile name (e.g. "citeck")
+	Profile       string          // profile rule: the profile name (e.g. a registered plugin name)
 	ProfileParams json.RawMessage // profile rule params blob
 }
 
