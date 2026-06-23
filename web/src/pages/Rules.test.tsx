@@ -288,6 +288,19 @@ describe('<Operations> (Rules.tsx)', () => {
     await waitFor(() => expect(deleteSpy).toHaveBeenCalledWith('r1'))
   })
 
+  it('shows a browse rule in its own section', async () => {
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([
+      { id: 'up', name: 'be', base_url: 'https://be.test', auth_type: 'none' },
+    ])
+    vi.spyOn(api, 'listRules').mockResolvedValue([
+      { id: 'b1', upstream_id: 'up', subject_agent_id: '', outcome: 'allow', rate_limit_per_min: 0, browse_methods: 'GET,HEAD', browse_path: '/**' },
+    ])
+    vi.spyOn(api, 'listAgents').mockResolvedValue([])
+    render(<Rules />)
+    expect(await screen.findByText('/**')).toBeInTheDocument()
+    expect(screen.getByText(/GET,HEAD/)).toBeInTheDocument()
+  })
+
   it('keeps k8s rules in a separate tuple list (not the operations editor)', async () => {
     vi.spyOn(api, 'listRules').mockResolvedValue([
       {

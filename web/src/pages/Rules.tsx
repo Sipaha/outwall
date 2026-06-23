@@ -83,11 +83,18 @@ function isProfileRule(r: Rule): boolean {
   return !!r.profile
 }
 
+// isBrowseRule is true for a browse rule (has a browse_path). Browse rules grant browser-style
+// read access (GET/HEAD) and live in their own section — without it they would be invisible in the
+// operation and k8s sections (an authz hazard mirroring the profile-rule case).
+function isBrowseRule(r: Rule): boolean {
+  return !!r.browse_path
+}
+
 // isOperationRule is true for an http operation rule (has a path-template); k8s rules carry the
-// RBAC tuple instead and live in their own section. Profile rules are excluded to avoid
+// RBAC tuple instead and live in their own section. Profile and browse rules are excluded to avoid
 // double-counting.
 function isOperationRule(r: Rule): boolean {
-  return !isProfileRule(r) && !!r.op_path_template
+  return !isProfileRule(r) && !isBrowseRule(r) && !!r.op_path_template
 }
 
 // segmentsOf splits a path template into fixed vs `{name:type}` variable pieces so the template can
@@ -397,8 +404,9 @@ export function Rules() {
   const agentName = (id: string) => (id === '' ? 'any' : agents.find((a) => a.id === id)?.name ?? id)
 
   const profileRules = rules.filter(isProfileRule)
+  const browseRules = rules.filter(isBrowseRule)
   const operationRules = rules.filter(isOperationRule)
-  const k8sRules = rules.filter((r) => !isProfileRule(r) && !isOperationRule(r) && (r.namespace || r.resource || r.verb))
+  const k8sRules = rules.filter((r) => !isProfileRule(r) && !isBrowseRule(r) && !isOperationRule(r) && (r.namespace || r.resource || r.verb))
 
   // The rule editor adapts to the selected upstream: k8s clusters match on the RBAC tuple
   // (namespace/resource/verb); http upstreams are operation rules (method + path-template +
@@ -681,6 +689,41 @@ export function Rules() {
                   )
                 },
               },
+              { header: 'Outcome', cell: (r) => <StatusBadge status={r.outcome} /> },
+              {
+                header: '',
+                cell: (r) => (
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => setConfirmDelete(r)}
+                      className="rounded bg-destructive/15 px-2 py-0.5 text-[11px] font-medium text-destructive hover:bg-destructive/25"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </section>
+      )}
+
+      {/* Browse rules grant browser-style read access via the per-upstream subdomain origin. Without
+          this section a browse rule is invisible in the UI — the same authz hazard as profile rules. */}
+      {browseRules.length > 0 && (
+        <section className="rounded-lg border border-border bg-card">
+          <header className="border-b border-border px-3 py-2 text-xs font-semibold text-muted-foreground">
+            Browse rules
+          </header>
+          <DataTable
+            rows={browseRules}
+            rowKey={(r) => r.id}
+            empty="No browse rules"
+            columns={[
+              { header: 'Subject', cell: (r) => agentName(r.subject_agent_id) },
+              { header: 'Host', cell: (r) => upstreamName(r.upstream_id) },
+              { header: 'Methods', cell: (r) => <span className="font-mono">{r.browse_methods || 'any'}</span> },
+              { header: 'Path', cell: (r) => <span className="font-mono">{r.browse_path}</span> },
               { header: 'Outcome', cell: (r) => <StatusBadge status={r.outcome} /> },
               {
                 header: '',

@@ -113,6 +113,8 @@ export interface Rule {
   verb?: string // k8s: get/list/watch/create/update/patch/delete/deletecollection/*
   profile?: string
   profile_params?: Record<string, unknown>
+  browse_methods?: string // http methods allowed for browse access (e.g. "GET,HEAD")
+  browse_path?: string // path glob for browse access (e.g. "/**")
 }
 
 export interface ProfileField { key: string; label: string; type: string; options?: string[] }
