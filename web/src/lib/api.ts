@@ -250,6 +250,16 @@ export function resolveApproval(
   return request('POST', `/approvals/${encodeURIComponent(id)}/resolve`, { approve, ...opts })
 }
 
+// --- Presets ---
+
+export function previewPreset(
+  upstream_id: string,
+  preset_id: string,
+  bindings: Record<string, string>,
+): Promise<{ rules: string[] }> {
+  return request('POST', '/presets/preview', { upstream_id, preset_id, bindings })
+}
+
 // --- Access requests ---
 
 export function listAccessRequests(): Promise<AccessRequest[]> {

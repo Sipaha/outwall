@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { Approvals } from './Approvals'
 import * as api from '../lib/api'
+import type { Approval } from '../lib/types'
 
 afterEach(() => {
   cleanup()
@@ -214,6 +215,37 @@ describe('<Approvals>', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
     await waitFor(() =>
       expect(resolveSpy).toHaveBeenCalledWith('o1', true, { trust_any: ['project_path'] }),
+    )
+  })
+
+  // --- preset card ---
+
+  it('preset card edits a slot and approves with the final bindings', async () => {
+    vi.spyOn(api, 'listAccessRequests').mockResolvedValue([])
+    vi.spyOn(api, 'previewPreset').mockResolvedValue({ rules: ['allow browse GET,HEAD /**'] })
+    vi.spyOn(api, 'listApprovals').mockResolvedValue([
+      {
+        id: 'p1', agent_id: 'a1', upstream_id: 'u1', kind: 'preset',
+        host: 'cite.test', purpose: 'read prod', preset_id: 'citeck-readonly',
+        bindings: { sourceId: '*', workspace: 'proj-x' },
+        preset: {
+          id: 'citeck-readonly', label: 'ReadOnly',
+          slots: [
+            { key: 'sourceId', label: 'Source ID', type: 'text', allow_any: true, required: true },
+            { key: 'workspace', label: 'Workspace', type: 'text', allow_any: false, required: true },
+          ],
+        },
+      },
+    ] as unknown as Approval[])
+    const resolveSpy = vi.spyOn(api, 'resolveApproval').mockResolvedValue({ ok: true })
+    render(<Approvals />)
+    const ws = await screen.findByLabelText('workspace')
+    fireEvent.change(ws, { target: { value: 'proj-y' } })
+    fireEvent.click(screen.getByRole('button', { name: /approve/i }))
+    await waitFor(() =>
+      expect(resolveSpy).toHaveBeenCalledWith('p1', true, {
+        bindings: { sourceId: '*', workspace: 'proj-y' },
+      }),
     )
   })
 

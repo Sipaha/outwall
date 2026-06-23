@@ -4,6 +4,7 @@ import {
   resolveApproval,
   listAccessRequests,
   resolveAccessRequest,
+  previewPreset,
   ApiError,
 } from '../lib/api'
 import type { Approval, AccessRequest, ResolveOptions, UpstreamAuthConfig } from '../lib/types'
@@ -312,6 +313,96 @@ function K8sAccessCard({ approval, onResolve }: CardProps) {
   )
 }
 
+/** MCP preset card: editable slots (seeded from the requested bindings) + a live rule preview. */
+function PresetCard({ approval, onResolve }: CardProps) {
+  const preset = approval.preset
+  const [bindings, setBindings] = useState<Record<string, string>>(approval.bindings ?? {})
+  const [preview, setPreview] = useState<string[]>([])
+
+  useEffect(() => {
+    let live = true
+    previewPreset(approval.upstream_id, approval.preset_id ?? '', bindings)
+      .then((r) => {
+        if (live) setPreview(r.rules)
+      })
+      .catch(() => {
+        if (live) setPreview([])
+      })
+    return () => {
+      live = false
+    }
+  }, [approval.upstream_id, approval.preset_id, bindings])
+
+  function setSlot(key: string, value: string) {
+    setBindings((b) => ({ ...b, [key]: value }))
+  }
+
+  return (
+    <div className={cardClass}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="space-y-1">
+          <div className="text-[11px] text-muted-foreground">
+            Preset · agent <span className="font-mono">{shortId(approval.agent_id)}</span> ·{' '}
+            <span className="font-mono">{approval.host}</span>
+          </div>
+          <div className="text-sm font-medium">{preset?.label ?? approval.preset_id}</div>
+          {approval.purpose && <div className="text-xs text-muted-foreground">{approval.purpose}</div>}
+        </div>
+        <StatusBadge status="preset" />
+      </div>
+
+      {(preset?.slots ?? []).length > 0 && (
+        <div className="space-y-2">
+          {preset!.slots.map((s) => (
+            <FormField key={s.key} label={s.label || s.key}>
+              {s.type === 'enum' ? (
+                <Select
+                  value={bindings[s.key] ?? ''}
+                  onChange={(v) => setSlot(s.key, v)}
+                  options={[
+                    ...(s.allow_any ? [{ value: '*', label: '* (all)' }] : []),
+                    ...(s.options ?? []).map((o) => ({ value: o, label: o })),
+                  ]}
+                />
+              ) : (
+                <input
+                  className={fieldControlClass}
+                  value={bindings[s.key] ?? ''}
+                  onChange={(e) => setSlot(s.key, e.target.value)}
+                  aria-label={s.key}
+                  placeholder={s.allow_any ? '* or a concrete value' : 'a concrete value'}
+                />
+              )}
+            </FormField>
+          ))}
+        </div>
+      )}
+
+      <div className="rounded border border-border/60 bg-muted/30 p-2">
+        <div className="mb-1 text-[11px] text-muted-foreground">Will create</div>
+        {preview.length === 0 ? (
+          <div className="text-[11px] text-muted-foreground italic">…</div>
+        ) : (
+          preview.map((r, i) => (
+            <code key={i} className="block break-all text-xs">
+              {r}
+            </code>
+          ))
+        )}
+      </div>
+
+      <div className="flex justify-end gap-1.5">
+        <button onClick={() => onResolve(approval.id, true, { bindings })} className={approveBtn}>
+          Approve
+        </button>
+        <button onClick={() => onResolve(approval.id, false)} className={denyBtn}>
+          Deny
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /** Data-plane new-value card: the template + the new (variable, value); approve / approve+trust. */
 function NewValueCard({ approval, onResolve }: CardProps) {
   const newVals = approval.new_values ?? []
@@ -409,6 +500,7 @@ function ApprovalCard(props: CardProps) {
   if (approval.kind === 'host-access') return <HostCard {...props} />
   if (approval.kind === 'operation') return <OperationCard {...props} />
   if (approval.kind === 'k8s-access') return <K8sAccessCard {...props} />
+  if (approval.kind === 'preset') return <PresetCard {...props} />
   if ((approval.new_values?.length ?? 0) > 0) return <NewValueCard {...props} />
   return <PlainCard {...props} />
 }

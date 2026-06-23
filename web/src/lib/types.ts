@@ -62,6 +62,7 @@ export interface Upstream {
   profile?: string
   // http upstreams: the local reverse-proxy URL the agent uses to reach this upstream.
   browse_url?: string
+  presets?: Preset[]
 }
 
 /** Cluster auth config sent on POST /api/upstreams when creating a kind=k8s cluster. */
@@ -120,6 +121,20 @@ export interface Rule {
 export interface ProfileField { key: string; label: string; type: string; options?: string[] }
 export interface ProfileSchema { profile: string; fields: ProfileField[] }
 
+export interface PresetSlot {
+  key: string
+  label: string
+  type: string // "text" | "enum"
+  options?: string[]
+  allow_any: boolean
+  required: boolean
+}
+export interface Preset {
+  id: string
+  label: string
+  slots: PresetSlot[]
+}
+
 /** A declared typed operation variable on a KindOperation approval (mirrors approval.Variable). */
 export interface OpVariable {
   name: string
@@ -167,16 +182,22 @@ export interface Approval {
   new_values?: NewValue[]
   template?: string // matched operation path-template for display
   rule_id?: string
+  // Preset card (kind === "preset"):
+  preset_id?: string
+  bindings?: Record<string, string>
+  preset?: Preset
 }
 
 /**
  * Options for POST /api/approvals/{id}/resolve. `auth` attaches a host credential when approving a
- * host-access card; `trust_any` lists the operation variables flipped to "trust any value".
+ * host-access card; `trust_any` lists the operation variables flipped to "trust any value";
+ * `bindings` carries the final slot values when approving a preset card.
  */
 export interface ResolveOptions {
   auth?: UpstreamAuthConfig
   trust_any?: string[]
   reason?: string // operator's explanation on deny, surfaced to the agent
+  bindings?: Record<string, string>
 }
 
 /** GET /api/access-requests — logged access-request intents. */
