@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   listUpstreams,
   createUpstream,
+  createRule,
   getProfiles,
   setUpstreamAuth,
   deleteUpstream,
@@ -463,6 +464,25 @@ export function Upstreams() {
     }
   }
 
+  async function allowGet(u: Upstream) {
+    try {
+      await createRule({ subject_agent_id: '', upstream_id: u.id, outcome: 'allow', rate_limit_per_min: 0, browse_methods: 'GET,HEAD', browse_path: '/**' })
+      push('success', 'Allow GET rule created')
+    } catch (err) {
+      push('error', err instanceof ApiError ? err.message : 'Failed to create rule')
+    }
+  }
+
+  async function readOnly(u: Upstream) {
+    try {
+      await createRule({ subject_agent_id: '', upstream_id: u.id, outcome: 'allow', rate_limit_per_min: 0, browse_methods: 'GET,HEAD', browse_path: '/**' })
+      await createRule({ subject_agent_id: '', upstream_id: u.id, outcome: 'allow', rate_limit_per_min: 0, profile: 'citeck', profile_params: { op: 'read', source_id: '*', workspace: '*' } })
+      push('success', 'ReadOnly rules created')
+    } catch (err) {
+      push('error', err instanceof ApiError ? err.message : 'Failed to create rules')
+    }
+  }
+
   const visibleUpstreams = upstreams.filter((u) =>
     tab === 'http'
       ? u.kind !== 'k8s' && u.profile !== 'citeck'
@@ -544,6 +564,22 @@ export function Upstreams() {
               header: '',
               cell: (u) => (
                 <div className="flex justify-end gap-1.5">
+                  {tab === 'http' && (
+                    <button
+                      onClick={() => allowGet(u)}
+                      className="rounded bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/25"
+                    >
+                      Allow GET
+                    </button>
+                  )}
+                  {tab === 'citeck' && (
+                    <button
+                      onClick={() => readOnly(u)}
+                      className="rounded bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/25"
+                    >
+                      ReadOnly
+                    </button>
+                  )}
                   {u.auth_type === 'oidc-authorization-code' && (
                     <button
                       onClick={() => startLogin(u)}

@@ -228,4 +228,37 @@ describe('<Hosts> (Upstreams.tsx)', () => {
     expect(await screen.findByText('cite.test')).toBeInTheDocument()
     expect(screen.queryByText('plain.test')).not.toBeInTheDocument()
   })
+
+  it('Allow GET posts a browse rule for an http host', async () => {
+    vi.spyOn(api, 'getProfiles').mockResolvedValue([])
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([
+      { id: 'h', name: 'plain.test', base_url: 'https://plain.test', auth_type: 'none', kind: 'http', profile: 'raw-http' },
+    ])
+    const createSpy = vi.spyOn(api, 'createRule').mockResolvedValue({ id: 'r1' })
+    render(<Upstreams />)
+    fireEvent.click(await screen.findByRole('button', { name: /allow get/i }))
+    await waitFor(() =>
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ upstream_id: 'h', outcome: 'allow', browse_methods: 'GET,HEAD', browse_path: '/**' }),
+      ),
+    )
+  })
+
+  it('ReadOnly posts a browse rule and a citeck read rule for a citeck host', async () => {
+    vi.spyOn(api, 'getProfiles').mockResolvedValue([{ profile: 'citeck', fields: [] }])
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([
+      { id: 'c', name: 'cite.test', base_url: 'https://cite.test', auth_type: 'none', kind: 'http', profile: 'citeck' },
+    ])
+    const createSpy = vi.spyOn(api, 'createRule').mockResolvedValue({ id: 'r' })
+    render(<Upstreams />)
+    fireEvent.click(screen.getByRole('tab', { name: /citeck/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /read.?only/i }))
+    await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(2))
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ upstream_id: 'c', outcome: 'allow', browse_methods: 'GET,HEAD', browse_path: '/**' }),
+    )
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ upstream_id: 'c', outcome: 'allow', profile: 'citeck', profile_params: { op: 'read', source_id: '*', workspace: '*' } }),
+    )
+  })
 })
