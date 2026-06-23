@@ -3,6 +3,9 @@ import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-li
 import { Upstreams } from './Upstreams'
 import * as api from '../lib/api'
 
+// Mock Clusters so it doesn't need listUpstreams / listAgents in the k8s tab.
+vi.mock('./Clusters', () => ({ Clusters: () => <div>Clusters stub</div> }))
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
@@ -208,5 +211,21 @@ describe('<Hosts> (Upstreams.tsx)', () => {
     await waitFor(() =>
       expect(createSpy).toHaveBeenCalledWith('c', 'https://c.test', { type: 'none' }, 'citeck'),
     )
+  })
+
+  it('filters upstreams into HTTP / Citeck tabs', async () => {
+    vi.spyOn(api, 'getProfiles').mockResolvedValue([{ profile: 'citeck', fields: [] }])
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([
+      { id: 'h', name: 'plain.test', base_url: 'https://plain.test', auth_type: 'none', kind: 'http', profile: 'raw-http' },
+      { id: 'c', name: 'cite.test', base_url: 'https://cite.test', auth_type: 'none', kind: 'http', profile: 'citeck' },
+    ])
+    render(<Upstreams />)
+    // HTTP tab (default): plain shown, citeck not.
+    expect(await screen.findByText('plain.test')).toBeInTheDocument()
+    expect(screen.queryByText('cite.test')).not.toBeInTheDocument()
+    // Switch to Citeck tab.
+    fireEvent.click(screen.getByRole('tab', { name: /citeck/i }))
+    expect(await screen.findByText('cite.test')).toBeInTheDocument()
+    expect(screen.queryByText('plain.test')).not.toBeInTheDocument()
   })
 })

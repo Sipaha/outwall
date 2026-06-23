@@ -16,7 +16,9 @@ import { DataTable } from '../components/DataTable'
 import { Modal } from '../components/Modal'
 import { FormField, fieldControlClass } from '../components/FormField'
 import { Select } from '../components/Select'
+import { Tabs } from '../components/Tabs'
 import { useToastStore } from '../lib/toast'
+import { Clusters } from './Clusters'
 
 /** True when the host carries a (non-"none") credential — drives the credential-status badge. */
 function hasCredential(u: Upstream): boolean {
@@ -349,7 +351,14 @@ function AuthFields({ auth, setAuth }: AuthFieldsProps) {
   )
 }
 
+const UPSTREAM_TABS = [
+  { id: 'http', label: 'HTTP' },
+  { id: 'citeck', label: 'Citeck' },
+  { id: 'k8s', label: 'Kubernetes' },
+]
+
 export function Upstreams() {
+  const [tab, setTab] = useState('http')
   const [upstreams, setUpstreams] = useState<Upstream[]>([])
   const [addOpen, setAddOpen] = useState(false)
   const [name, setName] = useState('')
@@ -372,8 +381,7 @@ export function Upstreams() {
 
   const load = useCallback(() => {
     listUpstreams()
-      // k8s clusters live on the dedicated Clusters screen — keep this list to http hosts.
-      .then((u) => setUpstreams((u ?? []).filter((up) => up.kind !== 'k8s')))
+      .then((u) => setUpstreams(u ?? []))
       .catch((err) => {
         push('error', err instanceof ApiError ? err.message : 'Failed to load hosts')
       })
@@ -455,21 +463,36 @@ export function Upstreams() {
     }
   }
 
+  const visibleUpstreams = upstreams.filter((u) =>
+    tab === 'http'
+      ? u.kind !== 'k8s' && u.profile !== 'citeck'
+      : tab === 'citeck'
+        ? u.profile === 'citeck'
+        : false,
+  )
+
   return (
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Hosts</h1>
-        <button
-          onClick={openAdd}
-          className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
-        >
-          Add host
-        </button>
+        <h1 className="text-lg font-semibold">Upstreams</h1>
+        {tab !== 'k8s' && (
+          <button
+            onClick={openAdd}
+            className="rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
+          >
+            Add host
+          </button>
+        )}
       </div>
 
+      <Tabs tabs={UPSTREAM_TABS} active={tab} onChange={setTab} />
+
+      {tab === 'k8s' ? (
+        <Clusters />
+      ) : (
       <section className="rounded-lg border border-border bg-card">
         <DataTable
-          rows={upstreams}
+          rows={visibleUpstreams}
           rowKey={(u) => u.id}
           empty="No hosts yet — they appear when an agent first requests access"
           columns={[
@@ -550,6 +573,7 @@ export function Upstreams() {
           ]}
         />
       </section>
+      )}
 
       <Modal
         open={addOpen}
