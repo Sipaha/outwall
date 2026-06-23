@@ -19,8 +19,8 @@ import (
 	"github.com/Sipaha/outwall/internal/upstream"
 )
 
-// fakeProfile is a minimal serverprofile.Profile used by preset tests so that mcpsvc stays
-// citeck-free. It registers itself under the name "testprof".
+// fakeProfile is a minimal serverprofile.Profile used by preset tests so that mcpsvc depends on no
+// concrete plugin. It registers itself under the name "testprof".
 type fakeProfile struct{}
 
 func (fakeProfile) Name() string { return "testprof" }
