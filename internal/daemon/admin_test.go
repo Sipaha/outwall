@@ -559,7 +559,7 @@ func TestHostApproveRefusesK8sCredential(t *testing.T) {
 
 	err = d.applyApprovalSideEffects(
 		approval.Pending{Kind: approval.KindHostAccess, UpstreamID: cl.ID, Host: cl.Name},
-		&upstream.AuthConfig{Type: "static", Header: "Authorization", Token: "Bearer x"}, nil)
+		&upstream.AuthConfig{Type: "static", Header: "Authorization", Token: "Bearer x"}, nil, nil)
 	require.Error(t, err, "attaching an HTTP credential to a k8s cluster must be refused")
 
 	// The cluster's k8s token credential is intact (not clobbered).
@@ -729,4 +729,71 @@ func TestRuleCreateWithBrowseFields(t *testing.T) {
 	body := req(t, h, "GET", "/rules", "").Body.String()
 	require.Contains(t, body, `"browse_path":"/**"`)
 	require.Contains(t, body, `"browse_methods":"GET,HEAD"`)
+}
+
+// mustUpstreamProfiled creates an upstream with the given profile for use in tests.
+func (d *Daemon) mustUpstreamProfiled(t *testing.T, name, baseURL, kind, profile string) *upstream.Upstream {
+	t.Helper()
+	up, err := d.upstreams.CreateProfiled(name, baseURL, kind, profile, upstream.AuthConfig{Type: "none"})
+	if err != nil {
+		t.Fatalf("mustUpstreamProfiled: %v", err)
+	}
+	return up
+}
+
+// mustAgent registers an agent by name for use in tests and returns its ID.
+func (d *Daemon) mustAgent(t *testing.T, name string) string {
+	t.Helper()
+	a, _, err := d.agents.Register(name)
+	if err != nil {
+		t.Fatalf("mustAgent: %v", err)
+	}
+	return a.ID
+}
+
+func TestApprovePresetFansOutAgentScopedRules(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, 200, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	// A citeck upstream + an agent.
+	up := d.mustUpstreamProfiled(t, "cite.test", "https://cite.test", "http", "citeck")
+	agentID := d.mustAgent(t, "a1")
+
+	// Park a KindPreset pending directly on the queue (the daemon owns the resolve side effects).
+	go func() {
+		_, _ = d.approvals.Submit(context.Background(), approval.Pending{
+			Kind: approval.KindPreset, AgentID: agentID, UpstreamID: up.ID, Host: up.Name,
+			PresetID: "citeck-readonly", Bindings: map[string]string{"sourceId": "*", "workspace": "proj-x"},
+		})
+	}()
+	var id string
+	require.Eventually(t, func() bool {
+		for _, p := range d.approvals.List() {
+			if p.Kind == approval.KindPreset {
+				id = p.ID
+				return true
+			}
+		}
+		return false
+	}, time.Second, 10*time.Millisecond)
+
+	// Operator narrows nothing; approve with the requested bindings echoed back.
+	body := `{"approve":true,"bindings":{"sourceId":"*","workspace":"proj-x"}}`
+	require.Equal(t, 200, req(t, h, "POST", "/approvals/"+id+"/resolve", body).Code)
+
+	rules, err := d.policy.ForUpstream(up.ID)
+	require.NoError(t, err)
+	var browse, citeckRead int
+	for _, r := range rules {
+		require.Equal(t, agentID, r.SubjectAgentID) // every fanned-out rule is agent-scoped
+		if r.BrowsePath == "/**" {
+			browse++
+		}
+		if r.Profile == "citeck" {
+			citeckRead++
+		}
+	}
+	require.Equal(t, 1, browse)
+	require.Equal(t, 1, citeckRead)
 }

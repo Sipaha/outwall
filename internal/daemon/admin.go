@@ -537,6 +537,13 @@ func (d *Daemon) hApprovalList(w http.ResponseWriter, _ *http.Request) {
 			m["op_variables"] = p.OpVariables
 			m["op_values"] = p.OpValues
 		}
+		if p.Kind == approval.KindPreset {
+			m["preset_id"] = p.PresetID
+			m["bindings"] = p.Bindings
+			if preset, ok, perr := d.presetForUpstream(p.UpstreamID, p.PresetID); perr == nil && ok {
+				m["preset"] = preset // serializes {id,label,slots} (Build is json:"-")
+			}
+		}
 		// http new-value approval context (empty for k8s approvals).
 		if len(p.NewValues) > 0 {
 			m["new_values"] = p.NewValues
@@ -565,6 +572,9 @@ func (d *Daemon) hApprovalResolve(w http.ResponseWriter, r *http.Request) {
 		// TrustAny lists the operation variables the operator chose to trust for ANY value
 		// (per-variable "approve + trust any value"); those flip to mode "any" instead of a set.
 		TrustAny []string `json:"trust_any"`
+		// Bindings are the operator's final preset slot values for a KindPreset approval (may narrow
+		// the agent's requested values). Ignored for other kinds.
+		Bindings map[string]string `json:"bindings"`
 	}
 	if err := decode(r, &body); err != nil {
 		adminErr(w, http.StatusBadRequest, "bad json")
@@ -577,7 +587,7 @@ func (d *Daemon) hApprovalResolve(w http.ResponseWriter, r *http.Request) {
 	// and are resolved by the queue alone (unchanged).
 	if p, ok := d.approvals.Get(id); ok {
 		if body.Approve {
-			if err := d.applyApprovalSideEffects(p, body.Auth, body.TrustAny); err != nil {
+			if err := d.applyApprovalSideEffects(p, body.Auth, body.TrustAny, body.Bindings); err != nil {
 				adminErr(w, http.StatusBadRequest, err.Error())
 				return
 			}
@@ -612,7 +622,7 @@ func (d *Daemon) hApprovalResolve(w http.ResponseWriter, r *http.Request) {
 // approval (host or operation). It is a no-op for empty-Kind approvals (data-plane / k8s), whose
 // side effects already live on the proxy path. Errors are reported before the queue is unparked,
 // so a failed attach/rule-write does not silently approve.
-func (d *Daemon) applyApprovalSideEffects(p approval.Pending, auth *upstream.AuthConfig, trustAny []string) error {
+func (d *Daemon) applyApprovalSideEffects(p approval.Pending, auth *upstream.AuthConfig, trustAny []string, bindings map[string]string) error {
 	switch p.Kind {
 	case approval.KindHostAccess:
 		// Attach the operator-entered credential to the lazily-created host upstream (optional).
@@ -637,6 +647,8 @@ func (d *Daemon) applyApprovalSideEffects(p approval.Pending, auth *upstream.Aut
 		return d.approveOperation(p, trustAny)
 	case approval.KindK8sAccess:
 		return d.approveK8sAccess(p)
+	case approval.KindPreset:
+		return d.approvePreset(p, bindings)
 	default:
 		return nil
 	}
@@ -675,6 +687,51 @@ func (d *Daemon) approveK8sAccess(p approval.Pending) error {
 		}
 	}
 	return nil
+}
+
+// approvePreset expands a KindPreset approval into agent-scoped allow rules. The operator may have
+// narrowed the slot values (bindings); when nil the agent's requested bindings are used. The final
+// bindings are re-validated against the preset's slot schema before any rule is created (ADR-0037).
+func (d *Daemon) approvePreset(p approval.Pending, bindings map[string]string) error {
+	final := bindings
+	if final == nil {
+		final = p.Bindings
+	}
+	preset, ok, err := d.presetForUpstream(p.UpstreamID, p.PresetID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("unknown preset %q for upstream", p.PresetID)
+	}
+	if err := serverprofile.ValidateBindings(preset.Slots, serverprofile.Bindings(final)); err != nil {
+		return fmt.Errorf("invalid preset bindings: %w", err)
+	}
+	tmpls, err := preset.Build(serverprofile.Bindings(final))
+	if err != nil {
+		return fmt.Errorf("expand preset: %w", err)
+	}
+	for _, t := range tmpls {
+		if _, err := d.policy.Create(policy.Rule{
+			SubjectAgentID: p.AgentID, UpstreamID: p.UpstreamID, Outcome: t.Outcome,
+			BrowseMethods: t.BrowseMethods, BrowsePath: t.BrowsePath,
+			Profile: t.Profile, ProfileParams: t.ProfileParams,
+		}); err != nil {
+			return fmt.Errorf("create preset rule: %w", err)
+		}
+	}
+	return nil
+}
+
+// presetForUpstream resolves a preset id against an upstream's available catalog (core http presets
+// for non-k8s + the upstream's profile presets).
+func (d *Daemon) presetForUpstream(upstreamID, presetID string) (serverprofile.Preset, bool, error) {
+	up, err := d.upstreams.GetByID(upstreamID)
+	if err != nil {
+		return serverprofile.Preset{}, false, fmt.Errorf("load upstream: %w", err)
+	}
+	preset, ok := serverprofile.FindPreset(up.Kind != upstream.KindK8s, up.Profile, presetID)
+	return preset, ok, nil
 }
 
 // approveOperation creates the H1 operation rule for the pending's template if no rule with the
