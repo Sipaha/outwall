@@ -1,4 +1,4 @@
-# ADR-0036: Browse rule primitive + Citeck ReadOnly preset + Records-path broadening
+# ADR-0036: Browse rule primitive + Records-path broadening + Upstream zones
 
 - **Status:** accepted
 - **Date:** 2026-06-23
@@ -17,7 +17,7 @@ because no rule covers them.
 Two needs arise simultaneously:
 
 1. **Plain HTTP upstreams**: an operator wants "allow all GET on this host" — a coarse browse grant
-   for ordinary HTTP stands, without having to enumerate every asset path as an operation template.
+   for ordinary HTTP, without having to enumerate every asset path as an operation template.
 2. **Citeck upstreams**: the operator wants "ReadOnly" — browse the app AND execute Records read-queries
    (POST `…/records/query`) but not mutate or delete. This is two concerns composed: a coarse browse
    grant (HTML/assets) plus a Records profile rule (op=read).
@@ -59,22 +59,17 @@ The control API (`POST /upstreams/{name}/rules`) accepts and returns `browse_met
 in the rule JSON payload. The Rules page gains a **Browse rules** section (browse rules have
 `browse_path != ""` and no operation-template or k8s fields) so operators can see and delete them.
 
-### Citeck ReadOnly preset (UI only; no backend preset endpoint)
+### Preset rules — deferred to ADR-0037
 
-On a Citeck-profile upstream, the operator clicks **ReadOnly**; the web client posts two ordinary
-`createRule` calls — no special backend endpoint (YAGNI: two sequential POSTs is simpler and requires
-no backend change; the backend already stores and evaluates both rule kinds):
+This increment ships the **browse-rule primitive** (the policy engine fields, storage, and evaluation)
+but does **not** ship preset buttons in the UI. An earlier draft of this ADR described "Allow GET" and
+"ReadOnly" one-click buttons that would post rules on behalf of the operator; those buttons were removed
+before merging because they hardcoded `subject_agent_id: ''` (granting to any agent, host-wide) with
+no UI indication and no agent-scoping flow.
 
-1. A **browse rule**: `{ browse_methods: "GET,HEAD", browse_path: "/**", outcome: "allow" }` —
-   covers HTML/assets/pages and `/gateway/observer`.
-2. A **Citeck profile rule**: `{ profile: "citeck", profile_params: { op: "read", source_id: "*",
-   workspace: "*" }, outcome: "allow" }` — the citeck profile classifies a Records `query` POST as
-   `op=read`; this rule allows it while mutate/delete (op=write) remain default-deny.
-
-For a plain HTTP upstream, the operator clicks **Allow GET (browse)**; the web client posts rule 1
-only. Both preset buttons target the upstream's currently selected subject (agent or "any"). The two
-rules created by ReadOnly are independent rows: deleting one leaves the other (a combined "remove
-ReadOnly" action is out of scope for v1).
+Preset rules — agent-scoped, requestable via the control plane, with typed variable slots — are a
+first-class concept deferred to **ADR-0037 (planned)**. Operators who need a browse rule today create
+it manually through the Rules page (specifying the subject, methods, and path glob themselves).
 
 ### Records-path broadening (`recordsOp` suffix)
 
@@ -96,10 +91,10 @@ The UI restructures upstream management into one **Upstreams** page with three t
 **Citeck** | **Kubernetes**. The previous separate Hosts and Clusters nav entries are replaced.
 Upstreams are filtered into tabs by `(kind, profile)` from `GET /upstreams`:
 
-- **HTTP tab**: raw-http upstreams (`kind != k8s`, `profile != "citeck"`). Add-host form, per-host
-  **Allow GET (browse)** preset button.
+- **HTTP tab**: raw-http upstreams (`kind != k8s`, `profile != "citeck"`). Add-host form and
+  per-host credential/remove actions.
 - **Citeck tab**: Citeck-profile upstreams (`profile == "citeck"`). Add-host with server type Citeck,
-  Records-rule editor, and the **ReadOnly** preset button.
+  Records-rule editor, and per-host credential/remove actions.
 - **Kubernetes tab**: the existing Clusters view (import/upload, insecure-skip-tls-verify badge) folded
   under this tab. The `/clusters` route and sidebar entry merge into `/upstreams`.
 
@@ -113,7 +108,7 @@ parameter for bookmarkability).
   operations with predictable structure, not for browser asset fetches.
 - **A backend `POST /upstreams/{name}/apply-preset` endpoint for ReadOnly.** Rejected (YAGNI): the
   UI can POST two ordinary rules sequentially with no backend change. If a transactional "apply preset"
-  becomes necessary (e.g., atomicity or template-driven presets), it can be added later.
+  becomes necessary (e.g., atomicity or template-driven presets), it can be added later under ADR-0037.
 - **Broaden `recordsOp` to match any POST (no suffix).** Rejected: too coarse — it would classify
   non-Records POSTs as profile-handled (and likely deny them via no-matching-rule) instead of falling
   through to raw-http rules. Suffix match retains specificity.
@@ -125,8 +120,6 @@ parameter for bookmarkability).
 
 - Operators can grant coarse browse access ("GET on any path") with a single rule, enabling real web
   app browsing through outwall without enumerating every asset path.
-- The Citeck ReadOnly preset (two rules) unblocks a common read-only analyst workflow: browse the app
-  and issue Records read-queries, while mutate/delete stays default-deny.
 - Browse rules and operation-template rules coexist on the same upstream with no precedence change;
   adding a browse rule cannot weaken an existing deny/require-approval outcome (most-restrictive-wins).
 - Browse rules are deliberately coarse — they allow a method on a glob, not a typed operation. Operators
@@ -136,11 +129,20 @@ parameter for bookmarkability).
 - The Upstreams tabs replace the previous Hosts + Clusters split; existing `/clusters` bookmarks
   redirect to `/upstreams` (Kubernetes tab).
 
+**Note — WebSocket / HTTP upgrade:** a `GET,HEAD /**` browse rule also authorizes HTTP upgrades
+(WebSocket, SSE over HTTP/1.1) because a WebSocket handshake is initiated as a GET request. Operators
+granting browse-GET should be aware that this implicitly allows upgrade streams on all matching paths.
+Narrow the `BrowsePath` glob or add a separate deny rule if upgrade streams should be blocked.
+
+**Note — URL-escaped paths:** `BrowsePath` globs are matched against the URL-escaped request path
+(consistent with operation templates). Narrow globs that include encoded characters (e.g. `%2F`
+or `%20`) must be written in their percent-encoded form; a glob targeting a decoded path segment will
+not match if the proxy receives the path already-encoded.
+
 Covered by tests in `internal/policy` (browse match, methodMatch, browse+operation coexistence,
 precedence), `internal/serverprofile/citeck` (`recordsOp` matches all three path variants),
 `internal/daemon` (control-API round-trips `browse_methods`/`browse_path`), and
-`web/src` (Tabs zone filtering, Allow-GET and ReadOnly preset POSTs, Browse-rules section render +
-delete).
+`web/src` (Tabs zone filtering, Browse-rules section render + delete).
 
 Links: [ADR-0034](0034-server-profiles-and-citeck-plugin.md) (server-profile plugin + citeck Records),
 [ADR-0035](0035-per-upstream-origin.md) (per-upstream origin for browser browsing),
