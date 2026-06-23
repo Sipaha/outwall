@@ -126,7 +126,7 @@ func TestCreateKindK8sRoundTrips(t *testing.T) {
 // requested host ("enterprise.ecos24.ru"), GetOrCreateByHost returns the existing upstream
 // without creating a credential-less duplicate.
 func TestGetOrCreateByHostMatchesExistingByBaseURLHost(t *testing.T) {
-	s, reg := setup(t)
+	_, reg := setup(t)
 
 	// Register a credentialed upstream with a name that differs from its hostname.
 	existing, err := reg.Create("enterprise", "https://enterprise.ecos24.ru/", AuthConfig{
@@ -150,8 +150,6 @@ func TestGetOrCreateByHostMatchesExistingByBaseURLHost(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, httpCount, "no duplicate upstream must have been created")
-
-	_ = s // keep setup import used
 }
 
 // TestGetByHostExactMatchOnly verifies that GetByHost uses exact hostname matching only —

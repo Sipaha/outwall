@@ -177,7 +177,7 @@ func (r *Registry) GetByHost(host string) (*Upstream, error) {
 	}
 	ups, err := r.List()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list upstreams: %w", err)
 	}
 	for _, u := range ups {
 		parsed, perr := url.Parse(u.BaseURL)
