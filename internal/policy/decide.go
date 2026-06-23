@@ -55,6 +55,21 @@ func verbMatches(ruleVerb, reqVerb string) bool {
 	return ruleVerb == "" || ruleVerb == "*" || strings.EqualFold(ruleVerb, reqVerb)
 }
 
+// methodMatch reports whether m is allowed by a browse rule's method set: "" or a "*" token matches
+// any method; otherwise a case-insensitive membership test against the comma-separated set.
+func methodMatch(set, m string) bool {
+	if set == "" {
+		return true
+	}
+	for _, tok := range strings.Split(set, ",") {
+		tok = strings.TrimSpace(tok)
+		if tok == "*" || strings.EqualFold(tok, m) {
+			return true
+		}
+	}
+	return false
+}
+
 // nsMatches matches a single namespace token against a rule's namespace glob. The safety
 // property: an empty request namespace (cluster-scoped / all-namespaces) matches ONLY a
 // rule whose namespace is "*" — never a concrete-namespace rule.
@@ -128,6 +143,11 @@ func (r *Registry) Decide(in Input) (Decision, error) {
 		var c candidate
 		if k8s {
 			if !k8sMatches(rule, in) {
+				continue
+			}
+			c = candidate{rule: rule, outcome: rule.Outcome}
+		} else if rule.BrowsePath != "" {
+			if !methodMatch(rule.BrowseMethods, in.Method) || !MatchGlob(rule.BrowsePath, in.Path) {
 				continue
 			}
 			c = candidate{rule: rule, outcome: rule.Outcome}
