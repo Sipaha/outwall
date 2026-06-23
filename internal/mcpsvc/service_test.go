@@ -562,6 +562,26 @@ func TestRequestPresetEnqueuesAndValidates(t *testing.T) {
 	require.Equal(t, up.ID, card.UpstreamID)
 }
 
+// TestRequestPresetOnK8sUpstreamIsRejected asserts that calling RequestPreset against a k8s-kind
+// upstream returns an error for any preset id (k8s clusters have no HTTP-preset catalog) and
+// does NOT enqueue an approval card.
+func TestRequestPresetOnK8sUpstreamIsRejected(t *testing.T) {
+	svc, deps := newTestService(t)
+	agentID := deps.mustAgent(t, "a1")
+	// Create a k8s-kind upstream (no profile).
+	deps.mustUpstream(t, "prod-cluster", "https://api.k8s:6443", "k8s", "")
+
+	_, err := svc.RequestPreset(agentID, RequestPresetInput{
+		Host:     "prod-cluster",
+		PresetID: "testprof-ro", // any preset id — k8s upstreams have none
+		Purpose:  "x",
+	})
+	require.Error(t, err, "RequestPreset on a k8s upstream must return an error")
+
+	// No card should have been enqueued.
+	require.Empty(t, deps.queue.List(), "no approval card must be enqueued for a k8s upstream")
+}
+
 func TestListUpstreamsCarriesPresets(t *testing.T) {
 	svc, deps := newTestService(t)
 	deps.mustUpstream(t, "cite.test", "https://cite.test", "http", "testprof")

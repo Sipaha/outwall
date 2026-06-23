@@ -31,6 +31,13 @@ func refSource(ref string) (source, localID string) {
 // recordsOp returns the Records operation ("query"/"mutate"/"delete") for a path, matching the
 // /records/{op} suffix to cover all gateway variants (/api/records/op, /gateway/records/op,
 // /gateway/emodel/api/records/op, etc.).
+//
+// Safety note: the suffix match is intentionally loose (no anchored prefix). This is safe because
+// classify is only called for POST requests (the Classify entry point rejects everything else
+// immediately), and the Citeck gateway always routes Records calls through a /records/ path
+// segment. A non-Records endpoint whose URL happens to end in "/records/query" is implausible in
+// practice; if it ever arose it would simply be routed through the Records gating path, which is
+// the more conservative outcome (deny unless an explicit read rule matches).
 func recordsOp(path string) (string, bool) {
 	for _, op := range []string{"query", "mutate", "delete"} {
 		if strings.HasSuffix(path, "/records/"+op) {
@@ -145,16 +152,6 @@ func normalizeSource(s string) string {
 		return src
 	}
 	return s
-}
-
-func nonEmpty(xs ...string) []string {
-	out := make([]string, 0, len(xs))
-	for _, x := range xs {
-		if x != "" {
-			out = append(out, x)
-		}
-	}
-	return out
 }
 
 func nonNil(b []byte) []byte {

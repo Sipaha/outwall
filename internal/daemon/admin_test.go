@@ -858,6 +858,57 @@ func (atomicFakeProfile) Presets() []serverprofile.Preset {
 	}}
 }
 
+// TestApprovePresetNilBindingsFallsBackToPendingBindings verifies that when the operator approves a
+// KindPreset card with body {"approve":true} but NO "bindings" key (body.Bindings == nil), the
+// approvePreset implementation falls back to the pending's own requested bindings to expand the
+// rules. The resulting rules must still be agent-scoped and match the preset's expected templates.
+func TestApprovePresetNilBindingsFallsBackToPendingBindings(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, 200, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	// A citeck upstream + an agent.
+	up := d.mustUpstreamProfiled(t, "cite.test", "https://cite.test", "http", "citeck")
+	agentID := d.mustAgent(t, "a1")
+
+	// Park a KindPreset pending with bindings set (requested by the agent).
+	go func() {
+		_, _ = d.approvals.Submit(context.Background(), approval.Pending{
+			Kind: approval.KindPreset, AgentID: agentID, UpstreamID: up.ID, Host: up.Name,
+			PresetID: "citeck-readonly", Bindings: map[string]string{"sourceId": "*", "workspace": "proj-y"},
+		})
+	}()
+	var id string
+	require.Eventually(t, func() bool {
+		for _, p := range d.approvals.List() {
+			if p.Kind == approval.KindPreset {
+				id = p.ID
+				return true
+			}
+		}
+		return false
+	}, time.Second, 10*time.Millisecond)
+
+	// Approve with no "bindings" key — operator did not edit anything; approvePreset must use p.Bindings.
+	require.Equal(t, 200, req(t, h, "POST", "/approvals/"+id+"/resolve", `{"approve":true}`).Code)
+
+	rules, err := d.policy.ForUpstream(up.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, rules, "rules must be created from the pending's bindings when operator sends no bindings")
+	var browse, citeckRead int
+	for _, r := range rules {
+		require.Equal(t, agentID, r.SubjectAgentID, "every fanned-out rule must be agent-scoped")
+		if r.BrowsePath == "/**" {
+			browse++
+		}
+		if r.Profile == "citeck" {
+			citeckRead++
+		}
+	}
+	require.Equal(t, 1, browse, "one browse rule expected")
+	require.Equal(t, 1, citeckRead, "one citeck read rule expected")
+}
+
 func TestPresetPreview(t *testing.T) {
 	d := newDaemon(t)
 	h := d.AdminHandler()

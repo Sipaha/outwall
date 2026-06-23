@@ -232,13 +232,16 @@ func (r *Registry) Delete(id string) error {
 	return nil
 }
 
-func (r *Registry) scanRows(query string, args ...any) ([]*Rule, error) {
+func (r *Registry) scanRows(query string, args ...any) (out []*Rule, err error) {
 	rows, err := r.store.DB().Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query rules: %w", err)
 	}
-	defer rows.Close()
-	var out []*Rule
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 	for rows.Next() {
 		var (
 			rule         Rule
@@ -268,7 +271,10 @@ func (r *Registry) scanRows(query string, args ...any) ([]*Rule, error) {
 		rule.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 		out = append(out, &rule)
 	}
-	return out, rows.Err()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 const ruleCols = `id, subject_agent_id, upstream_id, op_method, op_path_template, op_query_template, op_body_template, op_value_policies, outcome, rate_limit_per_min, k8s_namespace, k8s_resource, k8s_verb, profile, profile_params, browse_methods, browse_path, created_at`

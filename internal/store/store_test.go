@@ -37,7 +37,7 @@ func TestOpenAppliesSchemaIdempotently(t *testing.T) {
 func TestFreshDBFromSchema(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "fresh.db"))
 	require.NoError(t, err)
-	defer s.Close()
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	// A column the app queries (whose absence raised "no such column: reason") exists in the schema.
 	_, err = s.DB().Exec(`SELECT reason FROM access_requests LIMIT 0`)
 	require.NoError(t, err)
@@ -59,7 +59,7 @@ func TestFreshDBSkipsUpgradeSteps(t *testing.T) {
 
 	s, err := Open(filepath.Join(t.TempDir(), "fresh.db"))
 	require.NoError(t, err)
-	defer s.Close()
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
 
 	require.False(t, ran, "a fresh DB must be built from schema, not by running upgrade steps")
 	require.Equal(t, len(migrations), userVersion(t, s), "fresh DB stamped at the latest version")
@@ -78,7 +78,7 @@ func userVersion(t *testing.T, s *Store) int {
 func TestMigrationRunnerAppliesPendingOnce(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "mig.db"))
 	require.NoError(t, err)
-	defer s.Close()
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	require.Equal(t, len(migrations), userVersion(t, s), "fresh DB is stamped at the latest version")
 	baseline := userVersion(t, s)
 
@@ -109,7 +109,7 @@ func TestServerProfileColumns(t *testing.T) {
 	// Fresh DB from current schema.
 	s, err := Open(filepath.Join(t.TempDir(), "fresh.db"))
 	require.NoError(t, err)
-	defer s.Close()
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	_, err = s.DB().Exec(`SELECT profile FROM upstreams LIMIT 0`)
 	require.NoError(t, err)
 	_, err = s.DB().Exec(`SELECT profile, profile_params FROM rules LIMIT 0`)
@@ -128,7 +128,7 @@ func TestServerProfileColumns(t *testing.T) {
 	// Re-open through the runner: the new migration adds the columns.
 	s2, err := Open(p)
 	require.NoError(t, err)
-	defer s2.Close()
+	t.Cleanup(func() { require.NoError(t, s2.Close()) })
 	_, err = s2.DB().Exec(`SELECT profile FROM upstreams LIMIT 0`)
 	require.NoError(t, err)
 	_, err = s2.DB().Exec(`SELECT profile, profile_params FROM rules LIMIT 0`)
@@ -139,7 +139,7 @@ func TestServerProfileColumns(t *testing.T) {
 func TestBrowseRuleColumns(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "fresh.db"))
 	require.NoError(t, err)
-	defer s.Close()
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	_, err = s.DB().Exec(`SELECT browse_methods, browse_path FROM rules LIMIT 0`)
 	require.NoError(t, err)
 	require.Equal(t, len(migrations), userVersion(t, s))
@@ -148,7 +148,7 @@ func TestBrowseRuleColumns(t *testing.T) {
 func TestSettingsRoundTrip(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "outwall.db"))
 	require.NoError(t, err)
-	defer s.Close()
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
 
 	_, ok, err := s.GetSetting("missing")
 	require.NoError(t, err)
