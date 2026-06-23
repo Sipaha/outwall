@@ -18,6 +18,7 @@ import (
 	"github.com/Sipaha/outwall/internal/approval"
 	"github.com/Sipaha/outwall/internal/events"
 	"github.com/Sipaha/outwall/internal/policy"
+	"github.com/Sipaha/outwall/internal/serverprofile"
 	_ "github.com/Sipaha/outwall/internal/serverprofile/citeck"
 	"github.com/Sipaha/outwall/internal/upstream"
 )
@@ -796,6 +797,65 @@ func TestApprovePresetFansOutAgentScopedRules(t *testing.T) {
 	}
 	require.Equal(t, 1, browse)
 	require.Equal(t, 1, citeckRead)
+}
+
+func TestApprovePresetFanoutIsAtomic(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, 200, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	// A fake profile whose preset Build yields a valid rule followed by an invalid-outcome rule.
+	serverprofile.Register("atomicfake", atomicFakeProfile{})
+	up := d.mustUpstreamProfiled(t, "af.test", "https://af.test", "http", "atomicfake")
+	agentID := d.mustAgent(t, "a1")
+
+	go func() {
+		_, _ = d.approvals.Submit(context.Background(), approval.Pending{
+			Kind: approval.KindPreset, AgentID: agentID, UpstreamID: up.ID, Host: up.Name,
+			PresetID: "bad", Bindings: map[string]string{},
+		})
+	}()
+	var id string
+	require.Eventually(t, func() bool {
+		for _, p := range d.approvals.List() {
+			if p.Kind == approval.KindPreset {
+				id = p.ID
+				return true
+			}
+		}
+		return false
+	}, time.Second, 10*time.Millisecond)
+
+	// Approve → fan-out fails on the invalid rule → 400 → NO rules created (atomic).
+	require.Equal(t, 400, req(t, h, "POST", "/approvals/"+id+"/resolve", `{"approve":true}`).Code)
+	rules, err := d.policy.ForUpstream(up.ID)
+	require.NoError(t, err)
+	require.Empty(t, rules)
+}
+
+// atomicFakeProfile's preset "bad" Builds one valid rule then one with an invalid outcome.
+type atomicFakeProfile struct{}
+
+func (atomicFakeProfile) Name() string { return "atomicfake" }
+func (atomicFakeProfile) Classify(serverprofile.Request) (serverprofile.Operation, bool, error) {
+	return serverprofile.Operation{}, false, nil
+}
+func (atomicFakeProfile) Match(serverprofile.Rule, serverprofile.Operation) (string, bool, error) {
+	return "", false, nil
+}
+func (atomicFakeProfile) RuleSchema() serverprofile.RuleSchema {
+	return serverprofile.RuleSchema{Profile: "atomicfake"}
+}
+func (atomicFakeProfile) Presets() []serverprofile.Preset {
+	return []serverprofile.Preset{{
+		ID: "bad", Label: "Bad",
+		Build: func(serverprofile.Bindings) ([]serverprofile.RuleTemplate, error) {
+			return []serverprofile.RuleTemplate{
+				{Outcome: serverprofile.Allow, BrowseMethods: "GET", BrowsePath: "/**"},
+				{Outcome: "bogus"}, // invalid → CreateMany rolls the whole batch back
+			}, nil
+		},
+	}}
 }
 
 func TestPresetPreview(t *testing.T) {

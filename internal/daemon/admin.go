@@ -676,16 +676,21 @@ func (d *Daemon) approveK8sAccess(p approval.Pending) error {
 	if len(grants) == 0 { // legacy single-tuple pending
 		grants = []approval.K8sGrant{{Namespace: p.Namespace, Resource: p.Resource, Verb: p.Verb}}
 	}
+	missing := make([]policy.Rule, 0, len(grants))
 	for _, g := range grants {
 		if exists(g) {
 			continue
 		}
-		if _, err := d.policy.Create(policy.Rule{
+		missing = append(missing, policy.Rule{
 			SubjectAgentID: p.AgentID, UpstreamID: p.UpstreamID, Outcome: policy.Allow,
 			Namespace: g.Namespace, Resource: g.Resource, Verb: g.Verb,
-		}); err != nil {
-			return fmt.Errorf("create k8s rule %s/%s/%s: %w", g.Namespace, g.Resource, g.Verb, err)
-		}
+		})
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	if _, err := d.policy.CreateMany(missing); err != nil {
+		return fmt.Errorf("create k8s rules: %w", err)
 	}
 	return nil
 }
@@ -712,14 +717,16 @@ func (d *Daemon) approvePreset(p approval.Pending, bindings map[string]string) e
 	if err != nil {
 		return fmt.Errorf("expand preset: %w", err)
 	}
+	rules := make([]policy.Rule, 0, len(tmpls))
 	for _, t := range tmpls {
-		if _, err := d.policy.Create(policy.Rule{
+		rules = append(rules, policy.Rule{
 			SubjectAgentID: p.AgentID, UpstreamID: p.UpstreamID, Outcome: t.Outcome,
 			BrowseMethods: t.BrowseMethods, BrowsePath: t.BrowsePath,
 			Profile: t.Profile, ProfileParams: t.ProfileParams,
-		}); err != nil {
-			return fmt.Errorf("create preset rule: %w", err)
-		}
+		})
+	}
+	if _, err := d.policy.CreateMany(rules); err != nil {
+		return fmt.Errorf("create preset rules: %w", err)
 	}
 	return nil
 }
