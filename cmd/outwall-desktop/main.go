@@ -201,9 +201,13 @@ func run() error {
 	tray.SetMenu(trayMenu)
 	tray.OnClick(func() { application.InvokeAsync(raiseToFront) })
 
-	// Clicking an OS notification raises the outwall window (even when minimised to the tray).
+	// Clicking an OS notification raises the outwall window (even when minimised to the tray) and
+	// routes the SPA to the Approvals page so the operator lands on the pending request.
 	notifs.OnNotificationResponse(func(notifications.NotificationResult) {
 		application.InvokeAsync(raiseToFront)
+		// Route the SPA to the Approvals page so the operator lands on the pending request rather than
+		// wherever they last were. Delivered to the web over the SSE event bus.
+		h.Publish("desktop.open-approvals", nil)
 	})
 
 	// Raise an OS notification whenever an agent requests access (an approval is enqueued), so the

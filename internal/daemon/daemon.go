@@ -208,6 +208,10 @@ func (d *Daemon) Close() error { return d.store.Close() }
 // going through the SSE HTTP stream.
 func (d *Daemon) Subscribe() (<-chan events.Event, func()) { return d.bus.Subscribe() }
 
+// Publish emits an event on the daemon's event bus (nil-safe). The desktop wrapper uses it to push a
+// UI signal (e.g. "open approvals" on a notification click) to the SPA over the SSE stream.
+func (d *Daemon) Publish(eventType string, data any) { d.publish(eventType, data) }
+
 // CAPEM returns the local CA certificate (PEM) the data plane is served with.
 func (d *Daemon) CAPEM() []byte { return d.ca.CAPEM() }
 

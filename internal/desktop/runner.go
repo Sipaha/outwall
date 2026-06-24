@@ -122,6 +122,10 @@ func waitReady(uiURL string, serveErr <-chan error) error {
 // desktop wrapper can raise OS notifications (e.g. on approval.enqueued) directly.
 func (h *Handle) Subscribe() (<-chan events.Event, func()) { return h.d.Subscribe() }
 
+// Publish emits an event on the in-process daemon's event bus. The desktop wrapper uses it to push
+// UI signals (e.g. "open approvals" on a notification click) to the SPA over the SSE stream.
+func (h *Handle) Publish(eventType string, data any) { h.d.Publish(eventType, data) }
+
 // Stop cancels the daemon context, waits (bounded by ctx) for Serve to return,
 // and closes the store. It is safe — and idempotent — to call more than once:
 // the teardown runs exactly once under stopOnce and later calls return the same

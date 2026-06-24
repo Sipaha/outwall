@@ -32,6 +32,7 @@ const EVENT_TYPES = [
   'approval.resolved',
   'access.requested',
   'audit.recorded',
+  'desktop.open-approvals',
 ] as const
 
 export const useEventStore = create<EventState>((set, get) => ({

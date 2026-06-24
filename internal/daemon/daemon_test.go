@@ -3,9 +3,25 @@ package daemon
 import (
 	"crypto/tls"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestPublishFansOut(t *testing.T) {
+	d := newDaemon(t)
+	ch, cancel := d.Subscribe()
+	defer cancel()
+
+	d.Publish("desktop.open-approvals", nil)
+
+	select {
+	case ev := <-ch:
+		require.Equal(t, "desktop.open-approvals", ev.Type)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for published event")
+	}
+}
 
 func TestBrowseDomainDefault(t *testing.T) {
 	d := newDaemon(t)

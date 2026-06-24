@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Route, Routes } from 'react-router'
+import { Route, Routes, useNavigate } from 'react-router'
 import { getVaultStatus, ApiError } from './lib/api'
 import type { VaultStatus } from './lib/types'
 import { useEventStore } from './lib/events'
@@ -17,8 +17,10 @@ import { Settings } from './pages/Settings'
 export default function App() {
   const [status, setStatus] = useState<VaultStatus | null>(null)
   const [error, setError] = useState('')
+  const navigate = useNavigate()
   const connect = useEventStore((s) => s.connect)
   const disconnect = useEventStore((s) => s.disconnect)
+  const openApprovals = useEventStore((s) => s.counters['desktop.open-approvals'] ?? 0)
 
   const refreshStatus = useCallback(() => {
     // setState lives in the .then/.catch callbacks (deferred past the fetch) — the form the
@@ -45,6 +47,12 @@ export default function App() {
       return () => disconnect()
     }
   }, [unlocked, connect, disconnect])
+
+  // Navigate to the Approvals page whenever the desktop sends a "open-approvals" signal (e.g. on
+  // notification click), so the operator lands on the pending request directly.
+  useEffect(() => {
+    if (openApprovals > 0) navigate('/approvals')
+  }, [openApprovals, navigate])
 
   if (error && status === null) {
     return (
