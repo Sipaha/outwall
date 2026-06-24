@@ -840,8 +840,8 @@ func (atomicFakeProfile) Name() string { return "atomicfake" }
 func (atomicFakeProfile) Classify(serverprofile.Request) (serverprofile.Operation, bool, error) {
 	return serverprofile.Operation{}, false, nil
 }
-func (atomicFakeProfile) Match(serverprofile.Rule, serverprofile.Operation) (string, bool, error) {
-	return "", false, nil
+func (atomicFakeProfile) Authorize(serverprofile.AuthInput) (serverprofile.AuthResult, error) {
+	return serverprofile.AuthResult{Outcome: serverprofile.Allow}, nil
 }
 func (atomicFakeProfile) RuleSchema() serverprofile.RuleSchema {
 	return serverprofile.RuleSchema{Profile: "atomicfake"}

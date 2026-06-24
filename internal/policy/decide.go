@@ -27,6 +27,10 @@ type Input struct {
 	// nil/empty when the request has no body or the proxy did not capture it.
 	Body []byte
 
+	// Browser is true when the request authenticated via the browser cookie (vs the bearer header).
+	// Profiles may use it to choose a lenient (narrow/empty) vs strict (deny) outcome.
+	Browser bool
+
 	// k8s request tuple (used when Kind=="k8s"):
 	Kind        string // "" / "http" = http path matching; "k8s" = (namespace, resource, verb)
 	Namespace   string
@@ -48,6 +52,10 @@ type Decision struct {
 	// HTTP operation results (empty for k8s / default-deny):
 	Vars      map[string]string // extracted variable values from the matched template
 	NewValues []VarValue        // text (variable,value) pairs not yet in the allowed set
+
+	// Profile-driven request/response rewrites (citeck workspace filtering). At most one is set.
+	RewriteBody []byte // forward this body instead of the original
+	Response    []byte // return 200 application/json with this body; skip the upstream
 }
 
 // verbMatches: an empty or "*" rule verb matches any verb; otherwise exact (case-insensitive).
@@ -177,37 +185,38 @@ func (r *Registry) Decide(in Input) (Decision, error) {
 	return Decision{Outcome: Deny, Rule: nil}, nil // default-deny
 }
 
-// decideProfile evaluates the upstream's profile rules (only those whose Profile == in.Profile)
-// against the classified operation, applying the same tier precedence as raw-http.
+// decideProfile delegates the whole decision for a handled operation to the profile's Authorize,
+// passing the profile's rules split by subject tier, then maps the AuthResult into a Decision.
 func decideProfile(prof serverprofile.Profile, in Input, op serverprofile.Operation, rules []*Rule) (Decision, error) {
-	var agentTier, anyTier []candidate
-	vars := opVars(op)
+	var agent, any []serverprofile.Rule
+	byID := map[string]*Rule{}
 	for _, rule := range rules {
 		if rule.Profile != in.Profile {
 			continue
 		}
-		outcome, matched, err := prof.Match(serverprofile.Rule{ID: rule.ID, Outcome: rule.Outcome, Params: rule.ProfileParams}, op)
-		if err != nil {
-			return Decision{}, err
-		}
-		if !matched {
-			continue
-		}
-		c := candidate{rule: rule, outcome: outcome, vars: vars}
+		sr := serverprofile.Rule{ID: rule.ID, Outcome: rule.Outcome, Params: rule.ProfileParams}
 		switch rule.SubjectAgentID {
 		case in.AgentID:
-			agentTier = append(agentTier, c)
+			agent = append(agent, sr)
+			byID[rule.ID] = rule
 		case "":
-			anyTier = append(anyTier, c)
+			any = append(any, sr)
+			byID[rule.ID] = rule
 		}
 	}
-	if d, ok := resolveTier(agentTier); ok {
-		return d, nil
+	ar, err := prof.Authorize(serverprofile.AuthInput{
+		Op: op, Body: in.Body, Browser: in.Browser, Agent: agent, Any: any,
+	})
+	if err != nil {
+		return Decision{}, err
 	}
-	if d, ok := resolveTier(anyTier); ok {
-		return d, nil
-	}
-	return Decision{Outcome: Deny, Rule: nil}, nil
+	return Decision{
+		Outcome:     ar.Outcome,
+		Rule:        byID[ar.RuleID], // nil for synthesized/default-deny outcomes
+		Vars:        opVars(op),
+		RewriteBody: ar.RewriteBody,
+		Response:    ar.Response,
+	}, nil
 }
 
 // opVars renders a profile operation as audit variables (op kind + the touched resources/scopes).

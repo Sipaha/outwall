@@ -81,23 +81,78 @@ type ruleParams struct {
 	Workspace string `json:"workspace"` // glob; "" or "*" = any (ignored for update/delete)
 }
 
-func (profile) Match(rule serverprofile.Rule, op serverprofile.Operation) (string, bool, error) {
+// Authorize resolves a classified operation against the agent's citeck rules. In this task it only
+// reproduces the legacy all-or-nothing decision; read-query filtering is added in a later task.
+func (profile) Authorize(in serverprofile.AuthInput) (serverprofile.AuthResult, error) {
+	outcome, ruleID := resolveLegacy(in.Op, in.Agent, in.Any)
+	return serverprofile.AuthResult{Outcome: outcome, RuleID: ruleID}, nil
+}
+
+// ruleMatches reports whether a citeck rule's params structurally match the operation: op-kind gate
+// plus every touched (source, scope) passing the rule's source/workspace globs. (Mirrors the former
+// Match's structural test, independent of the rule's outcome.)
+func ruleMatches(r serverprofile.Rule, op serverprofile.Operation) bool {
 	var p ruleParams
-	if err := json.Unmarshal(nonNil(rule.Params), &p); err != nil {
-		return "", false, nil // a malformed rule never grants
+	if err := json.Unmarshal(nonNil(r.Params), &p); err != nil {
+		return false // a malformed rule never grants
 	}
 	if p.Op != "" && p.Op != op.Kind {
-		return "", false, nil
+		return false
 	}
 	if len(op.Resources) == 0 {
-		return "", false, nil
+		return false
 	}
 	for _, res := range op.Resources {
 		if !matchSource(p.SourceID, res.Resource) || !matchWorkspace(p.Workspace, res.Scope) {
-			return "", false, nil // every touched resource must pass
+			return false
 		}
 	}
-	return rule.Outcome, true, nil
+	return true
+}
+
+// resolveLegacy applies tier precedence (agent tier outranks any tier; within a tier deny >
+// require-approval > allow) over the rules that structurally match op. Returns the winning outcome
+// and its rule id, or (Deny, "") on default-deny.
+func resolveLegacy(op serverprofile.Operation, agent, any []serverprofile.Rule) (string, string) {
+	pick := func(rules []serverprofile.Rule) (string, string, bool) {
+		var allow, approval, deny *serverprofile.Rule
+		for i := range rules {
+			if !ruleMatches(rules[i], op) {
+				continue
+			}
+			switch rules[i].Outcome {
+			case serverprofile.Deny:
+				if deny == nil {
+					deny = &rules[i]
+				}
+			case serverprofile.RequireApproval:
+				if approval == nil {
+					approval = &rules[i]
+				}
+			case serverprofile.Allow:
+				if allow == nil {
+					allow = &rules[i]
+				}
+			}
+		}
+		switch {
+		case deny != nil:
+			return serverprofile.Deny, deny.ID, true
+		case approval != nil:
+			return serverprofile.RequireApproval, approval.ID, true
+		case allow != nil:
+			return serverprofile.Allow, allow.ID, true
+		default:
+			return "", "", false
+		}
+	}
+	if o, id, ok := pick(agent); ok {
+		return o, id
+	}
+	if o, id, ok := pick(any); ok {
+		return o, id
+	}
+	return serverprofile.Deny, ""
 }
 
 func matchSource(ruleSrc, src string) bool {

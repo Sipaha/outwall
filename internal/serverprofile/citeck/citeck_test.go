@@ -21,51 +21,46 @@ func mustClassify(t *testing.T, path, body string) serverprofile.Operation {
 }
 
 func TestMatchReadAllowedByWorkspaceRule(t *testing.T) {
-	p := New()
 	op := mustClassify(t, "/api/records/query", `{"query":{"sourceId":"emodel/type","workspaces":["w1"],"query":{}}}`)
-	out, matched, err := p.Match(rule(`{"op":"read","source_id":"emodel/*","workspace":"w1"}`), op)
+	r := rule(`{"op":"read","source_id":"emodel/*","workspace":"w1"}`)
+	require.True(t, ruleMatches(r, op), "rule should match")
+	ar, err := New().Authorize(serverprofile.AuthInput{Op: op, Any: []serverprofile.Rule{r}})
 	require.NoError(t, err)
-	require.True(t, matched)
-	require.Equal(t, serverprofile.Allow, out)
+	require.Equal(t, serverprofile.Allow, ar.Outcome)
 }
 
 func TestMatchReadAllWorkspacesRejectedByConcreteRule(t *testing.T) {
-	p := New()
 	op := mustClassify(t, "/api/records/query", `{"query":{"sourceId":"emodel/type","query":{}}}`) // scopeAll
-	_, matched, _ := p.Match(rule(`{"op":"read","source_id":"emodel/type","workspace":"w1"}`), op)
-	require.False(t, matched, "a concrete-workspace rule must not match an all-workspaces read")
+	r := rule(`{"op":"read","source_id":"emodel/type","workspace":"w1"}`)
+	require.False(t, ruleMatches(r, op), "a concrete-workspace rule must not match an all-workspaces read")
 }
 
 func TestMatchReadAllWorkspacesAllowedByWildcard(t *testing.T) {
-	p := New()
 	op := mustClassify(t, "/api/records/query", `{"query":{"sourceId":"emodel/type","query":{}}}`)
-	_, matched, _ := p.Match(rule(`{"op":"read","source_id":"emodel/type","workspace":"*"}`), op)
-	require.True(t, matched)
+	r := rule(`{"op":"read","source_id":"emodel/type","workspace":"*"}`)
+	require.True(t, ruleMatches(r, op))
 }
 
 func TestMatchWriteOpMismatch(t *testing.T) {
-	p := New()
 	op := mustClassify(t, "/api/records/query", `{"query":{"sourceId":"emodel/type","workspaces":["w1"],"query":{}}}`)
-	_, matched, _ := p.Match(rule(`{"op":"write","source_id":"*","workspace":"*"}`), op)
-	require.False(t, matched, "a write rule must not match a read")
+	r := rule(`{"op":"write","source_id":"*","workspace":"*"}`)
+	require.False(t, ruleMatches(r, op), "a write rule must not match a read")
 }
 
 func TestMatchDeleteSourceIdOnly(t *testing.T) {
-	p := New()
 	op := mustClassify(t, "/api/records/delete", `{"records":["emodel/type@abc"]}`) // scopeUnknown
 	// A wildcard-workspace write rule matches (workspace not enforceable for delete).
-	_, matched, _ := p.Match(rule(`{"op":"write","source_id":"emodel/type","workspace":"*"}`), op)
-	require.True(t, matched)
+	r1 := rule(`{"op":"write","source_id":"emodel/type","workspace":"*"}`)
+	require.True(t, ruleMatches(r1, op))
 	// A concrete-workspace rule cannot be proven → does not match.
-	_, matched2, _ := p.Match(rule(`{"op":"write","source_id":"emodel/type","workspace":"w1"}`), op)
-	require.False(t, matched2)
+	r2 := rule(`{"op":"write","source_id":"emodel/type","workspace":"w1"}`)
+	require.False(t, ruleMatches(r2, op))
 }
 
 func TestMatchBatchEveryResourceMustPass(t *testing.T) {
-	p := New()
 	op := mustClassify(t, "/api/records/delete", `{"records":["emodel/type@a","emodel/secret@b"]}`)
-	_, matched, _ := p.Match(rule(`{"op":"write","source_id":"emodel/type","workspace":"*"}`), op)
-	require.False(t, matched, "a rule covering only one sourceId must not allow a cross-source batch")
+	r := rule(`{"op":"write","source_id":"emodel/type","workspace":"*"}`)
+	require.False(t, ruleMatches(r, op), "a rule covering only one sourceId must not allow a cross-source batch")
 }
 
 func TestRegistered(t *testing.T) {

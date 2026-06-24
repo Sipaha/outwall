@@ -24,15 +24,53 @@ func (fakeProf) Classify(r serverprofile.Request) (serverprofile.Operation, bool
 	}
 	return serverprofile.Operation{Kind: kind, Resources: []serverprofile.ResourceScope{{Resource: "r", Scope: "s"}}}, true, nil
 }
-func (fakeProf) Match(rule serverprofile.Rule, op serverprofile.Operation) (string, bool, error) {
+func (f fakeProf) matchOne(rule serverprofile.Rule, op serverprofile.Operation) (string, bool) {
 	var p struct {
 		Src string `json:"src"`
 	}
 	_ = json.Unmarshal(rule.Params, &p)
 	if p.Src == "r" || p.Src == "*" {
-		return rule.Outcome, true, nil
+		return rule.Outcome, true
 	}
-	return "", false, nil
+	return "", false
+}
+
+func (f fakeProf) Authorize(in serverprofile.AuthInput) (serverprofile.AuthResult, error) {
+	// Mirror the old per-rule Match over both tiers with deny > allow precedence.
+	pick := func(rules []serverprofile.Rule) (string, string, bool) {
+		var allow, deny *serverprofile.Rule
+		for i := range rules {
+			out, matched := f.matchOne(rules[i], in.Op)
+			if !matched {
+				continue
+			}
+			switch out {
+			case serverprofile.Deny:
+				if deny == nil {
+					deny = &rules[i]
+				}
+			case serverprofile.Allow:
+				if allow == nil {
+					allow = &rules[i]
+				}
+			}
+		}
+		switch {
+		case deny != nil:
+			return serverprofile.Deny, deny.ID, true
+		case allow != nil:
+			return serverprofile.Allow, allow.ID, true
+		default:
+			return "", "", false
+		}
+	}
+	if o, id, ok := pick(in.Agent); ok {
+		return serverprofile.AuthResult{Outcome: o, RuleID: id}, nil
+	}
+	if o, id, ok := pick(in.Any); ok {
+		return serverprofile.AuthResult{Outcome: o, RuleID: id}, nil
+	}
+	return serverprofile.AuthResult{Outcome: serverprofile.Deny}, nil
 }
 func (fakeProf) RuleSchema() serverprofile.RuleSchema {
 	return serverprofile.RuleSchema{Profile: "fake"}

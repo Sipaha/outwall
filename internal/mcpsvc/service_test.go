@@ -29,8 +29,8 @@ func (fakeProfile) Classify(_ serverprofile.Request) (serverprofile.Operation, b
 	return serverprofile.Operation{}, false, nil
 }
 
-func (fakeProfile) Match(_ serverprofile.Rule, _ serverprofile.Operation) (string, bool, error) {
-	return "", false, nil
+func (fakeProfile) Authorize(_ serverprofile.AuthInput) (serverprofile.AuthResult, error) {
+	return serverprofile.AuthResult{Outcome: serverprofile.Allow}, nil
 }
 
 func (fakeProfile) RuleSchema() serverprofile.RuleSchema {

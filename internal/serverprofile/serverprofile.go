@@ -174,15 +174,35 @@ func FindPreset(includeCoreHTTP bool, profile, id string) (Preset, bool) {
 	return Preset{}, false
 }
 
+// AuthInput carries everything a profile needs to authorize a classified operation: the operation,
+// the raw body (for rewrite), the request mode, and the agent's candidate rules split by tier.
+type AuthInput struct {
+	Op      Operation
+	Body    []byte
+	Browser bool
+	Agent   []Rule
+	Any     []Rule
+}
+
+// AuthResult is a profile's full authorization decision for one operation. At most one of
+// RewriteBody / Response is non-nil; both nil means "forward the original request".
+type AuthResult struct {
+	Outcome     string // Allow | Deny | RequireApproval
+	RuleID      string // deciding rule id (for audit); "" when synthesized
+	RewriteBody []byte // forward this body instead of the original
+	Response    []byte // return 200 application/json with this body; do not contact the upstream
+}
+
 // Profile classifies and authorizes requests for one kind of upstream server.
 type Profile interface {
 	Name() string
 	// Classify reports whether THIS profile handles the request (handled=true). When handled is
 	// false the caller uses the generic raw-http engine. A parse error returns handled=false.
 	Classify(req Request) (op Operation, handled bool, err error)
-	// Match evaluates one of this profile's rules against a handled operation, returning an outcome
-	// (Allow/Deny/RequireApproval) and whether the rule matched at all.
-	Match(rule Rule, op Operation) (outcome string, matched bool, err error)
+	// Authorize evaluates a handled operation against the agent's candidate rules for this profile
+	// (split into Agent / Any tiers) and returns the outcome. A profile may additionally return a
+	// rewritten request body or a synthetic response (e.g. to narrow a multi-valued request).
+	Authorize(in AuthInput) (AuthResult, error)
 	RuleSchema() RuleSchema
 	// Presets returns this profile's named rule bundles (may be empty).
 	Presets() []Preset

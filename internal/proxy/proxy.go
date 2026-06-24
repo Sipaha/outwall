@@ -230,7 +230,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			r.ContentLength = int64(len(bodyBytes))
 		}
 		dec, err = h.Policy.Decide(policy.Input{AgentID: ag.ID, UpstreamID: up.ID, Profile: up.Profile,
-			Method: r.Method, Path: escRelPath, Query: r.URL.Query(), Body: bodyBytes})
+			Method: r.Method, Path: escRelPath, Query: r.URL.Query(), Body: bodyBytes, Browser: viaCookie})
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "policy error")
 			return

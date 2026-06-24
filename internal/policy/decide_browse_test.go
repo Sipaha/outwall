@@ -45,8 +45,8 @@ func (browseOnlyProf) Name() string { return "browseonly" }
 func (browseOnlyProf) Classify(_ serverprofile.Request) (serverprofile.Operation, bool, error) {
 	return serverprofile.Operation{}, false, nil // never claims any request
 }
-func (browseOnlyProf) Match(_ serverprofile.Rule, _ serverprofile.Operation) (string, bool, error) {
-	return "", false, nil
+func (browseOnlyProf) Authorize(_ serverprofile.AuthInput) (serverprofile.AuthResult, error) {
+	return serverprofile.AuthResult{Outcome: serverprofile.Deny}, nil
 }
 func (browseOnlyProf) RuleSchema() serverprofile.RuleSchema {
 	return serverprofile.RuleSchema{Profile: "browseonly"}
