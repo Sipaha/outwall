@@ -922,7 +922,11 @@ func TestPresetPreview(t *testing.T) {
 	require.Contains(t, out, "GET,HEAD") // browse rule summarized
 	require.Contains(t, out, "proj-x")   // citeck read rule with the bound workspace
 
-	// Invalid bindings → 400.
-	bad := `{"upstream_id":"` + up.ID + `","preset_id":"citeck-readonly","bindings":{"sourceId":"*","workspace":"*"}}`
-	require.Equal(t, 400, req(t, h, "POST", "/presets/preview", bad).Code)
+	// Valid bindings with workspace="*" → 200 (ADR-0039).
+	wildcard := `{"upstream_id":"` + up.ID + `","preset_id":"citeck-readonly","bindings":{"sourceId":"*","workspace":"*"}}`
+	rec = req(t, h, "POST", "/presets/preview", wildcard)
+	require.Equal(t, 200, rec.Code)
+	out = rec.Body.String()
+	require.Contains(t, out, "GET,HEAD") // browse rule summarized
+	require.Contains(t, out, "*")        // citeck read rule with wildcard workspace
 }

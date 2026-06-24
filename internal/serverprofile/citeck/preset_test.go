@@ -39,3 +39,24 @@ func TestCiteckPresetsBuild(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rwTmpls[2].ProfileParams, &wp))
 	require.Equal(t, "write", wp.Op)
 }
+
+func TestWorkspaceSlotAllowsStar(t *testing.T) {
+	for _, id := range []string{"citeck-readonly", "citeck-readwrite"} {
+		p, ok := findPreset(t, id)
+		require.True(t, ok, "preset %s present", id)
+		// "*" must now be a valid binding for both sourceId and workspace.
+		err := serverprofile.ValidateBindings(p.Slots, serverprofile.Bindings{"sourceId": "*", "workspace": "*"})
+		require.NoError(t, err, "preset %s should accept workspace=*", id)
+	}
+}
+
+// findPreset returns the citeck preset with the given id.
+func findPreset(t *testing.T, id string) (serverprofile.Preset, bool) {
+	t.Helper()
+	for _, p := range New().Presets() {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return serverprofile.Preset{}, false
+}

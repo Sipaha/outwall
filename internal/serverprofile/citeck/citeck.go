@@ -25,7 +25,7 @@ func (profile) Classify(r serverprofile.Request) (serverprofile.Operation, bool,
 func (profile) Presets() []serverprofile.Preset {
 	slots := []serverprofile.PresetSlot{
 		{Key: "sourceId", Label: "Source ID (glob)", Type: "text", AllowAny: true, Required: true},
-		{Key: "workspace", Label: "Workspace", Type: "text", AllowAny: false, Required: true},
+		{Key: "workspace", Label: "Workspace", Type: "text", AllowAny: true, Required: true},
 	}
 	browse := serverprofile.RuleTemplate{Outcome: serverprofile.Allow, BrowseMethods: "GET,HEAD", BrowsePath: "/**"}
 	opTmpl := func(op string, b serverprofile.Bindings) (serverprofile.RuleTemplate, error) {
