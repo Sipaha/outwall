@@ -81,10 +81,16 @@ type ruleParams struct {
 	Workspace string `json:"workspace"` // glob; "" or "*" = any (ignored for update/delete)
 }
 
-// Authorize resolves a classified operation against the agent's citeck rules. In this task it only
-// reproduces the legacy all-or-nothing decision; read-query filtering is added in a later task.
+// Authorize resolves a classified operation against the agent's citeck rules. When the legacy
+// decision is Deny and the op is a filterable read query, it applies mode-aware workspace
+// narrowing instead of a flat deny (see filter.go and ADR-0039).
 func (profile) Authorize(in serverprofile.AuthInput) (serverprofile.AuthResult, error) {
 	outcome, ruleID := resolveLegacy(in.Op, in.Agent, in.Any)
+	// Only previously-denied, filterable read queries get the new mode-aware narrowing; everything
+	// else (allow, require-approval, writes, get-atts) keeps the legacy decision.
+	if outcome == serverprofile.Deny && filterableRead(in.Op) {
+		return filterReadQuery(in)
+	}
 	return serverprofile.AuthResult{Outcome: outcome, RuleID: ruleID}, nil
 }
 

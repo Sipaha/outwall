@@ -1,6 +1,8 @@
 // Package citeck is the server-profile plugin for Citeck ECOS upstreams. It classifies and gates
 // Records API requests (POST /api/records/{query,mutate,delete}). It is the ONLY package in outwall
-// permitted to name "citeck" (see ADR-0034); the core stays platform-agnostic.
+// permitted to name "citeck" (see ADR-0034); the core stays platform-agnostic. It also narrows a
+// browser-originated read query to the agent's allowed workspaces (or returns an empty result)
+// instead of denying the whole request — see ADR-0039.
 package citeck
 
 import (
