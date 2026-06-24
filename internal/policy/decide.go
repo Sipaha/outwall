@@ -53,7 +53,7 @@ type Decision struct {
 	Vars      map[string]string // extracted variable values from the matched template
 	NewValues []VarValue        // text (variable,value) pairs not yet in the allowed set
 
-	// Profile-driven request/response rewrites (citeck workspace filtering). At most one is set.
+	// Profile-driven request/response rewrites (e.g. narrowing a multi-valued request). At most one is set.
 	RewriteBody []byte // forward this body instead of the original
 	Response    []byte // return 200 application/json with this body; skip the upstream
 }
