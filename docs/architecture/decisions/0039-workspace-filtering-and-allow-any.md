@@ -61,18 +61,18 @@ authorization method changes from `Match(rule, op) (outcome, matched)` to:
 ```go
 Authorize(in AuthInput) (AuthResult, error)
 // AuthInput{ Op, Body []byte, Browser bool, Agent []Rule, Any []Rule }
-// AuthResult{ Outcome, Rule *Rule, RewriteBody []byte, EmptyResult bool }
+// AuthResult{ Outcome, RuleID string, RewriteBody []byte, Response []byte }
 ```
 
 Tier precedence (deny > allow; agent tier > any tier) moves into the plugin via small shared helpers,
-mirroring today's `resolveTier`. `policy.Decision` gains `RewriteBody []byte` and `EmptyResult bool`;
+mirroring today's `resolveTier`. `policy.Decision` gains `RewriteBody []byte` and `Response []byte`;
 `policy.Input` gains `Browser bool`. `policy.decideProfile` becomes a thin adapter: split the
 profile's rules into agent/any tiers, call `Authorize`, map the result into a `Decision`. The proxy,
-which already reads the body before `Decide` and knows `viaCookie`, applies the result: `EmptyResult`
+which already reads the body before `Decide` and knows `viaCookie`, applies the result: `Response`
 → synthetic `200`; `RewriteBody` → swap `r.Body`/Content-Length before the existing forward + audit
 tee.
 
-The core learns only opaque, profile-neutral signals (`RewriteBody`, `EmptyResult`, `Browser`); none
+The core learns only opaque, profile-neutral signals (`RewriteBody`, `Response`, `Browser`); none
 name workspaces or citeck. This keeps the ADR-0034 boundary intact.
 
 ## Alternatives considered
@@ -111,7 +111,7 @@ Covered by tests across `internal/serverprofile` (interface shape; `AllowAny` sl
 `internal/serverprofile/citeck` (the full behavior matrix; body-rewrite preserves sibling fields;
 synth-empty shape; glob match-vs-inject; tier precedence), `internal/policy` (`decideProfile` maps
 `AuthResult`; `Input.Browser` threaded), and `internal/proxy` (`RewriteBody` swaps body +
-Content-Length; `EmptyResult` returns synthetic `200` with no upstream call; `viaCookie → Browser`;
+Content-Length; `Response` returns synthetic `200` with no upstream call; `viaCookie → Browser`;
 audit correctness).
 
 Links: [ADR-0037](0037-presets-first-class.md) (presets first-class; the `AllowAny: false` workspace

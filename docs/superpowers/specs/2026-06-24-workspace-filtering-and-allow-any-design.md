@@ -94,9 +94,9 @@ type AuthInput struct {
 // AuthResult is a profile's full authorization decision for one operation.
 type AuthResult struct {
     Outcome     string // Allow | Deny | RequireApproval
-    Rule        *Rule  // the rule that decided, for audit (optional; nil for synthesized/empty)
+    RuleID      string // the deciding rule id, for audit ("" for synthesized/default-deny)
     RewriteBody []byte // if non-nil, the proxy forwards this body instead of the original
-    EmptyResult bool   // if true, the proxy returns a synthetic empty 200 (no upstream call)
+    Response    []byte // if non-nil, the proxy returns 200 application/json with this body (no upstream call)
 }
 
 type Profile interface {
@@ -127,7 +127,7 @@ type Decision struct {
     Vars        map[string]string
     NewValues   []VarValue
     RewriteBody []byte // NEW: non-nil → proxy forwards this instead of the original body
-    EmptyResult bool   // NEW: true → proxy returns a synthetic empty 200
+    Response    []byte // NEW: non-nil → proxy returns a synthetic 200 application/json with this body
 }
 ```
 
@@ -136,8 +136,8 @@ type Decision struct {
 ### Proxy application
 
 `proxy.go` already (a) reads the full body before `Decide` and (b) knows `viaCookie`. After `Decide`:
-- `dec.EmptyResult` → write the synthetic empty `200` JSON, record an allow/filtered audit entry,
-  return (no upstream round-trip).
+- `dec.Response != nil` → write it as a `200 application/json` response, record an allow/filtered
+  audit entry, return (no upstream round-trip).
 - `dec.RewriteBody != nil` → set `r.Body`, `r.ContentLength`, and the `Content-Length` header to the
   rewritten body before the existing forward + audit-tee path (so the upstream and the audit log see
   the narrowed body).
@@ -154,7 +154,7 @@ by ADR-0039.
 
 - **Core stays citeck-free.** All workspace/filtering/rewrite logic is in
   `internal/serverprofile/citeck`. The core learns only two opaque, profile-agnostic signals on the
-  decision (`RewriteBody []byte`, `EmptyResult bool`) and one input (`Browser bool`) — none mention
+  decision (`RewriteBody []byte`, `Response []byte`) and one input (`Browser bool`) — none mention
   workspaces or citeck.
 - **`serverprofile` ↔ `policy` import direction is unchanged** (`policy` imports `serverprofile`).
   `Authorize` lives in `serverprofile`; `policy` adapts.
@@ -170,9 +170,9 @@ by ADR-0039.
   × browser/API; absent workspaces × (`*` grant / concrete grants / no grants) × browser/API; write &
   delete unchanged; rewrite body preserves sibling fields (attributes, language, page); synth-empty
   shape; glob-grant explicit-match yes / injection no; tier precedence (agent deny over any allow).
-- `internal/policy`: `decideProfile` maps `AuthResult` → `Decision` (incl. `RewriteBody`/`EmptyResult`);
+- `internal/policy`: `decideProfile` maps `AuthResult` → `Decision` (incl. `RewriteBody`/`Response`);
   `Input.Browser` threaded.
-- `internal/proxy`: `RewriteBody` swaps the forwarded body and Content-Length; `EmptyResult` returns
+- `internal/proxy`: `RewriteBody` swaps the forwarded body and Content-Length; `Response` returns
   the synthetic `200` without an upstream call; both produce a correct audit entry; `viaCookie` →
   `Input.Browser`.
 
