@@ -1,6 +1,6 @@
 # ADR-0039: `workspace: *` grants and mode-aware read-query workspace filtering
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-06-24
 
 ## Context

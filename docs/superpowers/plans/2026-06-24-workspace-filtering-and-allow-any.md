@@ -812,14 +812,21 @@ func filterReadQuery(in serverprofile.AuthInput) (serverprofile.AuthResult, erro
 		}
 	}
 
+	// An explicit list whose every workspace is allowed (possibly via separate rules — the legacy
+	// resolver only matches when ONE rule covers all touched resources, so this case reaches here)
+	// is forwarded unchanged. The absent case never takes this branch: keep is the injected concrete
+	// set, which must always be written into the body.
+	if !absent && len(keep) == len(scopes) {
+		return serverprofile.AuthResult{Outcome: serverprofile.Allow}, nil
+	}
 	if len(keep) == 0 {
 		if in.Browser {
 			return serverprofile.AuthResult{Outcome: serverprofile.Allow, Response: emptyRecordsResponse}, nil
 		}
 		return serverprofile.AuthResult{Outcome: serverprofile.Deny}, nil
 	}
-	// Absent + concrete injection always rewrites; an explicit list rewrites only for a browser
-	// (an API caller that named workspaces must not be silently narrowed).
+	// A partial explicit list is narrowed only for a browser (an API caller that named workspaces
+	// must not be silently narrowed). Absent-case injection always rewrites, for both modes.
 	if !absent && !in.Browser {
 		return serverprofile.AuthResult{Outcome: serverprofile.Deny}, nil
 	}

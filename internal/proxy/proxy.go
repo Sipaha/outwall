@@ -298,8 +298,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// A profile may synthesize a response (e.g. citeck returns an empty Records result for a browser
-	// query whose workspaces are all filtered out) — return it without contacting the upstream.
+	// A profile may synthesize a complete response without contacting the upstream (e.g. an empty
+	// Records result when all requested workspaces were filtered out by the workspace-filtering rule).
 	if dec.Response != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
