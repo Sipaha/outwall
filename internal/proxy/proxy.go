@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -297,6 +298,25 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// A profile may synthesize a response (e.g. citeck returns an empty Records result for a browser
+	// query whose workspaces are all filtered out) — return it without contacting the upstream.
+	if dec.Response != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if _, werr := w.Write(dec.Response); werr != nil {
+			h.Logger.Error("write synthetic response", "err", werr)
+		}
+		h.recordOutcome(r, ag, up, relPath, http.StatusOK, string(dec.Outcome), dec.Rule, "")
+		return
+	}
+	// A profile may rewrite the request body (e.g. narrow query.workspaces to the allowed subset).
+	// Swap it in before the forward + audit tee so the upstream and the audit log see the sent body.
+	if dec.RewriteBody != nil {
+		r.Body = io.NopCloser(bytes.NewReader(dec.RewriteBody))
+		r.ContentLength = int64(len(dec.RewriteBody))
+		r.Header.Set("Content-Length", strconv.Itoa(len(dec.RewriteBody)))
+	}
+
 	if dec.Rule != nil && dec.Rule.RateLimitPerMin > 0 {
 		if !h.Limiter.Allow(ag.ID+"|"+dec.Rule.ID, dec.Rule.RateLimitPerMin, time.Now()) {
 			h.recordOutcome(r, ag, up, relPath, http.StatusTooManyRequests, dec.Outcome, dec.Rule, "rate limited")

@@ -433,6 +433,87 @@ func TestProxyHostRoutesToUpstream(t *testing.T) {
 	require.Equal(t, "/dashboard", gotPath) // full path forwarded, NOT stripped
 }
 
+// postJSONViaCookie issues a POST with Content-Type application/json and the agent token in the
+// outwall_token cookie (browser context), so viaCookie=true reaches the profile's Authorize.
+func postJSONViaCookie(h http.Handler, path, token string, body []byte) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+	r.AddCookie(&http.Cookie{Name: tokenCookieName, Value: token})
+	r.Header.Set("Content-Type", "application/json")
+	// No Sec-Fetch-Site header → CSRF guard passes (absent = same-origin).
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w
+}
+
+// citeckReadUpstream sets up a citeck-profiled upstream with a single concrete workspace read-allow
+// rule (workspace=ws, source=*). Returns the upstream, a registered agent token, and the cleanup.
+func citeckReadUpstream(t *testing.T, backendURL string, ag *agent.Registry, up *upstream.Registry, pol *policy.Registry, ws string) (string, string) {
+	t.Helper()
+	_, token, err := ag.Register("claude")
+	require.NoError(t, err)
+	u, err := up.CreateProfiled("citeck-be", backendURL, "http", "citeck", upstream.AuthConfig{Type: "none"})
+	require.NoError(t, err)
+	_, err = pol.Create(policy.Rule{
+		UpstreamID:    u.ID,
+		Outcome:       "allow",
+		Profile:       "citeck",
+		ProfileParams: json.RawMessage(`{"op":"read","source_id":"*","workspace":"` + ws + `"}`),
+	})
+	require.NoError(t, err)
+	return u.ID, token
+}
+
+// TestProxy_SyntheticResponse_NoUpstreamCall verifies that when dec.Response is set (citeck filter
+// returns emptyRecordsResponse because all requested workspaces are denied, browser mode), the proxy
+// returns a 200 application/json synthetic body WITHOUT contacting the upstream.
+func TestProxy_SyntheticResponse_NoUpstreamCall(t *testing.T) {
+	upstreamHit := false
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer up.Close()
+
+	h, agReg, upReg, polReg, _, _ := build(t)
+	_, token := citeckReadUpstream(t, up.URL, agReg, upReg, polReg, "allowed-ws")
+
+	// Request workspaces:["denied-ws"] — no rule allows it; legacy=Deny → filterReadQuery →
+	// keep=[] → browser=true → Response = emptyRecordsResponse.
+	body := []byte(`{"query":{"sourceId":"emodel/person","workspaces":["denied-ws"]}}`)
+	rec := postJSONViaCookie(h, "/citeck-be/api/records/query", token, body)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	require.JSONEq(t, `{"records":[],"hasMore":false,"totalCount":0,"messages":[],"version":1}`, rec.Body.String())
+	require.False(t, upstreamHit, "upstream must not be contacted for a synthetic response")
+}
+
+// TestProxy_RewriteBody_ForwardsNarrowedBody verifies that when dec.RewriteBody is set (citeck
+// filter narrows the workspaces list to the allowed subset, browser mode), the proxy replaces
+// r.Body with the narrowed bytes and the upstream receives the narrowed body.
+func TestProxy_RewriteBody_ForwardsNarrowedBody(t *testing.T) {
+	var gotBody string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	h, agReg, upReg, polReg, _, _ := build(t)
+	_, token := citeckReadUpstream(t, backend.URL, agReg, upReg, polReg, "b")
+
+	// Request workspaces:["a","b"]; only "b" is allowed → legacy=Deny → filterReadQuery →
+	// partial explicit list, browser=true → RewriteBody with only ["b"].
+	body := []byte(`{"query":{"sourceId":"emodel/person","workspaces":["a","b"]}}`)
+	rec := postJSONViaCookie(h, "/citeck-be/api/records/query", token, body)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	// The upstream must see the narrowed body (only workspace "b").
+	require.JSONEq(t, `{"query":{"sourceId":"emodel/person","workspaces":["b"]}}`, gotBody,
+		"upstream must receive the narrowed body")
+}
+
 func mustURLPath(t *testing.T, raw string) string {
 	t.Helper()
 	u, err := url.Parse(raw)
