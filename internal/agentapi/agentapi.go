@@ -124,25 +124,224 @@ func (s *server) hWhoAmI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, whoamiOut{Identity: ident, Token: token})
 }
 
-// Implemented in Task 4.
 func (s *server) hListUpstreams(w http.ResponseWriter, r *http.Request) {
-	httpErr(w, http.StatusNotImplemented, "not implemented")
+	agentID, _, err := s.agentID(r)
+	if err != nil {
+		httpErr(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	if s.locked() {
+		httpErr(w, http.StatusConflict, lockedMsg)
+		return
+	}
+	ups, err := s.deps.Svc.ListUpstreams(agentID)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"upstreams": ups})
 }
+
 func (s *server) hRequestHostAccess(w http.ResponseWriter, r *http.Request) {
-	httpErr(w, http.StatusNotImplemented, "not implemented")
+	agentID, _, err := s.agentID(r)
+	if err != nil {
+		httpErr(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	var body struct {
+		Host    string `json:"host"`
+		Purpose string `json:"purpose"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if strings.TrimSpace(body.Purpose) == "" {
+		httpErr(w, http.StatusBadRequest, "purpose is required")
+		return
+	}
+	if s.locked() {
+		httpErr(w, http.StatusConflict, lockedMsg)
+		return
+	}
+	res, err := s.deps.Svc.RequestHostAccess(agentID, body.Host, body.Purpose)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
+
 func (s *server) hRequestAccess(w http.ResponseWriter, r *http.Request) {
-	httpErr(w, http.StatusNotImplemented, "not implemented")
+	agentID, _, err := s.agentID(r)
+	if err != nil {
+		httpErr(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	var body struct {
+		Host          string            `json:"host"`
+		Method        string            `json:"method"`
+		PathTemplate  string            `json:"path_template"`
+		QueryTemplate map[string]string `json:"query_template"`
+		BodyTemplate  map[string]string `json:"body_template"`
+		Variables     []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"variables"`
+		Values  map[string]string `json:"values"`
+		Purpose string            `json:"purpose"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if strings.TrimSpace(body.Purpose) == "" {
+		httpErr(w, http.StatusBadRequest, "purpose is required")
+		return
+	}
+	if s.locked() {
+		httpErr(w, http.StatusConflict, lockedMsg)
+		return
+	}
+	vars := make([]mcpsvc.Variable, 0, len(body.Variables))
+	for _, v := range body.Variables {
+		vars = append(vars, mcpsvc.Variable{Name: v.Name, Type: v.Type})
+	}
+	res, err := s.deps.Svc.RequestAccess(agentID, mcpsvc.RequestAccessInput{
+		Host: body.Host, Method: body.Method, PathTemplate: body.PathTemplate,
+		QueryTemplate: body.QueryTemplate, BodyTemplate: body.BodyTemplate,
+		Variables: vars, Values: body.Values, Purpose: body.Purpose,
+	})
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
+
 func (s *server) hRequestK8sAccess(w http.ResponseWriter, r *http.Request) {
-	httpErr(w, http.StatusNotImplemented, "not implemented")
+	agentID, _, err := s.agentID(r)
+	if err != nil {
+		httpErr(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	var body struct {
+		Cluster   string `json:"cluster"`
+		Namespace string `json:"namespace"`
+		Grants    []struct {
+			Resource string   `json:"resource"`
+			Verbs    []string `json:"verbs"`
+		} `json:"grants"`
+		Purpose string `json:"purpose"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if strings.TrimSpace(body.Purpose) == "" {
+		httpErr(w, http.StatusBadRequest, "purpose is required")
+		return
+	}
+	if strings.TrimSpace(body.Cluster) == "" {
+		httpErr(w, http.StatusBadRequest, "cluster is required")
+		return
+	}
+	if len(body.Grants) == 0 {
+		httpErr(w, http.StatusBadRequest, "at least one grant (resource + verbs) is required")
+		return
+	}
+	if s.locked() {
+		httpErr(w, http.StatusConflict, lockedMsg)
+		return
+	}
+	specs := make([]mcpsvc.K8sAccessSpec, 0, len(body.Grants))
+	for _, g := range body.Grants {
+		specs = append(specs, mcpsvc.K8sAccessSpec{Resource: g.Resource, Verbs: g.Verbs})
+	}
+	res, err := s.deps.Svc.RequestK8sAccess(agentID, body.Cluster, body.Namespace, specs, body.Purpose)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
+
 func (s *server) hRequestPreset(w http.ResponseWriter, r *http.Request) {
-	httpErr(w, http.StatusNotImplemented, "not implemented")
+	agentID, _, err := s.agentID(r)
+	if err != nil {
+		httpErr(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	var body struct {
+		Upstream string            `json:"upstream"`
+		Preset   string            `json:"preset"`
+		Vars     map[string]string `json:"vars"`
+		Purpose  string            `json:"purpose"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if strings.TrimSpace(body.Purpose) == "" {
+		httpErr(w, http.StatusBadRequest, "purpose is required")
+		return
+	}
+	if strings.TrimSpace(body.Preset) == "" {
+		httpErr(w, http.StatusBadRequest, "preset is required")
+		return
+	}
+	if s.locked() {
+		httpErr(w, http.StatusConflict, lockedMsg)
+		return
+	}
+	res, err := s.deps.Svc.RequestPreset(agentID, mcpsvc.RequestPresetInput{
+		Host: body.Upstream, PresetID: body.Preset, Bindings: body.Vars, Purpose: body.Purpose,
+	})
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
+
 func (s *server) hGetAccess(w http.ResponseWriter, r *http.Request) {
-	httpErr(w, http.StatusNotImplemented, "not implemented")
+	agentID, _, err := s.agentID(r)
+	if err != nil {
+		httpErr(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	if s.locked() {
+		httpErr(w, http.StatusConflict, lockedMsg)
+		return
+	}
+	// GetAccess long-polls (~25s) internally when a decision is pending.
+	res, err := s.deps.Svc.GetAccess(agentID, r.PathValue("upstream"))
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
+
 func (s *server) hKubeconfig(w http.ResponseWriter, r *http.Request) {
-	httpErr(w, http.StatusNotImplemented, "not implemented")
+	_, token, err := s.agentID(r)
+	if err != nil {
+		httpErr(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	if s.locked() {
+		httpErr(w, http.StatusConflict, lockedMsg)
+		return
+	}
+	cluster := strings.TrimSpace(r.PathValue("cluster"))
+	if cluster == "" {
+		httpErr(w, http.StatusBadRequest, "cluster is required")
+		return
+	}
+	yamlBytes, err := s.deps.Svc.Kubeconfig(cluster, token)
+	if err != nil {
+		httpErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"kubeconfig": string(yamlBytes)})
 }

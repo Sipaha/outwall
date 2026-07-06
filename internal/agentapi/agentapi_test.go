@@ -90,3 +90,54 @@ func TestRegisterWhoAmIAndAuth(t *testing.T) {
 	// Garbage bearer → 401.
 	e.doJSON(t, "owa_nope", "GET", "/whoami", nil, nil, http.StatusUnauthorized)
 }
+
+func TestAccessRoutes(t *testing.T) {
+	e := newEnv(t)
+	_, err := e.ups.Create("github", "https://api.github.com", upstream.AuthConfig{Type: "none"})
+	require.NoError(t, err)
+
+	var reg struct{ ID, Token string }
+	e.doJSON(t, "", "POST", "/register", map[string]string{"name": "proj"}, &reg, http.StatusOK)
+
+	// list_upstreams → contains github, status needs-request (no rule yet).
+	var list struct {
+		Upstreams []mcpsvc.UpstreamInfo `json:"upstreams"`
+	}
+	e.doJSON(t, reg.Token, "GET", "/upstreams", nil, &list, http.StatusOK)
+	require.Len(t, list.Upstreams, 1)
+	require.Equal(t, "github", list.Upstreams[0].Name)
+	require.Equal(t, "needs-request", list.Upstreams[0].Status)
+
+	// request-host-access requires a purpose.
+	e.doJSON(t, reg.Token, "POST", "/access/host",
+		map[string]string{"host": "github"}, nil, http.StatusBadRequest)
+
+	// request-host-access with a purpose → 200, pending.
+	var hostRes mcpsvc.AccessResult
+	e.doJSON(t, reg.Token, "POST", "/access/host",
+		map[string]string{"host": "github", "purpose": "read repos"}, &hostRes, http.StatusOK)
+	require.Equal(t, "pending", hostRes.Status)
+
+	// get-access → 200 (no pending long-poll here since request logging is enabled).
+	var getRes mcpsvc.AccessResult
+	e.doJSON(t, reg.Token, "GET", "/access/github", nil, &getRes, http.StatusOK)
+	require.NotEmpty(t, getRes.Status)
+
+	// kubeconfig for a non-cluster upstream → 400 (service error surfaced as JSON).
+	e.doJSON(t, reg.Token, "GET", "/kubeconfig/github", nil, nil, http.StatusBadRequest)
+}
+
+func TestLockedReturns409(t *testing.T) {
+	e := newEnv(t)
+	var reg struct{ ID, Token string }
+	e.doJSON(t, "", "POST", "/register", map[string]string{"name": "proj"}, &reg, http.StatusOK)
+
+	e.vault.Lock() // Lock() returns no error
+
+	// A locked vault fails the list/access routes with a clear 409 JSON message.
+	var errBody struct {
+		Error string `json:"error"`
+	}
+	e.doJSON(t, reg.Token, "GET", "/upstreams", nil, &errBody, http.StatusConflict)
+	require.Contains(t, errBody.Error, "vault locked")
+}
