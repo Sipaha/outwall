@@ -36,6 +36,30 @@ func TestAccessRequestLifecycle(t *testing.T) {
 	require.Empty(t, p) // no longer pending
 }
 
+func TestGetByIDAndMarkRevoked(t *testing.T) {
+	reg := newReg(t)
+	r, err := reg.Create("a1", "u1", "triage issues")
+	require.NoError(t, err)
+
+	got, err := reg.GetByID(r.ID)
+	require.NoError(t, err)
+	require.Equal(t, r.ID, got.ID)
+	require.Equal(t, "a1", got.AgentID)
+	require.Equal(t, "u1", got.UpstreamID)
+
+	_, err = reg.GetByID("nope")
+	require.ErrorIs(t, err, ErrNotFound)
+
+	require.Empty(t, got.ResolvedAt)
+	require.NoError(t, reg.MarkRevoked(r.ID))
+	got, err = reg.GetByID(r.ID)
+	require.NoError(t, err)
+	require.Equal(t, StatusRevoked, got.Status)
+	require.NotEmpty(t, got.ResolvedAt)
+
+	require.ErrorIs(t, reg.MarkRevoked("nope"), ErrNotFound)
+}
+
 func TestGrantLatest(t *testing.T) {
 	reg := newReg(t)
 	_, err := reg.Create("a1", "u1", "first")

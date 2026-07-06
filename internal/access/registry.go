@@ -22,6 +22,9 @@ const (
 	StatusGranted   = "granted"
 	StatusDenied    = "denied"
 	StatusDismissed = "dismissed"
+	// StatusRevoked marks a previously granted request whose access was later withdrawn by the
+	// operator (MarkRevoked) — distinct from StatusDenied (never granted in the first place).
+	StatusRevoked = "revoked"
 )
 
 // Request is a logged access-request intent.
@@ -160,6 +163,40 @@ func (r *Registry) Latest(agentID, upstreamID string) (*Request, bool, error) {
 		return nil, false, nil
 	}
 	return reqs[0], true, nil
+}
+
+// GetByID returns the access request with the given ID, or ErrNotFound.
+func (r *Registry) GetByID(id string) (*Request, error) {
+	reqs, err := r.scanRows(`SELECT `+reqCols+` FROM access_requests WHERE id=?`, id)
+	if err != nil {
+		return nil, err
+	}
+	if len(reqs) == 0 {
+		return nil, ErrNotFound
+	}
+	return reqs[0], nil
+}
+
+// MarkRevoked marks an access request "revoked" and stamps resolved_at. Used by the operator's
+// revoke action (which also removes the underlying policy rules) to keep the request's history
+// entry consistent with the fact that access was withdrawn, distinct from "denied" (never granted)
+// or "dismissed" (an operator no-op on a pending card).
+func (r *Registry) MarkRevoked(id string) error {
+	res, err := r.store.DB().Exec(
+		`UPDATE access_requests SET status=?, resolved_at=? WHERE id=?`,
+		StatusRevoked, time.Now().UTC().Format(time.RFC3339Nano), id,
+	)
+	if err != nil {
+		return fmt.Errorf("mark access request revoked: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // Resolve records the operator's decision (granted/denied/dismissed) and stamps resolved_at.

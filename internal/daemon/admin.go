@@ -81,6 +81,7 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	gate("POST /rules/{id}/value-policy", d.hRuleSetVariablePolicy)
 	gate("POST /approvals/{id}/resolve", d.hApprovalResolve)
 	gate("POST /access-requests/{id}/resolve", d.hAccessRequestResolve)
+	gate("POST /access-requests/{id}/revoke", d.hAccessRequestRevoke)
 	gate("POST /audit/prune", d.hAuditPrune)
 	gate("PUT /settings/audit-retention", d.hAuditRetentionSet)
 	return mux
@@ -927,6 +928,32 @@ func (d *Daemon) hAccessRequestResolve(w http.ResponseWriter, r *http.Request) {
 	default:
 		adminErr(w, http.StatusBadRequest, err.Error())
 	}
+}
+
+// hAccessRequestRevoke withdraws a previously granted access request: it removes the policy rules
+// that grant (agent, upstream) and marks the request "revoked" (distinct from "denied"/"dismissed" —
+// see access.StatusRevoked). Gated (operator session required) — see apiMux.
+func (d *Daemon) hAccessRequestRevoke(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	req, err := d.access.GetByID(id)
+	if err != nil {
+		if errors.Is(err, access.ErrNotFound) {
+			adminErr(w, http.StatusNotFound, "access request not found")
+			return
+		}
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := d.policy.DeleteBySubjectUpstream(req.AgentID, req.UpstreamID); err != nil {
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := d.access.MarkRevoked(id); err != nil {
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	d.publish("access.revoked", map[string]any{"id": id})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // hOIDCDiscover fetches an OpenID Connect provider's discovery document for an operator-entered
