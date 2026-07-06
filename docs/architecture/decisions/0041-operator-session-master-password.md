@@ -30,13 +30,14 @@ secret only the human operator holds.
 **Route split.** `apiMux()` (`internal/daemon/admin.go`) now builds one table shared by both
 transports, split into:
 
-- **UNGATED** — `GET /vault/status`, `POST /vault/init` (bootstrap, see D2), `GET /upstreams`,
+- **UNGATED** — `GET /vault/status`, `POST /vault/init` and `POST /vault/unlock` (both
+  self-authenticating — see D2), `GET /upstreams`,
   `GET /oidc/redirect-uri`, `GET /agents`, `GET /rules`, `GET /profiles`,
   `POST /presets/preview` (dry-run, no state change), `GET /approvals`, `GET /access-requests`,
   `GET /audit[/{id}]`, `GET /settings/audit-retention`, `GET /events` (SSE), `POST /desktop/focus`
   (ADR-0013 launcher hand-off), and the three new `/operator/session/*` routes below — they
   grant no power, they are the entry point that *unlocks* power.
-- **OPERATOR-GATED** — the 17 remaining mutations: vault unlock/lock, upstream create/delete/
+- **OPERATOR-GATED** — the 16 remaining mutations: vault lock, upstream create/delete/
   set-auth/oauth-login, OIDC discover, agent register, cluster import, kubeconfig assembly, rule
   create/delete/set-value-policy, approval resolve, access-request resolve, audit prune/
   retention-set. Each is wrapped individually by `operatorGate` inside `apiMux`, not by a
@@ -90,10 +91,13 @@ there is nothing to verify yet. It stays ungated, and on success calls `d.opsess
 directly (the operator just set the password and is present at the keyboard), so the first
 batch of gated calls after init needs no immediate re-prompt.
 
-For an **existing** vault, the natural order is `POST /operator/session/open` (ungated; `Verify`
-works against a locked vault) → `POST /vault/unlock` (gated, now that the operator has proven
-the password once). `TestVaultUnlockIsGatedByOperatorSession` and
-`TestOperatorSessionControlRoutes` cover both paths.
+`POST /vault/unlock` is ungated for the **same** reason: it is *self-authenticating* — the vault
+verifies the master password itself (`ErrBadPassword` otherwise), so an operator-session gate on
+top is redundant and, worse, would prompt the operator for the same password twice (unlock 403 →
+session modal → re-enter the same password). Instead unlock stays ungated and, on success, calls
+`d.opsession.Open()` — the operator just proved the master password, so their session opens and
+the first privileged action after unlock needs no separate prompt.
+`TestVaultUnlockUngatedAndOpensSession` and `TestOperatorSessionControlRoutes` cover this.
 
 The operator session and the vault lock are **deliberately independent state machines**:
 `TestOperatorSessionLockKeepsVaultUnlocked` proves that closing the session (idle-expiry or

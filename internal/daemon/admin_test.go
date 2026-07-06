@@ -977,22 +977,30 @@ func TestOperatorGateSealsBothTransports(t *testing.T) {
 	require.Equal(t, http.StatusOK, req(t, ui, "POST", "/api/rules", ruleBody).Code)
 }
 
-func TestVaultUnlockIsGatedByOperatorSession(t *testing.T) {
+func TestVaultUnlockUngatedAndOpensSession(t *testing.T) {
 	d := newDaemon(t)
 	h := d.AdminHandler()
 	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+	// Start fully closed: vault locked AND operator session closed.
 	d.vault.Lock()
-
-	// Close the operator session → unlock is refused by the gate (403) and never reaches the vault.
 	require.Equal(t, http.StatusOK, req(t, h, "POST", "/operator/session/lock", "").Code)
-	require.Equal(t, http.StatusForbidden, req(t, h, "POST", "/vault/unlock", `{"password":"pw"}`).Code)
-	require.True(t, d.vault.Locked(), "a gate-blocked unlock must not unlock the vault")
 
-	// Opening the session works while the vault is LOCKED (Verify needs no resident key) — this is
-	// the existing-vault bootstrap order: /operator/session/open (ungated) THEN /vault/unlock (gated).
-	require.Equal(t, http.StatusOK, req(t, h, "POST", "/operator/session/open", `{"password":"pw"}`).Code)
+	// Unlock is UNGATED and self-authenticating: it works with NO open operator session, unlocks the
+	// vault, and OPENS the session — so the operator is never prompted for the same master password
+	// twice (the old unlock-gate 403 -> session-modal double prompt is gone).
 	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/unlock", `{"password":"pw"}`).Code)
 	require.False(t, d.vault.Locked())
+	require.Contains(t, req(t, h, "GET", "/operator/session/status", "").Body.String(), `"open":true`)
+	// A subsequent gated mutation now succeeds without any further prompt (the session is open).
+	require.Equal(t, http.StatusOK,
+		req(t, h, "POST", "/rules", `{"upstream_id":"u1","outcome":"allow","browse_methods":"GET","browse_path":"/**"}`).Code)
+
+	// A wrong password → 401, and neither the vault nor the operator session opens.
+	d.vault.Lock()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/operator/session/lock", "").Code)
+	require.Equal(t, http.StatusUnauthorized, req(t, h, "POST", "/vault/unlock", `{"password":"nope"}`).Code)
+	require.True(t, d.vault.Locked(), "a failed unlock must not unlock the vault")
+	require.Contains(t, req(t, h, "GET", "/operator/session/status", "").Body.String(), `"open":false`)
 }
 
 func TestOperatorSessionLockKeepsVaultUnlocked(t *testing.T) {

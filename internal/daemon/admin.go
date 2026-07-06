@@ -39,6 +39,11 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	// POST /vault/init is the bootstrap that ESTABLISHES the master password — it cannot sit behind
 	// the gate (no password exists yet) and opens the session on success (see hVaultInit).
 	mux.HandleFunc("POST /vault/init", d.hVaultInit)
+	// POST /vault/unlock is UNGATED for the same reason as init: it already requires the master
+	// password (the vault verifies it), so an operator-session gate on top is redundant and would
+	// double-prompt the operator (unlock 403 -> session modal -> re-enter the same password). It
+	// opens the session on success (see hVaultUnlock) — the operator just proved the master password.
+	mux.HandleFunc("POST /vault/unlock", d.hVaultUnlock)
 	mux.HandleFunc("GET /upstreams", d.hUpstreamList)
 	mux.HandleFunc("GET /oidc/redirect-uri", d.hOIDCRedirectURI)
 	mux.HandleFunc("GET /agents", d.hAgentList)
@@ -61,7 +66,6 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	gate := func(pattern string, h http.HandlerFunc) {
 		mux.Handle(pattern, d.operatorGate(h))
 	}
-	gate("POST /vault/unlock", d.hVaultUnlock)
 	gate("POST /vault/lock", d.hVaultLock)
 	gate("POST /upstreams", d.hUpstreamCreate)
 	gate("DELETE /upstreams/{name}", d.hUpstreamDelete)
@@ -176,6 +180,10 @@ func (d *Daemon) hVaultUnlock(w http.ResponseWriter, r *http.Request) {
 	}
 	switch err := d.vault.Unlock(body.Password); {
 	case err == nil:
+		// Unlocking proves the operator holds the master password, so open their operator session
+		// here (mirroring hVaultInit). This is why /vault/unlock is ungated: it is self-authenticating
+		// and would otherwise double-prompt (unlock gate 403 -> session modal for the same password).
+		d.opsession.Open()
 		d.publish("vault.unlocked", map[string]any{})
 		// NOTE: no kubeconfig auto-import here. The scan runs ONLY at init (first run) — re-running
 		// it on every unlock would risk clobbering operator state and is unnecessary. To pull in
