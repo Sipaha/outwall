@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router'
-import { LayoutDashboard, Server, Bot, ShieldCheck, CheckSquare, ScrollText, Settings } from 'lucide-react'
+import { LayoutDashboard, Server, Bot, ShieldCheck, CheckSquare, ScrollText, Settings, Lock } from 'lucide-react'
 import { useEventStore } from '../lib/events'
+import { useOperatorSession } from '../lib/operatorSession'
 
 interface NavItem {
   to: string
@@ -21,6 +22,8 @@ const NAV: NavItem[] = [
 
 export function Sidebar() {
   const connected = useEventStore((s) => s.connected)
+  const sessionOpen = useOperatorSession((s) => s.open)
+  const lockNow = useOperatorSession((s) => s.lockNow)
   return (
     <aside className="flex h-screen w-52 shrink-0 flex-col border-r border-border bg-card">
       <div className="flex items-center gap-2 px-4 py-3.5 border-b border-border">
@@ -52,6 +55,17 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
+      {sessionOpen && (
+        <button
+          type="button"
+          onClick={() => lockNow()}
+          title="Close the operator session (privileged actions will re-prompt for the master password)"
+          className="mx-2 mb-2 flex items-center gap-2 rounded px-2.5 py-1.5 text-[13px] text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <Lock size={13} />
+          Lock now
+        </button>
+      )}
     </aside>
   )
 }
