@@ -27,8 +27,17 @@ func New(socketPath string) *Client {
 	}}
 }
 
-// Do sends a request; body and out may be nil. Non-2xx returns the server error message.
+// Do sends a request with no Authorization header (operator CLI over the admin socket).
 func (c *Client) Do(method, path string, body, out any) error {
+	return c.do("", method, path, body, out)
+}
+
+// DoAuth sends a request with Authorization: Bearer <token> (agent CLI over the agent socket).
+func (c *Client) DoAuth(token, method, path string, body, out any) error {
+	return c.do(token, method, path, body, out)
+}
+
+func (c *Client) do(token, method, path string, body, out any) error {
 	var rdr io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -42,6 +51,9 @@ func (c *Client) Do(method, path string, body, out any) error {
 		return fmt.Errorf("new request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("call daemon (is it running?): %w", err)
