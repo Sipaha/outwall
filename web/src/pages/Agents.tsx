@@ -1,14 +1,21 @@
 import { useCallback, useEffect, useState } from 'react'
-import { listAgents, listRules, listAccessRequests, ApiError } from '../lib/api'
+import { listAgents, listRules, listAccessRequests, deleteAgent, ApiError } from '../lib/api'
 import type { Agent, Rule, AccessRequest } from '../lib/types'
 import { useEventStore } from '../lib/events'
 import { DataTable } from '../components/DataTable'
 import { StatusBadge } from '../components/StatusBadge'
 import { Modal } from '../components/Modal'
 import { useToastStore } from '../lib/toast'
+import { Trash2 } from 'lucide-react'
 
 function shortId(id: string): string {
   return id.length > 8 ? id.slice(0, 8) : id
+}
+
+function fmtTime(iso: string): string {
+  if (!iso) return 'Never'
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
 export function Agents() {
@@ -16,6 +23,7 @@ export function Agents() {
   const [rules, setRules] = useState<Rule[]>([])
   const [requests, setRequests] = useState<AccessRequest[]>([])
   const [selected, setSelected] = useState<Agent | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null)
   const push = useToastStore((s) => s.push)
 
   const counter = useEventStore((s) => s.counters['agent.registered'])
@@ -37,6 +45,20 @@ export function Agents() {
   const agentRules = selected ? rules.filter((r) => r.subject_agent_id === selected.id) : []
   const agentRequests = selected ? requests.filter((r) => r.agent_id === selected.id) : []
 
+  async function confirmDelete() {
+    const target = deleteTarget
+    setDeleteTarget(null)
+    if (!target) return
+    try {
+      await deleteAgent(target.id)
+      push('success', `Agent "${target.name}" deleted`)
+      if (selected?.id === target.id) setSelected(null)
+      load()
+    } catch (err) {
+      push('error', err instanceof ApiError ? err.message : 'Failed to delete agent')
+    }
+  }
+
   return (
     <div className="space-y-6 p-6">
       <h1 className="text-lg font-semibold">Agents</h1>
@@ -51,14 +73,31 @@ export function Agents() {
             { header: 'Status', cell: (a) => <StatusBadge status={a.status} /> },
             { header: 'ID', cell: (a) => shortId(a.id), className: 'font-mono text-muted-foreground' },
             {
+              header: 'Created',
+              cell: (a) => fmtTime(a.created_at),
+              className: 'text-muted-foreground whitespace-nowrap',
+            },
+            {
+              header: 'Last active',
+              cell: (a) => fmtTime(a.last_seen_at),
+              className: 'text-muted-foreground whitespace-nowrap',
+            },
+            {
               header: '',
               cell: (a) => (
-                <div className="flex justify-end">
+                <div className="flex justify-end gap-1.5">
                   <button
                     onClick={() => setSelected(a)}
                     className="rounded bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-muted/70"
                   >
                     Detail
+                  </button>
+                  <button
+                    onClick={() => setDeleteTarget(a)}
+                    className="rounded bg-destructive/15 p-1 text-destructive hover:bg-destructive/25"
+                    aria-label={`Delete agent ${a.name}`}
+                  >
+                    <Trash2 size={12} />
                   </button>
                 </div>
               ),
@@ -108,6 +147,36 @@ export function Agents() {
             </div>
           </>
         )}
+      </Modal>
+
+      <Modal
+        open={deleteTarget !== null}
+        title="Delete agent"
+        onClose={() => setDeleteTarget(null)}
+        width="sm"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setDeleteTarget(null)}
+              className="rounded bg-muted px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmDelete}
+              className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
+            >
+              Delete
+            </button>
+          </>
+        }
+      >
+        <p className="text-xs text-muted-foreground">
+          Delete agent <span className="font-medium text-foreground">{deleteTarget?.name}</span> and revoke
+          all its grants? This cannot be undone.
+        </p>
       </Modal>
     </div>
   )
