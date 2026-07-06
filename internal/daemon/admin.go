@@ -24,48 +24,76 @@ import (
 	"github.com/Sipaha/outwall/internal/upstream"
 )
 
-// apiMux registers the shared admin API routes plus the SSE event stream onto a fresh mux.
-// Both transports — the CSRF-free unix socket (AdminHandler, for the local CLI) and the
-// CSRF-gated TCP listener (UIHandler, for the desktop UI) — build their handler from this
-// same route table.
+// apiMux registers the admin API routes onto a fresh mux, split into an UNGATED group (read-only
+// GETs, the SSE stream, the dry-run preset preview, the launcher focus hand-off, and the
+// /operator/session/* control routes — the master-password entry point) and an OPERATOR-GATED group
+// (every privileged mutation). Gated routes are wrapped per-route by operatorGate. Both transports —
+// the unix socket (AdminHandler) and the TCP UI bind (UIHandler under /api) — build their handler
+// from this same table, so the gate applies UNIFORMLY on both: a same-user process can no longer
+// self-approve or self-grant over either. (ADR-0041; replaces the ADR-0005 X-Outwall-CSRF model.)
 func (d *Daemon) apiMux() *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /vault/init", d.hVaultInit)
-	mux.HandleFunc("POST /vault/unlock", d.hVaultUnlock)
-	mux.HandleFunc("POST /vault/lock", d.hVaultLock)
+
+	// --- UNGATED: read-only + the operator-session control routes (they grant no power). ---
 	mux.HandleFunc("GET /vault/status", d.hVaultStatus)
+	// POST /vault/init is the bootstrap that ESTABLISHES the master password — it cannot sit behind
+	// the gate (no password exists yet) and opens the session on success (see hVaultInit).
+	mux.HandleFunc("POST /vault/init", d.hVaultInit)
+	mux.HandleFunc("GET /upstreams", d.hUpstreamList)
+	mux.HandleFunc("GET /oidc/redirect-uri", d.hOIDCRedirectURI)
+	mux.HandleFunc("GET /agents", d.hAgentList)
+	mux.HandleFunc("GET /rules", d.hRuleList)
+	mux.HandleFunc("GET /profiles", d.hProfileList)
+	mux.HandleFunc("POST /presets/preview", d.hPresetPreview) // dry-run, no state change
+	mux.HandleFunc("GET /approvals", d.hApprovalList)
+	mux.HandleFunc("GET /access-requests", d.hAccessRequestList)
+	mux.HandleFunc("GET /audit", d.hAuditList)
+	mux.HandleFunc("GET /audit/{id}", d.hAuditGet)
+	mux.HandleFunc("GET /settings/audit-retention", d.hAuditRetentionGet)
+	mux.HandleFunc("GET /events", sseHandler(d.bus))
+	mux.HandleFunc("POST /desktop/focus", d.hDesktopFocus) // single-instance launcher hand-off
 	mux.HandleFunc("POST /operator/session/open", d.hOperatorSessionOpen)
 	mux.HandleFunc("POST /operator/session/lock", d.hOperatorSessionLock)
 	mux.HandleFunc("GET /operator/session/status", d.hOperatorSessionStatus)
-	mux.HandleFunc("POST /upstreams", d.hUpstreamCreate)
-	mux.HandleFunc("GET /upstreams", d.hUpstreamList)
-	mux.HandleFunc("DELETE /upstreams/{name}", d.hUpstreamDelete)
-	mux.HandleFunc("POST /upstreams/{name}/auth", d.hUpstreamSetAuth)
-	mux.HandleFunc("POST /upstreams/{name}/oauth/login", d.hOAuthLogin)
-	mux.HandleFunc("POST /oidc/discover", d.hOIDCDiscover)
-	mux.HandleFunc("GET /oidc/redirect-uri", d.hOIDCRedirectURI)
-	mux.HandleFunc("POST /agents/register", d.hAgentRegister)
-	mux.HandleFunc("GET /agents", d.hAgentList)
-	mux.HandleFunc("POST /clusters/import", d.hClustersImport)
-	mux.HandleFunc("POST /kubeconfig", d.hKubeconfig)
-	mux.HandleFunc("POST /rules", d.hRuleCreate)
-	mux.HandleFunc("GET /rules", d.hRuleList)
-	mux.HandleFunc("DELETE /rules/{id}", d.hRuleDelete)
-	mux.HandleFunc("POST /rules/{id}/value-policy", d.hRuleSetVariablePolicy)
-	mux.HandleFunc("GET /profiles", d.hProfileList)
-	mux.HandleFunc("POST /presets/preview", d.hPresetPreview)
-	mux.HandleFunc("GET /approvals", d.hApprovalList)
-	mux.HandleFunc("POST /approvals/{id}/resolve", d.hApprovalResolve)
-	mux.HandleFunc("GET /access-requests", d.hAccessRequestList)
-	mux.HandleFunc("POST /access-requests/{id}/resolve", d.hAccessRequestResolve)
-	mux.HandleFunc("GET /audit", d.hAuditList)
-	mux.HandleFunc("GET /audit/{id}", d.hAuditGet)
-	mux.HandleFunc("POST /audit/prune", d.hAuditPrune)
-	mux.HandleFunc("GET /settings/audit-retention", d.hAuditRetentionGet)
-	mux.HandleFunc("PUT /settings/audit-retention", d.hAuditRetentionSet)
-	mux.HandleFunc("GET /events", sseHandler(d.bus))
-	mux.HandleFunc("POST /desktop/focus", d.hDesktopFocus)
+
+	// --- OPERATOR-GATED: privileged mutations. Each requires an open operator session, on BOTH
+	//     transports (per-route wrapping is inherited by AdminHandler AND UIHandler). ---
+	gate := func(pattern string, h http.HandlerFunc) {
+		mux.Handle(pattern, d.operatorGate(h))
+	}
+	gate("POST /vault/unlock", d.hVaultUnlock)
+	gate("POST /vault/lock", d.hVaultLock)
+	gate("POST /upstreams", d.hUpstreamCreate)
+	gate("DELETE /upstreams/{name}", d.hUpstreamDelete)
+	gate("POST /upstreams/{name}/auth", d.hUpstreamSetAuth)
+	gate("POST /upstreams/{name}/oauth/login", d.hOAuthLogin)
+	gate("POST /oidc/discover", d.hOIDCDiscover)
+	gate("POST /agents/register", d.hAgentRegister)
+	gate("POST /clusters/import", d.hClustersImport)
+	gate("POST /kubeconfig", d.hKubeconfig)
+	gate("POST /rules", d.hRuleCreate)
+	gate("DELETE /rules/{id}", d.hRuleDelete)
+	gate("POST /rules/{id}/value-policy", d.hRuleSetVariablePolicy)
+	gate("POST /approvals/{id}/resolve", d.hApprovalResolve)
+	gate("POST /access-requests/{id}/resolve", d.hAccessRequestResolve)
+	gate("POST /audit/prune", d.hAuditPrune)
+	gate("PUT /settings/audit-retention", d.hAuditRetentionSet)
 	return mux
+}
+
+// operatorGate wraps a privileged route so it is served only while the operator session is open
+// (unlocked by the master password — a secret the same-user agent does not hold). Otherwise it
+// returns 403 with {"error":"operator session required"}, which the CLI (sudo-style prompt) and the
+// web UI (master-password modal) recognize to trigger a re-open. A successful Authorized() call
+// slides the idle window (see internal/opsession).
+func (d *Daemon) operatorGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !d.opsession.Authorized() {
+			adminErr(w, http.StatusForbidden, "operator session required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // hDesktopFocus raises the desktop window for the single-instance gate (ADR-0013): a second
@@ -81,42 +109,24 @@ func (d *Daemon) hDesktopFocus(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// AdminHandler builds the admin API mux served over the unix socket (CSRF-free, local CLI).
+// AdminHandler builds the admin API mux served over the unix socket for the local operator CLI.
+// Privileged routes are gated by the operator session exactly as on the UI transport (apiMux).
 func (d *Daemon) AdminHandler() http.Handler { return d.apiMux() }
 
-// UIHandler builds the desktop-UI handler served over the UIListen TCP bind: the embedded
-// SPA at "/" and the shared admin/SSE mux under "/api" behind the X-Outwall-CSRF gate. The
-// CSRF header is a CSRF-not-auth boundary — loopback bind + single-tenant host is the trust
-// model (ADR-0005). Static assets are not CSRF-gated; only "/api/**" is.
+// UIHandler builds the desktop-UI handler served over the UIListen TCP bind: the embedded SPA at
+// "/", the shared admin/SSE mux under "/api" (privileged routes gated by the operator session — see
+// apiMux/operatorGate), and the OIDC browser-login redirect target. There is no CSRF wrapper: the
+// operator-session gate (master password) replaced the X-Outwall-CSRF model (ADR-0041 amends
+// ADR-0005). GET /api/events (SSE) stays reachable — it is ungated and read-only.
 func (d *Daemon) UIHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("/api/", http.StripPrefix("/api", csrfMiddleware(d.apiMux())))
-	// The OIDC browser-login redirect target is served top-level (not under /api) and is
-	// CSRF-exempt: a redirect cannot carry X-Outwall-CSRF, and the random state ties it to a
-	// login this daemon started (see oauth.go).
+	mux.Handle("/api/", http.StripPrefix("/api", d.apiMux()))
+	// The OIDC browser-login redirect target is served top-level (not under /api): a redirect from
+	// the IdP cannot carry app headers, and the random state ties it to a login this daemon started
+	// (see oauth.go). The POST that STARTS the login (/api/upstreams/{name}/oauth/login) is gated.
 	mux.HandleFunc("/oauth/callback", d.hOAuthCallback)
 	mux.Handle("/", staticUI())
 	return mux
-}
-
-// csrfMiddleware rejects any request lacking a non-empty X-Outwall-CSRF header with 403. It
-// defeats browser cross-origin form posts; it is NOT authentication (see ADR-0005).
-//
-// GET /events (SSE) is exempt: EventSource cannot set custom request headers, so the events
-// stream could never carry X-Outwall-CSRF. This is safe — SSE is read-only (it changes no
-// state), same-origin, and served only over the loopback UIListen bind (see ADR-0005).
-func csrfMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/events" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if r.Header.Get("X-Outwall-CSRF") == "" {
-			adminErr(w, http.StatusForbidden, "missing csrf header")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

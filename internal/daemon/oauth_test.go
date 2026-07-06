@@ -36,6 +36,7 @@ func TestOAuthCallbackDeliversResponseOverListener(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, d.vault.Init("pw"))
+	d.opsession.Open() // vault.Init called directly (bypassing the HTTP handler that opens the session)
 	_, err = d.upstreams.Create("api.test", "https://api.test", upstream.AuthConfig{
 		Type: "oidc-authorization-code", ClientID: "c",
 		AuthURL: idp.URL + "/auth", TokenURL: idp.URL + "/token",
@@ -87,6 +88,7 @@ func TestOAuthLoginAndCallbackStoresTokens(t *testing.T) {
 
 	d := newDaemon(t)
 	require.NoError(t, d.vault.Init("pw"))
+	d.opsession.Open() // vault.Init called directly (bypassing the HTTP handler that opens the session)
 
 	_, err := d.upstreams.Create("api.test", "https://api.test", upstream.AuthConfig{
 		Type: "oidc-authorization-code", ClientID: "cid",
@@ -134,6 +136,7 @@ func TestOAuthLoginAndCallbackStoresTokens(t *testing.T) {
 func TestOAuthRedirectURIFixedCallback(t *testing.T) {
 	d := newDaemon(t) // ephemeral callback bind in tests
 	require.NoError(t, d.vault.Init("pw"))
+	d.opsession.Open() // vault.Init called directly (bypassing the HTTP handler that opens the session)
 	// The redirect URI is derived from the configured callback bind and used in the authorize URL.
 	want := "http://" + d.cfg.CallbackListen + "/callback"
 
@@ -176,6 +179,7 @@ func TestOAuthCallbackEscapesReflectedError(t *testing.T) {
 func TestOAuthLoginOpensSystemBrowserInDesktopMode(t *testing.T) {
 	d := newDaemon(t)
 	require.NoError(t, d.vault.Init("pw"))
+	d.opsession.Open() // vault.Init called directly (bypassing the HTTP handler that opens the session)
 	_, err := d.upstreams.Create("api.test", "https://api.test", upstream.AuthConfig{
 		Type: "oidc-authorization-code", ClientID: "cid",
 		AuthURL: "https://idp.test/authorize", TokenURL: "https://idp.test/token",
@@ -199,6 +203,7 @@ func TestOAuthLoginOpensSystemBrowserInDesktopMode(t *testing.T) {
 func TestOAuthLoginRejectsNonOIDCUpstream(t *testing.T) {
 	d := newDaemon(t)
 	require.NoError(t, d.vault.Init("pw"))
+	d.opsession.Open() // vault.Init called directly (bypassing the HTTP handler that opens the session)
 	_, err := d.upstreams.Create("plain", "https://plain.test", upstream.AuthConfig{Type: "none"})
 	require.NoError(t, err)
 	w := req(t, d.AdminHandler(), "POST", "/upstreams/plain/oauth/login", "")

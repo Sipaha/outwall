@@ -321,22 +321,6 @@ func TestDesktopFocusRoute(t *testing.T) {
 	require.True(t, wNil.Code < 200 || wNil.Code >= 300, "expected non-2xx, got %d", wNil.Code)
 }
 
-func TestUICSRFGate(t *testing.T) {
-	d := newDaemon(t)
-	h := d.UIHandler() // the static + /api TCP mux
-	// no CSRF header → 403 (API is mounted under /api)
-	r1 := httptest.NewRequest("GET", "/api/vault/status", nil)
-	w1 := httptest.NewRecorder()
-	h.ServeHTTP(w1, r1)
-	require.Equal(t, http.StatusForbidden, w1.Code)
-	// with CSRF header → passes through (200)
-	r2 := httptest.NewRequest("GET", "/api/vault/status", nil)
-	r2.Header.Set("X-Outwall-CSRF", "1")
-	w2 := httptest.NewRecorder()
-	h.ServeHTTP(w2, r2)
-	require.Equal(t, http.StatusOK, w2.Code)
-}
-
 func TestUIServesStaticIndex(t *testing.T) {
 	d := newDaemon(t)
 	h := d.UIHandler()
@@ -352,23 +336,22 @@ func TestUIServesStaticIndex(t *testing.T) {
 	require.Contains(t, w2.Body.String(), "outwall")
 }
 
-func TestUISSEExemptFromCSRF(t *testing.T) {
+func TestUISSEUngated(t *testing.T) {
 	d := newDaemon(t)
-	// Use a real server + client: the SSE handler streams on its own goroutine, so reading
-	// a shared httptest.ResponseRecorder from the test goroutine would race. The HTTP client
-	// returns once response headers arrive (read-synchronized), and canceling the request
-	// context unblocks the streaming handler.
+	// SSE is read-only and ungated (no CSRF, no operator session). EventSource cannot set headers,
+	// so /api/events must be reachable with none. Use a real server + client: the SSE handler
+	// streams on its own goroutine; the client returns once headers arrive, and canceling the
+	// request context unblocks the streaming handler.
 	srv := httptest.NewServer(d.UIHandler())
 	defer srv.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// No X-Outwall-CSRF header — EventSource cannot set one, so the gate must exempt /api/events.
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/events", nil)
 	require.NoError(t, err)
 	resp, err := http.DefaultClient.Do(r)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode) // 200, not 403 from the CSRF gate
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
 }
 
@@ -600,6 +583,7 @@ func TestSetAuthKeepsSecretsOnSameTypeReplace(t *testing.T) {
 	d := newDaemon(t)
 	h := d.AdminHandler()
 	require.NoError(t, d.vault.Init("pw"))
+	d.opsession.Open() // vault.Init called directly (bypassing the HTTP handler that opens the session)
 	_, err := d.upstreams.Create("api.test", "https://api.test", upstream.AuthConfig{
 		Type: "oidc-authorization-code", ClientID: "old-cid", ClientSecret: "shh",
 		AuthURL: "https://idp/auth", TokenURL: "https://idp/token",
@@ -959,4 +943,65 @@ func TestOperatorSessionControlRoutes(t *testing.T) {
 	require.NoError(t, json.Unmarshal(wo.Body.Bytes(), &st))
 	require.Equal(t, true, st["open"])
 	require.Greater(t, st["idle_remaining_seconds"].(float64), float64(0))
+}
+
+func TestOperatorGateSealsBothTransports(t *testing.T) {
+	d := newDaemon(t)
+	admin := d.AdminHandler() // unix-socket transport (the old CSRF-free full-admin path)
+	ui := d.UIHandler()       // TCP /api transport (the old X-Outwall-CSRF path)
+
+	// Bootstrap: init is ungated and opens the operator session.
+	require.Equal(t, http.StatusOK, req(t, admin, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	// Ungated GET works with no session AND no CSRF header, on both transports.
+	require.Equal(t, http.StatusOK, req(t, admin, "GET", "/vault/status", "").Code)
+	require.Equal(t, http.StatusOK, req(t, ui, "GET", "/api/vault/status", "").Code)
+
+	const ruleBody = `{"upstream_id":"u1","outcome":"allow","browse_methods":"GET","browse_path":"/**"}`
+
+	// Close the session; a privileged mutation is now 403 over BOTH transports — the old
+	// self-approval curl paths (unix socket AND /api) are sealed.
+	require.Equal(t, http.StatusOK, req(t, admin, "POST", "/operator/session/lock", "").Code)
+	require.Equal(t, http.StatusForbidden, req(t, admin, "POST", "/rules", ruleBody).Code)
+	require.Equal(t, http.StatusForbidden, req(t, ui, "POST", "/api/rules", ruleBody).Code)
+	require.Equal(t, http.StatusForbidden, req(t, admin, "POST", "/approvals/x/resolve", `{"approve":true}`).Code)
+	require.Equal(t, http.StatusForbidden, req(t, ui, "POST", "/api/approvals/x/resolve", `{"approve":true}`).Code)
+
+	// Wrong master password → 401 and the session stays closed (still 403).
+	require.Equal(t, http.StatusUnauthorized, req(t, admin, "POST", "/operator/session/open", `{"password":"no"}`).Code)
+	require.Equal(t, http.StatusForbidden, req(t, admin, "POST", "/rules", ruleBody).Code)
+
+	// Correct master password opens the session; the gated mutation now succeeds on both transports.
+	require.Equal(t, http.StatusOK, req(t, admin, "POST", "/operator/session/open", `{"password":"pw"}`).Code)
+	require.Equal(t, http.StatusOK, req(t, admin, "POST", "/rules", ruleBody).Code)
+	require.Equal(t, http.StatusOK, req(t, ui, "POST", "/api/rules", ruleBody).Code)
+}
+
+func TestVaultUnlockIsGatedByOperatorSession(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+	d.vault.Lock()
+
+	// Close the operator session → unlock is refused by the gate (403) and never reaches the vault.
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/operator/session/lock", "").Code)
+	require.Equal(t, http.StatusForbidden, req(t, h, "POST", "/vault/unlock", `{"password":"pw"}`).Code)
+	require.True(t, d.vault.Locked(), "a gate-blocked unlock must not unlock the vault")
+
+	// Opening the session works while the vault is LOCKED (Verify needs no resident key) — this is
+	// the existing-vault bootstrap order: /operator/session/open (ungated) THEN /vault/unlock (gated).
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/operator/session/open", `{"password":"pw"}`).Code)
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/unlock", `{"password":"pw"}`).Code)
+	require.False(t, d.vault.Locked())
+}
+
+func TestOperatorSessionLockKeepsVaultUnlocked(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+	require.False(t, d.vault.Locked()) // init leaves the vault unlocked
+
+	// Locking the operator session must NOT lock the vault — the data plane keeps serving.
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/operator/session/lock", "").Code)
+	require.False(t, d.vault.Locked(), "operator-session lock must not lock the vault")
 }
