@@ -4,6 +4,7 @@ import {
   resolveApproval,
   listAccessRequests,
   resolveAccessRequest,
+  revokeAccessRequest,
   previewPreset,
   ApiError,
 } from '../lib/api'
@@ -511,6 +512,8 @@ export function Approvals() {
   // Deny-with-reason: clicking Deny opens this modal; the (optional) reason is sent to the agent.
   const [denyId, setDenyId] = useState<string | null>(null)
   const [denyReason, setDenyReason] = useState('')
+  // Revoke-with-confirm: clicking Revoke on a granted access request opens this modal.
+  const [revokeId, setRevokeId] = useState<string | null>(null)
   const push = useToastStore((s) => s.push)
 
   const counters = useEventStore((s) => s.counters)
@@ -563,6 +566,19 @@ export function Approvals() {
       load()
     } catch (err) {
       push('error', err instanceof ApiError ? err.message : 'Failed to resolve')
+    }
+  }
+
+  async function confirmRevoke() {
+    const id = revokeId
+    setRevokeId(null)
+    if (!id) return
+    try {
+      await revokeAccessRequest(id)
+      push('success', 'Access revoked')
+      load()
+    } catch (err) {
+      push('error', err instanceof ApiError ? err.message : 'Failed to revoke')
     }
   }
 
@@ -621,18 +637,39 @@ export function Approvals() {
             },
             { header: 'When', cell: (r) => fmtTime(r.created_at), className: 'text-muted-foreground' },
             {
+              header: 'Granted',
+              cell: (r) => (r.status === 'granted' ? fmtTime(r.resolved_at) : '—'),
+              className: 'text-muted-foreground',
+            },
+            {
               header: '',
-              cell: (r) =>
-                r.status === 'pending' ? (
-                  <div className="flex justify-end">
-                    <button
-                      onClick={() => resolveAccess(r.id, 'dismissed')}
-                      className="rounded bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/70"
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                ) : null,
+              cell: (r) => {
+                if (r.status === 'pending') {
+                  return (
+                    <div className="flex justify-end">
+                      <button
+                        onClick={() => resolveAccess(r.id, 'dismissed')}
+                        className="rounded bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/70"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  )
+                }
+                if (r.status === 'granted') {
+                  return (
+                    <div className="flex justify-end">
+                      <button
+                        onClick={() => setRevokeId(r.id)}
+                        className="rounded bg-destructive/15 px-2 py-0.5 text-[11px] font-medium text-destructive hover:bg-destructive/25"
+                      >
+                        Revoke
+                      </button>
+                    </div>
+                  )
+                }
+                return null
+              },
             },
           ]}
         />
@@ -669,6 +706,35 @@ export function Approvals() {
             autoFocus
           />
         </FormField>
+      </Modal>
+
+      <Modal
+        open={revokeId !== null}
+        title="Revoke access"
+        onClose={() => setRevokeId(null)}
+        width="sm"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setRevokeId(null)}
+              className="rounded bg-muted px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmRevoke}
+              className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
+            >
+              Revoke
+            </button>
+          </>
+        }
+      >
+        <p className="text-xs text-muted-foreground">
+          Revoke this grant? The agent's rules for this upstream will be removed.
+        </p>
       </Modal>
     </div>
   )
