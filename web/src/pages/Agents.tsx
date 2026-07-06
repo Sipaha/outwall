@@ -23,7 +23,6 @@ export function Agents() {
   const [rules, setRules] = useState<Rule[]>([])
   const [requests, setRequests] = useState<AccessRequest[]>([])
   const [selected, setSelected] = useState<Agent | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null)
   const push = useToastStore((s) => s.push)
 
   const counter = useEventStore((s) => s.counters['agent.registered'])
@@ -45,10 +44,7 @@ export function Agents() {
   const agentRules = selected ? rules.filter((r) => r.subject_agent_id === selected.id) : []
   const agentRequests = selected ? requests.filter((r) => r.agent_id === selected.id) : []
 
-  async function confirmDelete() {
-    const target = deleteTarget
-    setDeleteTarget(null)
-    if (!target) return
+  async function remove(target: Agent) {
     try {
       await deleteAgent(target.id)
       push('success', `Agent "${target.name}" deleted`)
@@ -93,7 +89,7 @@ export function Agents() {
                     Detail
                   </button>
                   <button
-                    onClick={() => setDeleteTarget(a)}
+                    onClick={() => remove(a)}
                     className="rounded bg-destructive/15 p-1 text-destructive hover:bg-destructive/25"
                     aria-label={`Delete agent ${a.name}`}
                   >
@@ -147,36 +143,6 @@ export function Agents() {
             </div>
           </>
         )}
-      </Modal>
-
-      <Modal
-        open={deleteTarget !== null}
-        title="Delete agent"
-        onClose={() => setDeleteTarget(null)}
-        width="sm"
-        footer={
-          <>
-            <button
-              type="button"
-              onClick={() => setDeleteTarget(null)}
-              className="rounded bg-muted px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={confirmDelete}
-              className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
-            >
-              Delete
-            </button>
-          </>
-        }
-      >
-        <p className="text-xs text-muted-foreground">
-          Delete agent <span className="font-medium text-foreground">{deleteTarget?.name}</span> and revoke
-          all its grants? This cannot be undone.
-        </p>
       </Modal>
     </div>
   )

@@ -36,7 +36,7 @@ describe('<Agents>', () => {
     expect(screen.queryByText('2026-06-18T12:30:00Z')).not.toBeInTheDocument()
   })
 
-  it('deletes an agent after confirming in the modal', async () => {
+  it('deletes an agent immediately on click (no confirmation)', async () => {
     vi.spyOn(api, 'listAgents').mockResolvedValue([
       {
         id: 'agent-1',
@@ -53,9 +53,6 @@ describe('<Agents>', () => {
     render(<Agents />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Delete agent claude' }))
-    // Confirmation modal blocks the delete until confirmed.
-    expect(deleteSpy).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
 
     await waitFor(() => expect(deleteSpy).toHaveBeenCalledWith('agent-1'))
   })
