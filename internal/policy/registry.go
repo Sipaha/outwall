@@ -279,9 +279,9 @@ func (r *Registry) scanRows(query string, args ...any) (out []*Rule, err error) 
 
 const ruleCols = `id, subject_agent_id, upstream_id, op_method, op_path_template, op_query_template, op_body_template, op_value_policies, outcome, rate_limit_per_min, k8s_namespace, k8s_resource, k8s_verb, profile, profile_params, browse_methods, browse_path, created_at`
 
-// List returns all rules ordered by creation time.
+// List returns all rules ordered by creation time, newest first.
 func (r *Registry) List() ([]*Rule, error) {
-	return r.scanRows(`SELECT ` + ruleCols + ` FROM rules ORDER BY created_at`)
+	return r.scanRows(`SELECT ` + ruleCols + ` FROM rules ORDER BY created_at DESC`)
 }
 
 // ForUpstream returns all rules bound to the given upstream.

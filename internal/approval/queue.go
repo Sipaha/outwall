@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 
@@ -218,7 +219,7 @@ func (q *Queue) Submit(ctx context.Context, p Pending) (Decision, error) {
 	}
 }
 
-// List snapshots the currently-waiting entries.
+// List snapshots the currently-waiting entries, newest first.
 func (q *Queue) List() []Pending {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -226,6 +227,7 @@ func (q *Queue) List() []Pending {
 	for _, w := range q.waiters {
 		out = append(out, w.p)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out
 }
 

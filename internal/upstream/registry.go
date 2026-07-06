@@ -329,10 +329,10 @@ func (r *Registry) GetByName(name string) (*Upstream, error) {
 	return up, nil
 }
 
-// List returns all upstreams (vault must be unlocked).
+// List returns all upstreams (vault must be unlocked), newest first.
 func (r *Registry) List() ([]*Upstream, error) {
 	rows, err := r.store.DB().Query(
-		`SELECT id, name, base_url, kind, profile, auth_type, auth_config, created_at FROM upstreams ORDER BY name`)
+		`SELECT id, name, base_url, kind, profile, auth_type, auth_config, created_at FROM upstreams ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query upstreams: %w", err)
 	}

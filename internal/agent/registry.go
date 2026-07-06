@@ -106,10 +106,10 @@ func (r *Registry) GetByID(id string) (*Agent, error) {
 	return &a, nil
 }
 
-// List returns all agents.
+// List returns all agents, newest first.
 func (r *Registry) List() ([]*Agent, error) {
 	rows, err := r.store.DB().Query(
-		`SELECT id, name, status, created_at FROM agents ORDER BY created_at`)
+		`SELECT id, name, status, created_at FROM agents ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query agents: %w", err)
 	}

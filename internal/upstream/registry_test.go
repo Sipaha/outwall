@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -176,6 +177,24 @@ func TestGetByHostExactMatchOnly(t *testing.T) {
 		_, err := reg.GetByHost(bad)
 		require.ErrorIs(t, err, ErrNotFound, "expected ErrNotFound for look-alike host %q", bad)
 	}
+}
+
+func TestListOrdersNewestFirst(t *testing.T) {
+	_, reg := setup(t)
+
+	u1, err := reg.Create("a", "https://a.example", AuthConfig{Type: "none"})
+	require.NoError(t, err)
+	time.Sleep(2 * time.Millisecond)
+	u2, err := reg.Create("b", "https://b.example", AuthConfig{Type: "none"})
+	require.NoError(t, err)
+	time.Sleep(2 * time.Millisecond)
+	u3, err := reg.Create("c", "https://c.example", AuthConfig{Type: "none"})
+	require.NoError(t, err)
+
+	got, err := reg.List()
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	require.Equal(t, []string{u3.ID, u2.ID, u1.ID}, []string{got[0].ID, got[1].ID, got[2].ID})
 }
 
 func TestUpstreamProfileRoundTrip(t *testing.T) {

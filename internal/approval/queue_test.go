@@ -94,3 +94,28 @@ func TestResolveUnknown(t *testing.T) {
 	q := NewQueue()
 	require.ErrorIs(t, q.Resolve("nope", true, ""), ErrNotFound)
 }
+
+func TestListOrdersNewestFirst(t *testing.T) {
+	q := NewQueueWithTimeout(2 * time.Second)
+
+	submit := func(agentID string) {
+		go func() { _, _ = q.Submit(context.Background(), Pending{AgentID: agentID}) }()
+	}
+	submit("a1")
+	require.Eventually(t, func() bool { return len(q.List()) == 1 }, time.Second, 10*time.Millisecond)
+	time.Sleep(2 * time.Millisecond)
+	submit("a2")
+	require.Eventually(t, func() bool { return len(q.List()) == 2 }, time.Second, 10*time.Millisecond)
+	time.Sleep(2 * time.Millisecond)
+	submit("a3")
+	require.Eventually(t, func() bool { return len(q.List()) == 3 }, time.Second, 10*time.Millisecond)
+
+	got := q.List()
+	require.Len(t, got, 3)
+	require.Equal(t, []string{"a3", "a2", "a1"}, []string{got[0].AgentID, got[1].AgentID, got[2].AgentID})
+
+	// Clean up so no goroutine leaks past the test.
+	for _, p := range got {
+		require.NoError(t, q.Resolve(p.ID, true, ""))
+	}
+}

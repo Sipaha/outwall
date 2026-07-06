@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -142,6 +143,24 @@ func TestBrowseRuleRoundTrip(t *testing.T) {
 	require.Len(t, got, 1)
 	require.Equal(t, "GET,HEAD", got[0].BrowseMethods)
 	require.Equal(t, "/**", got[0].BrowsePath)
+}
+
+func TestListOrdersNewestFirst(t *testing.T) {
+	reg := newReg(t)
+
+	r1, err := reg.Create(Rule{UpstreamID: "u1", Outcome: Allow, BrowseMethods: "GET", BrowsePath: "/a"})
+	require.NoError(t, err)
+	time.Sleep(2 * time.Millisecond)
+	r2, err := reg.Create(Rule{UpstreamID: "u1", Outcome: Allow, BrowseMethods: "GET", BrowsePath: "/b"})
+	require.NoError(t, err)
+	time.Sleep(2 * time.Millisecond)
+	r3, err := reg.Create(Rule{UpstreamID: "u1", Outcome: Allow, BrowseMethods: "GET", BrowsePath: "/c"})
+	require.NoError(t, err)
+
+	got, err := reg.List()
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	require.Equal(t, []string{r3.ID, r2.ID, r1.ID}, []string{got[0].ID, got[1].ID, got[2].ID})
 }
 
 func TestCreateManyAtomic(t *testing.T) {
