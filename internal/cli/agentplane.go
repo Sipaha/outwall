@@ -108,6 +108,7 @@ func newRequestAccessCmd(gf *globalFlags) *cobra.Command {
 	var (
 		method, path, purpose string
 		query, values         map[string]string
+		varSpecs              []string
 	)
 	cmd := &cobra.Command{
 		Use:   "request-access <host>",
@@ -118,9 +119,17 @@ func newRequestAccessCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			vars := make([]map[string]string, 0, len(varSpecs))
+			for _, g := range varSpecs {
+				parts := strings.SplitN(g, ":", 2)
+				if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+					return fmt.Errorf("invalid --var %q (want name:type)", g)
+				}
+				vars = append(vars, map[string]string{"name": parts[0], "type": parts[1]})
+			}
 			body := map[string]any{
 				"host": args[0], "method": method, "path_template": path,
-				"query_template": query, "values": values, "purpose": purpose,
+				"query_template": query, "variables": vars, "values": values, "purpose": purpose,
 			}
 			var out any
 			if err := agentClient(gf).DoAuth(token, "POST", "/access/op", body, &out); err != nil {
@@ -132,6 +141,7 @@ func newRequestAccessCmd(gf *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&method, "method", "GET", "HTTP method")
 	cmd.Flags().StringVar(&path, "path", "", "path template with {name:type} placeholders")
 	cmd.Flags().StringToStringVar(&query, "query", nil, "query template entries key=value (repeatable)")
+	cmd.Flags().StringArrayVar(&varSpecs, "var", nil, "declare a typed operation variable name:type (e.g. project_path:text) (repeatable)")
 	cmd.Flags().StringToStringVar(&values, "value", nil, "concrete values key=value (repeatable)")
 	cmd.Flags().StringVar(&purpose, "purpose", "", "why you need this operation (required)")
 	return cmd
