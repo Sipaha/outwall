@@ -22,11 +22,12 @@ CREATE TABLE IF NOT EXISTS upstreams (
 	created_at  TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS agents (
-	id           TEXT PRIMARY KEY,
-	name         TEXT NOT NULL,
-	token_sha256 TEXT NOT NULL UNIQUE,
-	status       TEXT NOT NULL,
-	created_at   TEXT NOT NULL
+	id            TEXT PRIMARY KEY,
+	name          TEXT NOT NULL,
+	token_sha256  TEXT NOT NULL UNIQUE,
+	status        TEXT NOT NULL,
+	created_at    TEXT NOT NULL,
+	last_seen_at  TEXT
 );
 CREATE TABLE IF NOT EXISTS rules (
 	id                 TEXT PRIMARY KEY,
@@ -144,6 +145,12 @@ var migrations = []migration{
 			if _, err := tx.Exec(stmt); err != nil {
 				return fmt.Errorf("browse_rules: %w", err)
 			}
+		}
+		return nil
+	}},
+	{"agent_last_seen", func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`ALTER TABLE agents ADD COLUMN last_seen_at TEXT`); err != nil {
+			return fmt.Errorf("agent_last_seen: %w", err)
 		}
 		return nil
 	}},

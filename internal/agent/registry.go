@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/Sipaha/outwall/internal/store"
@@ -25,10 +26,11 @@ const StatusNew = "new"
 
 // Agent is a registered consumer of the gateway.
 type Agent struct {
-	ID        string
-	Name      string
-	Status    string
-	CreatedAt time.Time
+	ID         string
+	Name       string
+	Status     string
+	CreatedAt  time.Time
+	LastSeenAt time.Time // zero when the agent has never authenticated
 }
 
 // Registry persists agents and their token hashes.
@@ -50,6 +52,16 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// parseLastSeen parses a nullable last_seen_at column into a time.Time, returning the zero time
+// when the column is NULL or empty (an agent that has never authenticated).
+func parseLastSeen(ns sql.NullString) time.Time {
+	if !ns.Valid || ns.String == "" {
+		return time.Time{}
+	}
+	t, _ := time.Parse(time.RFC3339Nano, ns.String)
+	return t
+}
+
 // Register creates a new agent and returns its bearer token (shown once).
 func (r *Registry) Register(name string) (*Agent, string, error) {
 	raw := make([]byte, 32)
@@ -68,15 +80,19 @@ func (r *Registry) Register(name string) (*Agent, string, error) {
 	return a, token, nil
 }
 
-// Authenticate resolves an agent by its bearer token.
+// Authenticate resolves an agent by its bearer token. On success it best-effort touches the
+// agent's last_seen_at — this is called on every data-plane request AND every agent-socket call,
+// so it captures last activity across both. A failure to record the touch never fails
+// authentication.
 func (r *Registry) Authenticate(token string) (*Agent, error) {
 	var (
-		a       Agent
-		created string
+		a        Agent
+		created  string
+		lastSeen sql.NullString
 	)
 	err := r.store.DB().QueryRow(
-		`SELECT id, name, status, created_at FROM agents WHERE token_sha256=?`, hashToken(token),
-	).Scan(&a.ID, &a.Name, &a.Status, &created)
+		`SELECT id, name, status, created_at, last_seen_at FROM agents WHERE token_sha256=?`, hashToken(token),
+	).Scan(&a.ID, &a.Name, &a.Status, &created, &lastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUnknownToken
 	}
@@ -84,18 +100,30 @@ func (r *Registry) Authenticate(token string) (*Agent, error) {
 		return nil, fmt.Errorf("query agent: %w", err)
 	}
 	a.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	a.LastSeenAt = parseLastSeen(lastSeen)
+	r.touchLastSeen(a.ID)
 	return &a, nil
+}
+
+// touchLastSeen best-effort records the current time as the agent's last activity. Errors are
+// logged, never returned — a touch failure must not fail authentication.
+func (r *Registry) touchLastSeen(id string) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := r.store.DB().Exec(`UPDATE agents SET last_seen_at=? WHERE id=?`, now, id); err != nil {
+		slog.Warn("touch agent last_seen_at", "agent_id", id, "err", err)
+	}
 }
 
 // GetByID resolves an agent by its ID.
 func (r *Registry) GetByID(id string) (*Agent, error) {
 	var (
-		a       Agent
-		created string
+		a        Agent
+		created  string
+		lastSeen sql.NullString
 	)
 	err := r.store.DB().QueryRow(
-		`SELECT id, name, status, created_at FROM agents WHERE id=?`, id,
-	).Scan(&a.ID, &a.Name, &a.Status, &created)
+		`SELECT id, name, status, created_at, last_seen_at FROM agents WHERE id=?`, id,
+	).Scan(&a.ID, &a.Name, &a.Status, &created, &lastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -103,13 +131,14 @@ func (r *Registry) GetByID(id string) (*Agent, error) {
 		return nil, fmt.Errorf("query agent: %w", err)
 	}
 	a.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	a.LastSeenAt = parseLastSeen(lastSeen)
 	return &a, nil
 }
 
 // List returns all agents, newest first.
 func (r *Registry) List() ([]*Agent, error) {
 	rows, err := r.store.DB().Query(
-		`SELECT id, name, status, created_at FROM agents ORDER BY created_at DESC`)
+		`SELECT id, name, status, created_at, last_seen_at FROM agents ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query agents: %w", err)
 	}
@@ -117,14 +146,24 @@ func (r *Registry) List() ([]*Agent, error) {
 	var out []*Agent
 	for rows.Next() {
 		var (
-			a       Agent
-			created string
+			a        Agent
+			created  string
+			lastSeen sql.NullString
 		)
-		if err := rows.Scan(&a.ID, &a.Name, &a.Status, &created); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.Status, &created, &lastSeen); err != nil {
 			return nil, err
 		}
 		a.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		a.LastSeenAt = parseLastSeen(lastSeen)
 		out = append(out, &a)
 	}
 	return out, rows.Err()
+}
+
+// Delete removes an agent by ID.
+func (r *Registry) Delete(id string) error {
+	if _, err := r.store.DB().Exec(`DELETE FROM agents WHERE id=?`, id); err != nil {
+		return fmt.Errorf("delete agent: %w", err)
+	}
+	return nil
 }

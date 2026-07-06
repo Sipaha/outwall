@@ -462,7 +462,14 @@ func (d *Daemon) hAgentList(w http.ResponseWriter, _ *http.Request) {
 	}
 	out := make([]map[string]string, 0, len(ags))
 	for _, a := range ags {
-		out = append(out, map[string]string{"id": a.ID, "name": a.Name, "status": a.Status})
+		lastSeen := ""
+		if !a.LastSeenAt.IsZero() {
+			lastSeen = a.LastSeenAt.Format(time.RFC3339Nano)
+		}
+		out = append(out, map[string]string{
+			"id": a.ID, "name": a.Name, "status": a.Status,
+			"created_at": a.CreatedAt.Format(time.RFC3339Nano), "last_seen_at": lastSeen,
+		})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

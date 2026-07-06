@@ -121,6 +121,7 @@ func TestServerProfileColumns(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`CREATE TABLE upstreams (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, base_url TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'http', auth_type TEXT NOT NULL, auth_config BLOB, created_at TEXT NOT NULL);
 		CREATE TABLE rules (id TEXT PRIMARY KEY, subject_agent_id TEXT NOT NULL DEFAULT '', upstream_id TEXT NOT NULL, op_method TEXT NOT NULL DEFAULT '', op_path_template TEXT NOT NULL DEFAULT '', op_query_template TEXT NOT NULL DEFAULT '{}', op_body_template TEXT NOT NULL DEFAULT '{}', op_value_policies TEXT NOT NULL DEFAULT '{}', outcome TEXT NOT NULL, rate_limit_per_min INTEGER NOT NULL DEFAULT 0, k8s_namespace TEXT NOT NULL DEFAULT '', k8s_resource TEXT NOT NULL DEFAULT '', k8s_verb TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+		CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, status TEXT NOT NULL, created_at TEXT NOT NULL);
 		PRAGMA user_version = 1;`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
@@ -143,6 +144,32 @@ func TestBrowseRuleColumns(t *testing.T) {
 	_, err = s.DB().Exec(`SELECT browse_methods, browse_path FROM rules LIMIT 0`)
 	require.NoError(t, err)
 	require.Equal(t, len(migrations), userVersion(t, s))
+}
+
+func TestAgentLastSeenColumn(t *testing.T) {
+	// Fresh DB from current schema.
+	s, err := Open(filepath.Join(t.TempDir(), "fresh.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	_, err = s.DB().Exec(`SELECT last_seen_at FROM agents LIMIT 0`)
+	require.NoError(t, err)
+	require.Equal(t, len(migrations), userVersion(t, s))
+
+	// An OLD database (pre-last_seen_at) is upgraded by the migration.
+	p := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", p)
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, status TEXT NOT NULL, created_at TEXT NOT NULL);
+		PRAGMA user_version = 3;`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	s2, err := Open(p)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s2.Close()) })
+	_, err = s2.DB().Exec(`SELECT last_seen_at FROM agents LIMIT 0`)
+	require.NoError(t, err)
+	require.Equal(t, len(migrations), userVersion(t, s2))
 }
 
 func TestSettingsRoundTrip(t *testing.T) {

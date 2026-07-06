@@ -80,6 +80,41 @@ func TestAdminVaultAndUpstreamFlow(t *testing.T) {
 	require.Contains(t, wa.Body.String(), "owa_")
 }
 
+func TestAgentListShape(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	wa := req(t, h, "POST", "/agents/register", `{"name":"claude"}`)
+	require.Equal(t, http.StatusOK, wa.Code)
+	var reg map[string]string
+	require.NoError(t, json.Unmarshal(wa.Body.Bytes(), &reg))
+
+	wl := req(t, h, "GET", "/agents", "")
+	require.Equal(t, http.StatusOK, wl.Code)
+	var list []map[string]string
+	require.NoError(t, json.Unmarshal(wl.Body.Bytes(), &list))
+	require.Len(t, list, 1)
+	a := list[0]
+	require.Equal(t, reg["id"], a["id"])
+	require.Equal(t, "claude", a["name"])
+	require.NotEmpty(t, a["created_at"])
+	_, err := time.Parse(time.RFC3339Nano, a["created_at"])
+	require.NoError(t, err)
+	// Never authenticated yet: last_seen_at is the empty string.
+	require.Equal(t, "", a["last_seen_at"])
+
+	// Authenticating (agent-socket / data-plane path) sets last_seen_at.
+	_, err = d.agents.Authenticate(reg["token"])
+	require.NoError(t, err)
+	wl2 := req(t, h, "GET", "/agents", "")
+	var list2 []map[string]string
+	require.NoError(t, json.Unmarshal(wl2.Body.Bytes(), &list2))
+	require.NotEmpty(t, list2[0]["last_seen_at"])
+	_, err = time.Parse(time.RFC3339Nano, list2[0]["last_seen_at"])
+	require.NoError(t, err)
+}
+
 func TestAdminVaultLock(t *testing.T) {
 	d := newDaemon(t)
 	h := d.AdminHandler()

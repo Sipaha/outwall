@@ -35,6 +35,34 @@ func TestRegisterAndAuthenticate(t *testing.T) {
 	require.ErrorIs(t, err, ErrUnknownToken)
 }
 
+func TestAuthenticateTouchesLastSeen(t *testing.T) {
+	reg := newReg(t)
+
+	a, token, err := reg.Register("claude-code")
+	require.NoError(t, err)
+	require.True(t, a.LastSeenAt.IsZero(), "a freshly registered agent has never authenticated")
+
+	// A never-authenticated agent has a zero LastSeenAt on reload too.
+	got, err := reg.GetByID(a.ID)
+	require.NoError(t, err)
+	require.True(t, got.LastSeenAt.IsZero())
+
+	before := time.Now().UTC()
+	_, err = reg.Authenticate(token)
+	require.NoError(t, err)
+
+	// GetByID and List both reflect the touch.
+	got, err = reg.GetByID(a.ID)
+	require.NoError(t, err)
+	require.False(t, got.LastSeenAt.IsZero())
+	require.True(t, !got.LastSeenAt.Before(before))
+
+	list, err := reg.List()
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	require.False(t, list[0].LastSeenAt.IsZero())
+}
+
 func TestListOrdersNewestFirst(t *testing.T) {
 	reg := newReg(t)
 
