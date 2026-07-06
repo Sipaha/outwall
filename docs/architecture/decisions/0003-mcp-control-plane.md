@@ -1,6 +1,9 @@
 # ADR-0003: MCP control plane (streamable HTTP)
 
-- **Status:** accepted
+- **Status:** superseded by ADR-0040
+- **Superseded by:** [ADR-0040](0040-agent-socket-control-plane.md) — the MCP control plane is
+  replaced by a direct agent socket + CLI with a per-project accountability token; `session = agent`
+  identity is retired.
 - **Date:** 2026-06-17
 
 ## Context

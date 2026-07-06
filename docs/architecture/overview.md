@@ -6,7 +6,7 @@ React UI. It sits between local AI agents and external HTTP APIs.
 ## Two planes
 
 ```
-              control plane (MCP, streamable HTTP, localhost)
+              control plane (agent socket, HTTP/JSON over unix, localhost)
   agent  ───────────────────────────────────────────────►  outwall daemon
    │      "give me api.github.com? (purpose: …)"  ◄──── "yes → /github, token …"
    │
@@ -17,9 +17,10 @@ React UI. It sits between local AI agents and external HTTP APIs.
                                                                           creds injected)
 ```
 
-- **Control plane** — one MCP server. Agents discover what they may call, register
-  dynamically, and receive a bearer token. Tools: `list_upstreams`, `request_access(host,
-  purpose)`, `get_access`, `whoami`.
+- **Control plane** — a plain HTTP/JSON handler on a `0600` unix socket (`agent.sock`), driven by the
+  `outwall` CLI. Agents discover what they may call, self-register (per-project token), and receive a
+  bearer token. Commands: `list-upstreams`, `request-host-access`/`request-access`/`request-preset`,
+  `get-access`, `whoami`, `get-kubeconfig`.
 - **Data plane** — a reverse proxy. The agent sends ordinary HTTP to
   `http://localhost:PORT/<upstream>/<path>` with its bearer token. outwall identifies the
   agent, checks policy (default-deny), injects the upstream's credentials, forwards, audits.
@@ -37,12 +38,13 @@ React UI. It sits between local AI agents and external HTTP APIs.
 | `policy` | default-deny rules (subject×upstream×method×path×rate-limit → allow/deny/approval). |
 | `approval` | blocking approval queue for `require-approval` outcomes. |
 | `proxy` | the data-plane reverse proxy. |
-| `mcp` | the control-plane MCP server. |
+| `agentapi` | the control-plane HTTP/JSON adapter over `mcpsvc.Service`, served on the agent socket. |
+| `agentid` | the CLI's per-project agent-token store (realpath-of-git-top-level keyed, flock mint-once). |
 | `audit` | request/response journal + body store. |
 | `daemon` | wires it all; serves data plane (TCP localhost) + admin API (unix socket). |
 | `desktop` | Wails 3 wrapper supervising the daemon, rendering the embedded UI. |
 
-In Plan 1, `policy`/`approval`/`mcp`/`audit`/`desktop` are not yet built; a flat `grant`
+In Plan 1, `policy`/`approval`/`audit`/`desktop` are not yet built; a flat `grant`
 allow-list stands in for `policy`. See ADR-0001 and the current plan.
 
 ## Key invariants
