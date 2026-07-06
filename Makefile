@@ -2,6 +2,11 @@ BINDIR := dist/bin
 BIN := $(BINDIR)/outwall
 DESKTOP := $(BINDIR)/outwall-desktop
 
+# Where `make install` links the `outwall` CLI so agents can invoke it from any directory.
+# Override: `make install DESTBIN=/usr/local/bin` (or `PREFIX=/usr/local`).
+PREFIX ?= $(HOME)/.local
+DESTBIN ?= $(PREFIX)/bin
+
 GO_LDFLAGS := -X github.com/Sipaha/outwall/internal/version.version=$(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.0-dev)
 
 # Build tag(s) for the desktop (Wails + GTK/WebKit, CGO) target. The `desktop`
@@ -10,7 +15,7 @@ GO_LDFLAGS := -X github.com/Sipaha/outwall/internal/version.version=$(shell git 
 DESKTOP_TAGS ?= desktop
 
 .PHONY: build build-fast build-web build-desktop build-desktop-fast run run-server test fmt vet tidy \
-        check lint lint-go lint-web test-web fmt-check web-deps
+        check lint lint-go lint-web test-web fmt-check web-deps install uninstall
 
 # Full build: rebuild the web UI first (its output lands in internal/daemon/webdist,
 # which the Go binary embeds via //go:embed), then compile the binary.
@@ -92,3 +97,20 @@ lint-web: web-deps
 # test-web runs the vitest unit suite for the SPA.
 test-web: web-deps
 	pnpm -C web exec vitest run
+
+# ---- Install the CLI on PATH ----------------------------------------------
+# `make install` builds the server+CLI binary and symlinks it into DESTBIN so agents can run
+# `outwall <cmd>` (list-upstreams, request-preset, whoami, get-access, …) from any directory — the
+# direct, MCP-free control plane. The symlink tracks dist/bin/outwall, so a later `make build`
+# refreshes it automatically (no re-install). Depends on build-fast (the CLI subcommands don't need
+# the embedded web UI; run `make build` first if you also want the installed `outwall serve` UI).
+install: build-fast
+	@mkdir -p $(DESTBIN)
+	ln -sf $(abspath $(BIN)) $(DESTBIN)/outwall
+	@echo "linked $(DESTBIN)/outwall -> $(abspath $(BIN))"
+	@case ":$$PATH:" in *":$(DESTBIN):"*) echo "$(DESTBIN) is on PATH — try: outwall whoami" ;; \
+	  *) echo "NOTE: $(DESTBIN) is NOT on PATH. Add it, e.g.: echo 'export PATH=\"$(DESTBIN):\$$PATH\"' >> ~/.profile" ;; esac
+
+uninstall:
+	rm -f $(DESTBIN)/outwall
+	@echo "removed $(DESTBIN)/outwall"

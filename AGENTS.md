@@ -35,6 +35,7 @@ stays citeck-free.
 make run        # rebuild web + desktop and launch the Wails app (picks up all code changes)
 make run-server # rebuild web + server and run the daemon (UI at http://127.0.0.1:8182/)
 make build      # CGO_ENABLED=0 go build → dist/bin/outwall (server+CLI, web bundle embedded)
+make install    # symlink the outwall CLI onto PATH (DESTBIN, default ~/.local/bin) so agents can run it
 make build-desktop  # CGO+GTK Wails app → dist/bin/outwall-desktop (web bundle embedded)
 make test       # go test ./...
 make fmt        # gofmt -w .
