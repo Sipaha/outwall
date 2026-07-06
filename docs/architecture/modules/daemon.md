@@ -1,30 +1,42 @@
 # module: internal/daemon
 
-Wires the store, vault, registries, data-plane proxy, and MCP control plane together, and
-serves four listeners: the data plane (TCP localhost), the MCP control plane (a separate TCP
-localhost listener), a JSON admin API over a `0600` unix socket, and the desktop-UI control
-API + SSE over a loopback TCP bind (`UIListen`, default `127.0.0.1:8182`). The only package
-that composes the others. The MCP handler (`internal/mcp`) is built in `New` from
-`mcpsvc.New(...)` and is passed the vault's `Locked` probe so the control-plane tools answer
-clearly when locked.
+Wires the store, vault, registries, data-plane proxy, and agent-plane adapter together, and
+serves four listeners: the data plane (TCP localhost), the agent plane (`internal/agentapi`
+over a `0600` unix socket, `agent.sock`), a JSON admin API over a separate `0600` unix socket,
+and the desktop-UI control API + SSE over a loopback TCP bind (`UIListen`, default
+`127.0.0.1:8182`). The only package that composes the others. The MCP control plane (ADR-0003,
+`internal/mcp`, TCP `:8181`) is gone (ADR-0040); the agent-plane handler is built in `New` from
+`agentapi.NewHandler(agentapi.Deps{Svc: mcpsvc.New(...), Agents: ag, Locked: v.Locked})` so the
+agent-facing routes answer clearly when the vault is locked.
 
 `New` builds an `events.Bus` and injects it (nil-safe `SetPublisher`) into the approval queue,
-the audit recorder, and the MCP service, and holds it on the daemon. The admin handlers publish
+the audit recorder, and the `mcpsvc.Service`, and holds it on the daemon. The admin handlers publish
 domain events on success — `agent.registered`, `upstream.created`, `rule.created`,
 `vault.unlocked` — which (together with `approval.*`, `audit.recorded`, `access.requested`) the
 SSE endpoint fans out. See ADR-0005 and `events.md`.
 
 ## Transports
 
-- **Unix socket** (`AdminHandler`) — CSRF-free, for the local CLI. Serves `apiMux()` at root.
+- **Admin unix socket** (`AdminHandler`) — for the local CLI. Serves `apiMux()` at root.
+- **Agent unix socket** (`agentPlane`, `agent.sock`) — serves `agentapi.NewHandler(...)` at root;
+  bearer-token auth, no session cache (see `agentapi.md`).
 - **UIListen TCP** (`UIHandler`) — serves the embedded web UI plus the control API:
-  `/api/**` → `StripPrefix("/api")` → `csrfMiddleware` → `apiMux()` (the shared admin routes +
-  `GET /events`); `/**` → the embedded SPA (`staticUI`, see `webui.md` + ADR-0006). Any `/api`
-  request lacking a non-empty `X-Outwall-CSRF` header → 403, **except `GET /api/events`** (SSE),
-  which is exempt because `EventSource` cannot set headers (read-only, same-origin, loopback —
-  ADR-0006). Static assets are not CSRF-gated. The route table is registered once (`apiMux`) and
-  shared by both transports. The CSRF gate is a CSRF-not-auth boundary; loopback bind +
-  single-tenant host is the trust model (ADR-0005).
+  `/api/**` → `StripPrefix("/api")` → `apiMux()` (the shared admin routes + `GET /events`);
+  `/**` → the embedded SPA (`staticUI`, see `webui.md` + ADR-0006); `/oauth/callback` top-level
+  (see OIDC below). The route table (`apiMux`) is registered once and shared by both the admin
+  unix socket and the UI TCP bind.
+
+**Operator-session gate, not CSRF (ADR-0041).** `apiMux` splits routes into an **ungated** group
+— read-only GETs, `GET /events` (SSE), `POST /presets/preview` (dry-run), `POST
+/desktop/focus`, `POST /vault/init` (the bootstrap that establishes the master password), and
+`POST/GET /operator/session/{open,lock,status}` (the master-password entry point itself) — and
+an **operator-gated** group wrapping every privileged mutation (`vault unlock/lock`, upstream/
+rule/agent create-or-delete, cluster import, approval/access-request resolve, audit prune,
+retention set) in `operatorGate`. `operatorGate` checks `d.opsession.Authorized()`
+(`internal/opsession`, idle-TTL sliding window) and answers 403
+`{"error":"operator session required"}` when the session isn't open — on **both** transports, so
+a same-user process can no longer self-approve or self-grant just by holding the unix socket.
+This replaced the ADR-0005 static `X-Outwall-CSRF` header model, which is retired.
 
 The endpoint paths below are written without the `/api` prefix the UI transport adds; the unix
 socket serves them at root, the UI transport under `/api`.
@@ -59,7 +71,7 @@ written back. (The same handler is also still mounted at `/oauth/callback` on th
 custom RedirectURL.)
 
 **Headless / server mode.** `outwall serve` (or `make run-server`) runs the full daemon — data
-plane (HTTPS), MCP control plane, UI control-API+SSE listener, and the unix admin socket — with **no
+plane (HTTPS), agent socket, UI control-API+SSE listener, and the unix admin socket — with **no
 GUI**. The desktop Wails wrapper (`cmd/outwall-desktop`) is optional: it runs the same daemon
 in-process and renders the embedded UI, and is the only piece that needs CGO/GTK. In headless mode
 `Config.OnFocusRequest` is nil, so `POST /desktop/focus` simply has no window to raise. Unlock the
@@ -71,12 +83,13 @@ store and passes it to the proxy (see `audit.md`, ADR-0004).
 
 ## Public API
 
-- `DefaultMCPListen = "127.0.0.1:8181"`; `DefaultUIListen = "127.0.0.1:8182"`; `DefaultCallbackListen = "127.0.0.1:23312"`.
-- `Config struct { DBPath, SocketPath, Listen, MCPListen, UIListen, CallbackListen, CADir string; PruneInterval time.Duration; OnFocusRequest func(); OpenURL func(string) error }` (`MCPListen`/`UIListen`/`CallbackListen` default to their `Default*` consts; `PruneInterval` 0 → `DefaultPruneInterval`, negative disables).
+- `DefaultListen = "127.0.0.1:8080"`; `DefaultUIListen = "127.0.0.1:8182"`; `DefaultCallbackListen = "127.0.0.1:23312"`; `DefaultBrowseDomain = "outwall.localhost"`.
+- `Config struct { DBPath, SocketPath, Listen, UIListen, AgentSocketPath, CallbackListen, CADir, BrowseDomain string; PruneInterval time.Duration; OnFocusRequest func(); OpenURL func(string) error }` (`UIListen`/`CallbackListen`/`BrowseDomain` default to their `Default*` consts; `AgentSocketPath` empty ⇒ `<dir(DBPath)>/agent.sock`; `PruneInterval` 0 → `DefaultPruneInterval`, negative disables).
 - `DefaultPruneInterval = time.Hour`.
-- `New(cfg Config) (*Daemon, error)` — opens the store, builds vault + registries + proxy + MCP handler + event bus (no listeners).
-- `(*Daemon).AdminHandler() http.Handler` — the CSRF-free `apiMux` at root (unix socket).
-- `(*Daemon).UIHandler() http.Handler` — embedded SPA at `/` + `apiMux` under `/api` (CSRF-gated,
-  except `GET /api/events`), for the UIListen TCP bind. See `webui.md`, ADR-0006.
-- `(*Daemon).Serve(ctx context.Context) error` — runs all four listeners until ctx is canceled.
+- `New(cfg Config) (*Daemon, error)` — opens the store, builds vault + registries + proxy + agent-plane handler + event bus (no listeners).
+- `(*Daemon).AdminHandler() http.Handler` — the `apiMux` at root (unix socket).
+- `(*Daemon).UIHandler() http.Handler` — embedded SPA at `/` + `apiMux` under `/api` (privileged
+  routes operator-session-gated, see ADR-0041), for the UIListen TCP bind. See `webui.md`, ADR-0006.
+- `(*Daemon).Serve(ctx context.Context) error` — runs the data-plane, agent-socket, admin-socket,
+  and UIListen listeners until ctx is canceled.
 - `(*Daemon).Close() error`.

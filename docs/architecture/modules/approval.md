@@ -15,10 +15,11 @@ mutating-verb approval (see `proxy.md` / ADR-0009). The `approval.enqueued` even
 tuple + a **masked** `request_body` preview (`audit.MaskBody`) — never the injected cluster
 credential.
 
-**H2 (MCP control-plane approvals).** A `Pending` carries a `Kind` discriminator: `KindHostAccess`
-and `KindOperation` are the MCP host/operation cards (`mcpsvc` enqueues them from a background
-goroutine — non-blocking); an **empty** `Kind` is the pre-H2 data-plane new-value / k8s approval,
-resolved by the queue alone. MCP approvals add `Host` and, for `KindOperation`, the operation
+**H2 (agent-plane approvals).** A `Pending` carries a `Kind` discriminator: `KindHostAccess`
+and `KindOperation` are the agent-requested host/operation cards (`mcpsvc` enqueues them from a
+background goroutine — non-blocking, requested via `internal/agentapi`, formerly the MCP control
+plane's `request_host_access`/`request_access` tools; ADR-0040); an **empty** `Kind` is the
+pre-H2 data-plane new-value / k8s approval, resolved by the queue alone. These approvals add `Host` and, for `KindOperation`, the operation
 shape (`OpMethod`/`OpPathTemplate`/`OpQueryTemplate`), the declared `OpVariables` (`Variable{Name,
 Type}`), and the requested `OpValues`. The daemon resolve path uses `Get(id)` to inspect a pending
 and run its side effects (host credential attach / rule create-extend) **before** unparking the
