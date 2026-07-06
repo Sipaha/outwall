@@ -145,6 +145,34 @@ func TestBrowseRuleRoundTrip(t *testing.T) {
 	require.Equal(t, "/**", got[0].BrowsePath)
 }
 
+func TestDeleteBySubjectAndSubjectUpstream(t *testing.T) {
+	reg := newReg(t)
+
+	_, err := reg.Create(Rule{SubjectAgentID: "a1", UpstreamID: "u1", Outcome: Allow, BrowseMethods: "GET", BrowsePath: "/**"})
+	require.NoError(t, err)
+	_, err = reg.Create(Rule{SubjectAgentID: "a1", UpstreamID: "u2", Outcome: Allow, BrowseMethods: "GET", BrowsePath: "/**"})
+	require.NoError(t, err)
+	_, err = reg.Create(Rule{SubjectAgentID: "a2", UpstreamID: "u1", Outcome: Allow, BrowseMethods: "GET", BrowsePath: "/**"})
+	require.NoError(t, err)
+
+	// DeleteBySubjectUpstream removes only the (a1, u1) rule.
+	n, err := reg.DeleteBySubjectUpstream("a1", "u1")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n)
+	remaining, err := reg.List()
+	require.NoError(t, err)
+	require.Len(t, remaining, 2)
+
+	// DeleteBySubject removes every rule for a1 (just the u2 one left).
+	n, err = reg.DeleteBySubject("a1")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n)
+	remaining, err = reg.List()
+	require.NoError(t, err)
+	require.Len(t, remaining, 1)
+	require.Equal(t, "a2", remaining[0].SubjectAgentID)
+}
+
 func TestListOrdersNewestFirst(t *testing.T) {
 	reg := newReg(t)
 

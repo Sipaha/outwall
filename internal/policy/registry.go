@@ -232,6 +232,35 @@ func (r *Registry) Delete(id string) error {
 	return nil
 }
 
+// DeleteBySubject removes every rule granted to the given agent (the cascade an agent delete
+// performs so no orphaned grant survives the agent). Returns the number of rules removed.
+func (r *Registry) DeleteBySubject(agentID string) (int64, error) {
+	res, err := r.store.DB().Exec(`DELETE FROM rules WHERE subject_agent_id=?`, agentID)
+	if err != nil {
+		return 0, fmt.Errorf("delete rules by subject: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("rows affected: %w", err)
+	}
+	return n, nil
+}
+
+// DeleteBySubjectUpstream removes every rule granted to the given agent on the given upstream (used
+// by an access-request revoke to remove just that grant). Returns the number of rules removed.
+func (r *Registry) DeleteBySubjectUpstream(agentID, upstreamID string) (int64, error) {
+	res, err := r.store.DB().Exec(
+		`DELETE FROM rules WHERE subject_agent_id=? AND upstream_id=?`, agentID, upstreamID)
+	if err != nil {
+		return 0, fmt.Errorf("delete rules by subject+upstream: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("rows affected: %w", err)
+	}
+	return n, nil
+}
+
 func (r *Registry) scanRows(query string, args ...any) (out []*Rule, err error) {
 	rows, err := r.store.DB().Query(query, args...)
 	if err != nil {

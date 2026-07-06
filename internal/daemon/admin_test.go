@@ -115,6 +115,39 @@ func TestAgentListShape(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestAgentDeleteCascadesRulesAndIsGated(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	wa := req(t, h, "POST", "/agents/register", `{"name":"claude"}`)
+	require.Equal(t, http.StatusOK, wa.Code)
+	var reg map[string]string
+	require.NoError(t, json.Unmarshal(wa.Body.Bytes(), &reg))
+	agentID := reg["id"]
+
+	wr := req(t, h, "POST", "/rules",
+		`{"subject_agent_id":"`+agentID+`","upstream_id":"u1","outcome":"allow","browse_methods":"GET","browse_path":"/**"}`)
+	require.Equal(t, http.StatusOK, wr.Code, wr.Body.String())
+
+	// Gated: closing the operator session makes the delete 403.
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/operator/session/lock", "").Code)
+	require.Equal(t, http.StatusForbidden, req(t, h, "DELETE", "/agents/"+agentID, "").Code)
+
+	// Re-open and delete: the agent and its rule are both gone.
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/operator/session/open", `{"password":"pw"}`).Code)
+	wd := req(t, h, "DELETE", "/agents/"+agentID, "")
+	require.Equal(t, http.StatusOK, wd.Code, wd.Body.String())
+
+	var agents []map[string]string
+	require.NoError(t, json.Unmarshal(req(t, h, "GET", "/agents", "").Body.Bytes(), &agents))
+	require.Empty(t, agents)
+
+	var rules []map[string]any
+	require.NoError(t, json.Unmarshal(req(t, h, "GET", "/rules", "").Body.Bytes(), &rules))
+	require.Empty(t, rules)
+}
+
 func TestAdminVaultLock(t *testing.T) {
 	d := newDaemon(t)
 	h := d.AdminHandler()

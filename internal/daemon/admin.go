@@ -73,6 +73,7 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	gate("POST /upstreams/{name}/oauth/login", d.hOAuthLogin)
 	gate("POST /oidc/discover", d.hOIDCDiscover)
 	gate("POST /agents/register", d.hAgentRegister)
+	gate("DELETE /agents/{id}", d.hAgentDelete)
 	gate("POST /clusters/import", d.hClustersImport)
 	gate("POST /kubeconfig", d.hKubeconfig)
 	gate("POST /rules", d.hRuleCreate)
@@ -472,6 +473,23 @@ func (d *Daemon) hAgentList(w http.ResponseWriter, _ *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// hAgentDelete removes an agent and cascades: every policy rule granted to it is deleted first, so
+// no orphaned grant survives (a stale rule referencing a gone agent id would be inert but
+// confusing in the Rules list). Gated (operator session required) — see apiMux.
+func (d *Daemon) hAgentDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := d.policy.DeleteBySubject(id); err != nil {
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := d.agents.Delete(id); err != nil {
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	d.publish("agent.deleted", map[string]any{"id": id})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (d *Daemon) hRuleCreate(w http.ResponseWriter, r *http.Request) {
