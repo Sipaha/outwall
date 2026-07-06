@@ -14,9 +14,9 @@ import (
 
 type globalFlags struct {
 	socket         string
+	agentSocket    string
 	db             string
 	listen         string
-	mcpListen      string
 	uiListen       string
 	callbackListen string
 	browseDomain   string
@@ -40,7 +40,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&gf.socket, "socket", filepath.Join(dir, "outwall.sock"), "admin unix socket path")
 	root.PersistentFlags().StringVar(&gf.db, "db", filepath.Join(dir, "outwall.db"), "database path")
 	root.PersistentFlags().StringVar(&gf.listen, "listen", "127.0.0.1:8080", "data-plane listen address")
-	root.PersistentFlags().StringVar(&gf.mcpListen, "mcp-listen", "127.0.0.1:8181", "MCP control-plane listen address")
+	root.PersistentFlags().StringVar(&gf.agentSocket, "agent-socket", filepath.Join(dir, "agent.sock"), "agent-plane unix socket path")
 	root.PersistentFlags().StringVar(&gf.uiListen, "ui-listen", "127.0.0.1:8182", "desktop-UI control API + SSE listen address")
 	root.PersistentFlags().StringVar(&gf.callbackListen, "callback-listen", daemon.DefaultCallbackListen, "OIDC browser-login callback listen address (its /callback is the IdP redirect URI)")
 	root.PersistentFlags().StringVar(&gf.browseDomain, "browse-domain", daemon.DefaultBrowseDomain, "base domain for per-upstream browser origins")
@@ -56,6 +56,14 @@ func NewRootCmd() *cobra.Command {
 		newApprovalCmd(gf),
 		newAccessCmd(gf),
 		newAuditCmd(gf),
+		newListUpstreamsCmd(gf),
+		newWhoamiCmd(gf),
+		newRequestHostAccessCmd(gf),
+		newRequestAccessCmd(gf),
+		newRequestPresetCmd(gf),
+		newRequestK8sAccessCmd(gf),
+		newGetAccessCmd(gf),
+		newGetKubeconfigCmd(gf),
 	)
 	return root
 }
