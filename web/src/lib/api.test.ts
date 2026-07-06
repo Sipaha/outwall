@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, vaultUnlock, listAgents, openOperatorSession, setSessionRequiredHandler } from './api'
+import {
+  ApiError,
+  vaultUnlock,
+  listAgents,
+  deleteAgent,
+  revokeAccessRequest,
+  openOperatorSession,
+  setSessionRequiredHandler,
+} from './api'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -77,6 +85,42 @@ describe('api client', () => {
     expect(agents[0].name).toBe('claude')
     const [url, opts] = fetchMock.mock.calls[0]
     expect(url).toBe('/api/agents')
+    expect(opts.headers['X-Outwall-CSRF']).toBeUndefined()
+  })
+
+  it('deleteAgent issues DELETE /api/agents/{id} with NO CSRF header', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await deleteAgent('a1')
+    expect(res).toEqual({ ok: true })
+
+    const [url, opts] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/agents/a1')
+    expect(opts.method).toBe('DELETE')
+    expect(opts.headers['X-Outwall-CSRF']).toBeUndefined()
+  })
+
+  it('revokeAccessRequest posts to /api/access-requests/{id}/revoke with NO CSRF header', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await revokeAccessRequest('ar1')
+    expect(res).toEqual({ ok: true })
+
+    const [url, opts] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/access-requests/ar1/revoke')
+    expect(opts.method).toBe('POST')
     expect(opts.headers['X-Outwall-CSRF']).toBeUndefined()
   })
 

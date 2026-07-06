@@ -12,6 +12,8 @@ export interface Agent {
   id: string
   name: string
   status: string // "new" (agent.StatusNew) by default — default-deny
+  created_at: string // RFC3339Nano
+  last_seen_at: string // RFC3339Nano, or "" if the agent has never authenticated
 }
 
 /** Upstream auth config (secrets omitted on list responses; used on create). */

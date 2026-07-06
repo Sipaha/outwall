@@ -143,6 +143,11 @@ export function listAgents(): Promise<Agent[]> {
   return request('GET', '/agents')
 }
 
+/** Delete an agent (privileged) — cascades to remove its policy rules server-side. */
+export function deleteAgent(id: string): Promise<{ ok: boolean }> {
+  return request('DELETE', `/agents/${encodeURIComponent(id)}`)
+}
+
 // --- Upstreams ---
 
 export function listUpstreams(): Promise<Upstream[]> {
@@ -309,6 +314,11 @@ export function listAccessRequests(): Promise<AccessRequest[]> {
 
 export function resolveAccessRequest(id: string, status: string): Promise<{ ok: boolean }> {
   return request('POST', `/access-requests/${encodeURIComponent(id)}/resolve`, { status })
+}
+
+/** Revoke a granted access request (privileged) — removes the rules it created for the upstream. */
+export function revokeAccessRequest(id: string): Promise<{ ok: boolean }> {
+  return request('POST', `/access-requests/${encodeURIComponent(id)}/revoke`)
 }
 
 // --- Audit ---
