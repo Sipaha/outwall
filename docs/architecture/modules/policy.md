@@ -68,7 +68,9 @@ simply never matches a real request.
 - `(*Registry).Create(in Rule) (*Rule, error)` — assigns ID + CreatedAt; validates outcome and `RateLimitPerMin >= 0`; marshals `OpQueryTemplate`/`OpValuePolicies` to JSON columns.
 - `(*Registry).AddAllowedValue(ruleID, varName, value string) error` — extends a text variable's allowed-set (idempotent on a present value).
 - `(*Registry).SetVariableAny(ruleID, varName string) error` — flips a text variable to mode `any`, dropping its set (idempotent).
-- `(*Registry).List() ([]*Rule, error)`, `(*Registry).Delete(id string) error`, `(*Registry).ForUpstream(upstreamID string) ([]*Rule, error)`.
+- `(*Registry).List() ([]*Rule, error)` — newest first (`ORDER BY created_at DESC`), `(*Registry).Delete(id string) error`, `(*Registry).ForUpstream(upstreamID string) ([]*Rule, error)`.
+- `(*Registry).DeleteBySubject(agentID string) (int64, error)` — removes every rule granted to an agent (rows deleted); the cascade an agent delete performs (`internal/daemon.hAgentDelete`).
+- `(*Registry).DeleteBySubjectUpstream(agentID, upstreamID string) (int64, error)` — removes just the rules for one (agent, upstream) pair; used by an access-request revoke (`internal/daemon.hAccessRequestRevoke`).
 - `Input struct { AgentID, UpstreamID, Method, Path string; Query url.Values; Body []byte; Kind, Namespace, Resource, Subresource, Verb string }` (HTTP: set `Method`/`Path`/`Query`, and `Body` for body-variable gating; k8s: set `Kind="k8s"` + the tuple).
 - `VarValue struct { Var, Value string }`, `Decision struct { Outcome string; Rule *Rule; Vars map[string]string; NewValues []VarValue }`.
 - `(*Registry).Decide(in Input) (Decision, error)` — `Outcome=Deny, Rule=nil` on default-deny.

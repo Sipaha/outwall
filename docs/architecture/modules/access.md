@@ -9,15 +9,23 @@ MCP `request_access` tool and resolved from the admin API/CLI. Records live in t
 `Resolve` validates the target status before touching the row, so an invalid status is rejected
 regardless of whether the id exists; a missing id returns `ErrNotFound`.
 
+**Revoke.** `MarkRevoked` sets status `revoked` (a status `Resolve` cannot produce — it is only
+reached via the daemon's explicit revoke path, `internal/daemon.hAccessRequestRevoke`), distinct
+from `denied` (never granted) and `dismissed` (an operator no-op on a still-pending card). The
+revoke handler pairs it with `policy.Registry.DeleteBySubjectUpstream` to actually remove the
+granted rules — this registry only tracks the intent/history row.
+
 ## Public API
 
 - `ErrNotFound`.
-- Status consts: `StatusPending = "pending"`, `StatusGranted = "granted"`, `StatusDenied = "denied"`, `StatusDismissed = "dismissed"`.
+- Status consts: `StatusPending = "pending"`, `StatusGranted = "granted"`, `StatusDenied = "denied"`, `StatusDismissed = "dismissed"`, `StatusRevoked = "revoked"`.
 - `Request struct { ID, AgentID, UpstreamID, Purpose, Status, Reason string; CreatedAt time.Time; ResolvedAt string }` (`Reason` = operator deny reason, ADR-0024).
 - `NewRegistry(s *store.Store) *Registry`.
 - `(*Registry).Create(agentID, upstreamID, purpose string) (*Request, error)` — logs a new intent with status `pending`.
+- `(*Registry).GetByID(id string) (*Request, error)` — `ErrNotFound` if absent.
 - `(*Registry).List() ([]*Request, error)` — newest first.
 - `(*Registry).Pending() ([]*Request, error)` — status `pending`, newest first.
 - `(*Registry).Resolve(id, status string) error` — records the decision (`granted`/`denied`/`dismissed`) + `resolved_at=now`; validates status; `ErrNotFound` if absent.
+- `(*Registry).MarkRevoked(id string) error` — sets status `revoked` + `resolved_at=now`; `ErrNotFound` if absent.
 - `(*Registry).DenyLatest(agentID, upstreamID, reason string) (bool, error)` — marks the latest *pending* request for the pair denied + reason; reports whether a row matched (ADR-0024).
 - `(*Registry).Latest(agentID, upstreamID string) (*Request, bool, error)` — the most recent request for the pair; `get_access` consults it to surface a denial + reason.

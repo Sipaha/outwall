@@ -14,6 +14,8 @@ req_bytes, resp_bytes, decision, rule_id, headers_json, error`, indexed by `ts`)
 `audit_bodies` (`log_id, kind, content_type, size, sha256, truncated, stored`, keyed by
 `(log_id, kind)`) — bodies live in their own table so the journal lists without reading blobs.
 A `settings(key, value)` KV table backs operator settings (e.g. audit retention — ADR-0018).
+`agents` also carries a nullable `last_seen_at` (added by the `agent_last_seen` migration step),
+best-effort touched by `agent.Registry.Authenticate` on every resolved token.
 
 **Migrations (ADR-0027, on the ADR-0023 runner).** `schema` is always the **current** shape, and
 `migrations` is a forward-only list of run-once upgrade steps (version = 1-based position; step 1 is

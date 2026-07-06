@@ -31,8 +31,8 @@ SSE endpoint fans out. See ADR-0005 and `events.md`.
 /desktop/focus`, `POST /vault/init` (the bootstrap that establishes the master password), and
 `POST/GET /operator/session/{open,lock,status}` (the master-password entry point itself) — and
 an **operator-gated** group wrapping every privileged mutation (`vault unlock/lock`, upstream/
-rule/agent create-or-delete, cluster import, approval/access-request resolve, audit prune,
-retention set) in `operatorGate`. `operatorGate` checks `d.opsession.Authorized()`
+rule/agent create-or-delete, cluster import, approval/access-request resolve-or-revoke, audit
+prune, retention set) in `operatorGate`. `operatorGate` checks `d.opsession.Authorized()`
 (`internal/opsession`, idle-TTL sliding window) and answers 403
 `{"error":"operator session required"}` when the session isn't open — on **both** transports, so
 a same-user process can no longer self-approve or self-grant just by holding the unix socket.
@@ -43,9 +43,15 @@ socket serves them at root, the UI transport under `/api`.
 
 Admin endpoints: `POST /vault/init`, `POST /vault/unlock`, `GET /vault/status`,
 `POST /upstreams`, `GET /upstreams` (secrets omitted), `POST /agents/register`,
-`GET /agents`, `POST /rules`, `GET /rules`, `DELETE /rules/{id}`, `GET /approvals`,
-`POST /approvals/{id}/resolve`, `GET /access-requests` (joined with agent + upstream names),
+`GET /agents` (newest first; each row has `created_at`/`last_seen_at` RFC3339Nano strings,
+`last_seen_at` `""` if the agent never authenticated), `DELETE /agents/{id}` (cascades:
+deletes the agent's policy rules first, then the agent; publishes `agent.deleted`),
+`POST /rules`, `GET /rules` (newest first), `DELETE /rules/{id}`, `GET /approvals`,
+`POST /approvals/{id}/resolve`, `GET /access-requests` (joined with agent + upstream names;
+newest first; `resolved_at` RFC3339Nano or `""` if unresolved),
 `POST /access-requests/{id}/resolve` (`{status}` ∈ granted/denied/dismissed; 404 if absent),
+`POST /access-requests/{id}/revoke` (removes the granted policy rules for that
+agent+upstream, then marks the request `revoked`; publishes `access.revoked`; 404 if absent),
 `GET /audit?limit=N` (journal, newest first, no bodies), `GET /audit/{id}` (entry + masked
 headers + bodies; stored text bodies decoded to a `body` string, non-text → metadata only;
 404 if absent), `POST /audit/prune {older_than_rfc3339}` → `{deleted:N}`,
