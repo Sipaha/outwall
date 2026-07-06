@@ -24,6 +24,7 @@ import (
 	"github.com/Sipaha/outwall/internal/events"
 	"github.com/Sipaha/outwall/internal/k8s"
 	"github.com/Sipaha/outwall/internal/mcpsvc"
+	"github.com/Sipaha/outwall/internal/opsession"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/proxy"
 	"github.com/Sipaha/outwall/internal/secret"
@@ -104,6 +105,7 @@ type Daemon struct {
 	importer    *k8s.Importer
 	authManager *authn.Manager
 	oauthLogins *oauthLogins
+	opsession   *opsession.Session
 	callback    *callbackServer // on-demand OIDC callback listener (up only during a login)
 	dataPlane   http.Handler
 	agentPlane  http.Handler
@@ -168,6 +170,7 @@ func New(cfg Config) (*Daemon, error) {
 		importer:    &k8s.Importer{Reg: up, Log: slog.Default()},
 		authManager: authMgr,
 		oauthLogins: newOAuthLogins(),
+		opsession:   opsession.New(opsession.DefaultTTL),
 		dataPlane: proxy.New(proxy.Deps{
 			Agents: ag, Upstreams: up, Policy: pol, Limiter: policy.NewLimiter(),
 			Approvals: appr, AuthManager: authMgr, Vault: v, Audit: aud,

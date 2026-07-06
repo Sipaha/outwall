@@ -930,3 +930,33 @@ func TestPresetPreview(t *testing.T) {
 	require.Contains(t, out, "GET,HEAD") // browse rule summarized
 	require.Contains(t, out, "*")        // citeck read rule with wildcard workspace
 }
+
+func TestOperatorSessionControlRoutes(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+
+	// Fresh vault (uninitialized): opening a session → 400 "vault not initialized".
+	require.Equal(t, http.StatusBadRequest, req(t, h, "POST", "/operator/session/open", `{"password":"pw"}`).Code)
+
+	// Init (ungated bootstrap) sets the master password AND opens the session.
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+	ws := req(t, h, "GET", "/operator/session/status", "")
+	require.Equal(t, http.StatusOK, ws.Code)
+	require.Contains(t, ws.Body.String(), `"open":true`)
+
+	// Lock closes it.
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/operator/session/lock", "").Code)
+	require.Contains(t, req(t, h, "GET", "/operator/session/status", "").Body.String(), `"open":false`)
+
+	// Wrong password → 401 and it stays closed.
+	require.Equal(t, http.StatusUnauthorized, req(t, h, "POST", "/operator/session/open", `{"password":"no"}`).Code)
+	require.Contains(t, req(t, h, "GET", "/operator/session/status", "").Body.String(), `"open":false`)
+
+	// Correct password → 200, open, with a positive idle_remaining_seconds.
+	wo := req(t, h, "POST", "/operator/session/open", `{"password":"pw"}`)
+	require.Equal(t, http.StatusOK, wo.Code)
+	var st map[string]any
+	require.NoError(t, json.Unmarshal(wo.Body.Bytes(), &st))
+	require.Equal(t, true, st["open"])
+	require.Greater(t, st["idle_remaining_seconds"].(float64), float64(0))
+}

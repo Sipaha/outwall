@@ -34,6 +34,9 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	mux.HandleFunc("POST /vault/unlock", d.hVaultUnlock)
 	mux.HandleFunc("POST /vault/lock", d.hVaultLock)
 	mux.HandleFunc("GET /vault/status", d.hVaultStatus)
+	mux.HandleFunc("POST /operator/session/open", d.hOperatorSessionOpen)
+	mux.HandleFunc("POST /operator/session/lock", d.hOperatorSessionLock)
+	mux.HandleFunc("GET /operator/session/status", d.hOperatorSessionStatus)
 	mux.HandleFunc("POST /upstreams", d.hUpstreamCreate)
 	mux.HandleFunc("GET /upstreams", d.hUpstreamList)
 	mux.HandleFunc("DELETE /upstreams/{name}", d.hUpstreamDelete)
@@ -140,6 +143,10 @@ func (d *Daemon) hVaultInit(w http.ResponseWriter, r *http.Request) {
 		adminErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Init is the bootstrap that ESTABLISHES the master password, so it cannot itself sit behind
+	// the operator-session gate (there is no password yet). The operator just set the password and
+	// is present, so open their session here — subsequent gated calls need no immediate re-prompt.
+	d.opsession.Open()
 	// Init leaves the vault unlocked. First run is exactly when there is nothing yet, so this is
 	// the ONE place we auto-import the host's kubeconfig clusters (now that the vault can encrypt
 	// their auth) — seeding an empty vault. A failure must NEVER fail the init (logged only).
@@ -184,6 +191,45 @@ func (d *Daemon) hVaultStatus(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"initialized": init, "locked": d.vault.Locked()})
+}
+
+// hOperatorSessionOpen verifies the master password (WITHOUT unlocking the vault — the data plane is
+// unaffected) and opens the operator session. This route is UNGATED: it IS the master-password entry
+// point that authorizes the gated routes. Wrong password → 401; no vault yet → 400.
+func (d *Daemon) hOperatorSessionOpen(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Password string `json:"password"`
+	}
+	if err := decode(r, &body); err != nil {
+		adminErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	switch err := d.vault.Verify(body.Password); {
+	case err == nil:
+		d.opsession.Open()
+		open, idle := d.opsession.Status()
+		writeJSON(w, http.StatusOK, map[string]any{"open": open, "idle_remaining_seconds": int(idle.Seconds())})
+	case errors.Is(err, secret.ErrBadPassword):
+		adminErr(w, http.StatusUnauthorized, "incorrect master password")
+	case errors.Is(err, secret.ErrNotInitialized):
+		adminErr(w, http.StatusBadRequest, "vault not initialized")
+	default:
+		adminErr(w, http.StatusInternalServerError, err.Error())
+	}
+}
+
+// hOperatorSessionLock closes the operator session ("Lock now"). It does NOT lock the vault — the
+// data plane keeps serving; only privileged operator mutations become unavailable until the next open.
+func (d *Daemon) hOperatorSessionLock(w http.ResponseWriter, _ *http.Request) {
+	d.opsession.Lock()
+	writeJSON(w, http.StatusOK, map[string]bool{"open": false})
+}
+
+// hOperatorSessionStatus reports whether the operator session is open and the idle time remaining.
+// Read-only peek — it does not slide the idle window.
+func (d *Daemon) hOperatorSessionStatus(w http.ResponseWriter, _ *http.Request) {
+	open, idle := d.opsession.Status()
+	writeJSON(w, http.StatusOK, map[string]any{"open": open, "idle_remaining_seconds": int(idle.Seconds())})
 }
 
 func (d *Daemon) hUpstreamCreate(w http.ResponseWriter, r *http.Request) {
