@@ -19,13 +19,6 @@ import type {
 export const API_BASE = '/api'
 
 /**
- * X-Outwall-CSRF is a CSRF-not-auth boundary: the daemon rejects any /api request lacking
- * this header with 403 (see ADR-0005). It defeats browser cross-origin form posts; it is not
- * authentication. GET /api/events (SSE) is exempt because EventSource cannot set headers.
- */
-const CSRF_HEADER = { 'X-Outwall-CSRF': '1' }
-
-/**
  * The single error shape thrown by every helper. Preserves the HTTP status and the daemon's
  * machine-readable error string (the admin handlers emit `{ "error": "..." }` bodies).
  */
@@ -60,20 +53,37 @@ function fetchWithTimeout(url: string, opts?: RequestInit, timeoutMs = 30_000): 
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
+let sessionRequiredHandler: (() => void) | null = null
+
 /**
- * Single transport: prefixes API_BASE, attaches the CSRF header and Content-Type, serializes
- * the body, and converts every non-2xx response into an ApiError. Returns parsed JSON (or
- * undefined for empty bodies).
+ * Register a callback fired when the daemon rejects a privileged call with 403 "operator session
+ * required", so the UI can prompt for the master password. Passing null clears it.
+ */
+export function setSessionRequiredHandler(fn: (() => void) | null): void {
+  sessionRequiredHandler = fn
+}
+
+/**
+ * Single transport: prefixes API_BASE, sets Content-Type, serializes the body, and converts
+ * every non-2xx into an ApiError. When the daemon returns 403 "operator session required" (the
+ * operator plane is sealed behind the master-password session — ADR-0041) it fires the
+ * registered handler so the UI can prompt, then throws so the caller still sees the failure.
  */
 async function request<T>(method: HttpMethod, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = { ...CSRF_HEADER }
+  const headers: Record<string, string> = {}
   let payload: BodyInit | undefined
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json'
     payload = JSON.stringify(body)
   }
   const res = await fetchWithTimeout(API_BASE + path, { method, headers, body: payload })
-  if (!res.ok) throw await extractApiError(res)
+  if (!res.ok) {
+    const err = await extractApiError(res)
+    if (err.status === 403 && err.message === 'operator session required') {
+      sessionRequiredHandler?.()
+    }
+    throw err
+  }
   const text = await res.text()
   return (text ? JSON.parse(text) : undefined) as T
 }
@@ -94,6 +104,28 @@ export function vaultUnlock(password: string): Promise<{ locked: boolean }> {
 
 export function vaultLock(): Promise<{ locked: boolean }> {
   return request('POST', '/vault/lock')
+}
+
+// --- Operator session (master-password gate; ADR-0041) ---
+
+export interface OperatorSessionStatus {
+  open: boolean
+  idle_remaining_seconds: number
+}
+
+/** Open the operator session by verifying the master password (does NOT unlock the vault). */
+export function openOperatorSession(password: string): Promise<OperatorSessionStatus> {
+  return request('POST', '/operator/session/open', { password })
+}
+
+/** Close the operator session ("Lock now"). The vault stays unlocked; the data plane keeps serving. */
+export function lockOperatorSession(): Promise<{ open: boolean }> {
+  return request('POST', '/operator/session/lock')
+}
+
+/** Current operator-session state (open + idle seconds remaining). Read-only; does not slide the TTL. */
+export function getOperatorSessionStatus(): Promise<OperatorSessionStatus> {
+  return request('GET', '/operator/session/status')
 }
 
 // --- Agents ---
@@ -181,7 +213,7 @@ export function importClusters(): Promise<ClusterImportResult> {
 export async function importKubeconfigContent(content: string): Promise<ClusterImportResult> {
   const res = await fetchWithTimeout(API_BASE + '/clusters/import', {
     method: 'POST',
-    headers: { ...CSRF_HEADER, 'Content-Type': 'application/yaml' },
+    headers: { 'Content-Type': 'application/yaml' },
     body: content,
   })
   if (!res.ok) throw await extractApiError(res)

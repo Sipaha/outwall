@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, vaultUnlock, listAgents } from './api'
+import { ApiError, vaultUnlock, listAgents, openOperatorSession } from './api'
 
 afterEach(() => {
   vi.restoreAllMocks()
 })
 
 describe('api client', () => {
-  it('vaultUnlock posts to /api/vault/unlock with the CSRF header and password body', async () => {
+  it('vaultUnlock posts to /api/vault/unlock with NO CSRF header and a password body', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ locked: false }), {
         status: 200,
@@ -18,12 +18,30 @@ describe('api client', () => {
     const res = await vaultUnlock('hunter2')
     expect(res).toEqual({ locked: false })
 
-    expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, opts] = fetchMock.mock.calls[0]
     expect(url).toBe('/api/vault/unlock')
     expect(opts.method).toBe('POST')
-    expect(opts.headers['X-Outwall-CSRF']).toBe('1')
+    // The static X-Outwall-CSRF model is retired — the operator-session gate replaced it.
+    expect(opts.headers['X-Outwall-CSRF']).toBeUndefined()
     expect(opts.headers['Content-Type']).toBe('application/json')
+    expect(JSON.parse(opts.body)).toEqual({ password: 'hunter2' })
+  })
+
+  it('openOperatorSession posts to /operator/session/open with the password body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ open: true, idle_remaining_seconds: 3600 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await openOperatorSession('hunter2')
+    expect(res).toEqual({ open: true, idle_remaining_seconds: 3600 })
+    const [url, opts] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/operator/session/open')
+    expect(opts.method).toBe('POST')
+    expect(opts.headers['X-Outwall-CSRF']).toBeUndefined()
     expect(JSON.parse(opts.body)).toEqual({ password: 'hunter2' })
   })
 
@@ -44,7 +62,7 @@ describe('api client', () => {
     await expect(vaultUnlock('wrong')).rejects.toBeInstanceOf(ApiError)
   })
 
-  it('GET helpers send the CSRF header and parse JSON arrays', async () => {
+  it('GET helpers send NO CSRF header and parse JSON arrays', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify([{ id: 'a1', name: 'claude', status: 'new' }]), {
         status: 200,
@@ -58,6 +76,6 @@ describe('api client', () => {
     expect(agents[0].name).toBe('claude')
     const [url, opts] = fetchMock.mock.calls[0]
     expect(url).toBe('/api/agents')
-    expect(opts.headers['X-Outwall-CSRF']).toBe('1')
+    expect(opts.headers['X-Outwall-CSRF']).toBeUndefined()
   })
 })
