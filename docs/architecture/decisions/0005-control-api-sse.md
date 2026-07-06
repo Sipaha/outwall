@@ -3,6 +3,13 @@
 - **Status:** accepted
 - **Date:** 2026-06-17
 
+> **Amended by ADR-0041 (2026-07-06):** the `X-Outwall-CSRF` gate described here is **removed**.
+> Loopback + CSRF is no longer the boundary for a same-user agent — the boundary is now the
+> **master-password operator session** (ADR-0041), which gates every privileged mutation on BOTH
+> the unix-socket and `/api` transports. The `UIListen` bind, the event bus, and the SSE stream
+> are unchanged; `GET /events` stays ungated and read-only (it was CSRF-exempt before and is
+> ungated now).
+
 ## Context
 
 The desktop UI (web frontend in Plan 6, Wails wrapper in Plan 7) needs two things from the
@@ -88,3 +95,11 @@ token auth on the TCP bind is deferred to a future multi-user/server mode.
   request headers, so the stream could never carry `X-Outwall-CSRF`. Safe because SSE is
   read-only (no state change), same-origin, and loopback-only — the exemption is path-specific
   and must be revisited if the endpoint ever gains state-changing behavior.
+
+> **Note (ADR-0041):** the CSRF-not-auth caveat above turned out to matter sooner than "a future
+> multi-user/server mode" — a same-user process (a malicious or compromised agent, not just a
+> browser tab) could replay the static header just as easily as the operator's own UI. ADR-0041
+> removes `csrfMiddleware`/`X-Outwall-CSRF` entirely and replaces the boundary with a
+> master-password-gated operator session, applied uniformly to the unix socket and the `/api`
+> TCP bind. Everything above about the event bus, `Publisher`/`SetPublisher`, the event
+> taxonomy, and the SSE endpoint itself remains accurate and unchanged.

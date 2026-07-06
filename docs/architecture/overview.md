@@ -26,6 +26,12 @@ React UI. It sits between local AI agents and external HTTP APIs.
   agent, checks policy (default-deny), injects the upstream's credentials, forwards, audits.
   **Upstream secrets never reach the agent.**
 
+The **admin/operator surface** (unix admin socket + the desktop UI's TCP `/api` bind) is itself
+split in two: ungated read-only views/SSE/dry-run preview, and master-password-gated privileged
+mutations (approve, grant, unlock, set-auth, prune, …) — see ADR-0041. The old static
+`X-Outwall-CSRF` header (ADR-0005) is retired; the operator session is the boundary now, on both
+transports.
+
 ## Subsystems
 
 | Subsystem | Responsibility |
@@ -41,6 +47,7 @@ React UI. It sits between local AI agents and external HTTP APIs.
 | `agentapi` | the control-plane HTTP/JSON adapter over `mcpsvc.Service`, served on the agent socket. |
 | `agentid` | the CLI's per-project agent-token store (realpath-of-git-top-level keyed, flock mint-once). |
 | `audit` | request/response journal + body store. |
+| `opsession` | operator session: idle-TTL sliding window, gates privileged admin mutations. |
 | `daemon` | wires it all; serves data plane (TCP localhost) + admin API (unix socket). |
 | `desktop` | Wails 3 wrapper supervising the daemon, rendering the embedded UI. |
 
@@ -52,4 +59,9 @@ allow-list stands in for `policy`. See ADR-0001 and the current plan.
 - Secrets never leave outwall (the agent only ever holds its own token + a local path).
 - Default-deny: a freshly registered agent can do nothing until access is granted.
 - Vault locked ⇒ the whole data plane is halted (503) and access granting is blocked.
+- Privileged operator mutations (approve, grant, unlock, set-auth, prune) require an open
+  **operator session**, unlocked by the master password, on every transport (unix socket + UI
+  /api). A same-user agent cannot self-approve (ADR-0041).
+- The operator session is distinct from the vault lock: it has an idle TTL + "Lock now";
+  idle-expiry does NOT lock the vault (the data plane keeps serving).
 - No CGO in the server binary; pure-Go SQLite.

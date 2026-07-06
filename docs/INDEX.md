@@ -29,7 +29,7 @@ Stage: alpha (pre-Plan-1).
   - [`0002-policy-and-approval.md`](architecture/decisions/0002-policy-and-approval.md) — rule precedence, blocking approval, rate limiter, OIDC-CC token cache.
   - [`0003-mcp-control-plane.md`](architecture/decisions/0003-mcp-control-plane.md) — MCP server, session=agent identity, SDK-free mcpsvc / thin adapter split, access-request intent log. **Superseded by ADR-0040.**
   - [`0004-audit.md`](architecture/decisions/0004-audit.md) — capped streaming body capture, text/binary classification, masking, record-on-close, data-plane-only scope.
-  - [`0005-control-api-sse.md`](architecture/decisions/0005-control-api-sse.md) — non-blocking event bus, SSE, UIListen loopback bind + X-Outwall-CSRF gate.
+  - [`0005-control-api-sse.md`](architecture/decisions/0005-control-api-sse.md) — non-blocking event bus, SSE, UIListen loopback bind + X-Outwall-CSRF gate. **Amended by ADR-0041: the X-Outwall-CSRF gate is removed, superseded by the master-password operator session.**
   - [`0006-web-ui-foundation.md`](architecture/decisions/0006-web-ui-foundation.md) — Vite→webdist go:embed, /api prefix + SPA serve, SSE CSRF exemption, dark theme tokens.
   - [`0007-desktop-wrapper.md`](architecture/decisions/0007-desktop-wrapper.md) — Wails 3 desktop wrapper runs the daemon in-process; server stays CGO-free via build tag.
   - [`0008-k8s-gateway-read.md`](architecture/decisions/0008-k8s-gateway-read.md) — k8s reverse-proxy; cluster=k8s-kind upstream; transport seam; (namespace,resource,verb) policy + namespace safety; token/client-cert/exec auth; local CA + kubeconfig.
@@ -56,6 +56,7 @@ Stage: alpha (pre-Plan-1).
   - [`0038-atomic-rule-fanout.md`](architecture/decisions/0038-atomic-rule-fanout.md) — atomic multi-rule fan-out: `policy.Registry.CreateMany` writes a batch of rules in one SQL transaction (all-or-nothing); `insertRule(rowExecutor, Rule)` helper centralizes the 18-column INSERT (shared by `Create` and `CreateMany`, eliminating column-order-drift hazard); both fan-out sites (`approvePreset`, `approveK8sAccess`) use `CreateMany`. Resolves the atomicity known limitation in ADR-0037.
   - [`0039-workspace-filtering-and-allow-any.md`](architecture/decisions/0039-workspace-filtering-and-allow-any.md) — `workspace: *` grants and mode-aware read-query workspace filtering: lifts `AllowAny=false` on the workspace slot so operators can grant all-workspace read access; introduces `Profile.Authorize` + `AuthResult{RewriteBody,Response}` seam; citeck plugin narrows multi-workspace Records queries to the agent's allowed set (browser: inject/narrow; API: deny-if-any-unallowed); proxy applies `RewriteBody`/synthetic `Response` without touching the upstream.
   - [`0040-agent-socket-control-plane.md`](architecture/decisions/0040-agent-socket-control-plane.md) — replaces the MCP control plane with `internal/agentapi` (plain HTTP/JSON over the `0600` unix socket `agent.sock`, no session cache) fronted by CLI subcommands (`list-upstreams`, `whoami`, `request-host-access`, `request-access` incl. `--var name:type` typed value-scoping, `request-preset`, `request-k8s-access`, `get-access`, `get-kubeconfig`); `internal/agentid` mints a per-project accountability token (keyed on the realpath of the git top-level, flock mint-once) that survives daemon restarts; supersedes ADR-0003.
+  - [`0041-operator-session-master-password.md`](architecture/decisions/0041-operator-session-master-password.md) — seal the operator plane: route split (ungated read-only + session-control vs master-password-gated mutations), operator session (Verify-without-unlock, idle-TTL sliding window, Lock now) gating BOTH transports, retire static X-Outwall-CSRF; threat model (same-user boundary = master password; separate-OS-user = escalation; PR_SET_DUMPABLE = non-load-bearing DiD); R7 Wails-bindings deferred to Plan 3.
 - `modules/` — per-package API docs: `secret`, `store`, `upstream`, `agent`, `authn`,
   `policy`, `approval`, `access`, `mcpsvc`, `agentapi`, `agentid`, `audit`, `events`, `proxy`, `daemon`, `client`, `cli`, `version`, `k8s`, `tlsca`, plus `webui` (the `web/` app).
 
@@ -86,6 +87,7 @@ Stage: alpha (pre-Plan-1).
   - Phase 2 (k8s): [`…-k8s-k1-read.md`](superpowers/plans/2026-06-18-outwall-k8s-k1-read.md) (active),
     [`…-k8s-k2-mutate.md`](superpowers/plans/2026-06-18-outwall-k8s-k2-mutate.md),
     [`…-k8s-k3-exec.md`](superpowers/plans/2026-06-18-outwall-k8s-k3-exec.md).
+  - Seal the operator plane: [`2026-07-06-seal-operator-plane.md`](superpowers/plans/2026-07-06-seal-operator-plane.md) (secret.Verify, internal/opsession, route split + operator gate on both transports, CLI sudo-style helper, web prompt; ADR-0041). Spec: [`2026-07-06-mcp-to-direct-socket-design.md`](superpowers/specs/2026-07-06-mcp-to-direct-socket-design.md).
 
 ## findings/ — non-obvious discoveries
 
