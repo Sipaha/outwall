@@ -34,7 +34,7 @@ func newApprovalCmd(gf *globalFlags) *cobra.Command {
 			if approve == deny {
 				return fmt.Errorf("specify exactly one of --approve or --deny")
 			}
-			if err := newClient(gf).Do("POST", "/approvals/"+args[0]+"/resolve",
+			if err := doPrivileged(gf, "POST", "/approvals/"+args[0]+"/resolve",
 				map[string]bool{"approve": approve}, nil); err != nil {
 				return err
 			}

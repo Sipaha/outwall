@@ -60,7 +60,13 @@ func newVaultCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return newClient(gf).Do("POST", "/vault/unlock", map[string]string{"password": pw}, nil)
+			cl := newClient(gf)
+			// Open the operator session with the same master password — this both authorizes the
+			// gate on /vault/unlock AND avoids a second prompt (unlock is a gated route now).
+			if err := cl.Do("POST", "/operator/session/open", map[string]string{"password": pw}, nil); err != nil {
+				return err
+			}
+			return cl.Do("POST", "/vault/unlock", map[string]string{"password": pw}, nil)
 		},
 	}
 	unlockCmd.Flags().BoolVar(&unlockStdin, "password-stdin", false, "read the master password from stdin (no TTY prompt)")
