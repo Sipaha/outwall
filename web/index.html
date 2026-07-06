@@ -6,10 +6,14 @@
     <title>outwall</title>
     <!-- Anti-FOUC: paint the dark window background before the bundle loads, so
          the first frame is the app's charcoal surface rather than the webview's
-         default white. outwall is dark-only in 6A (no theme toggle yet). -->
-    <script>
-      document.documentElement.style.backgroundColor = '#1e1f22'
-    </script>
+         default white. outwall is dark-only in 6A (no theme toggle yet). This is
+         an inline <style> (not <script>) so the production CSP can keep
+         script-src 'self' — no inline scripts in the served document. -->
+    <style>
+      html {
+        background-color: #1e1f22;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

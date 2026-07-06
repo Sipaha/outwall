@@ -9,7 +9,8 @@ GO_LDFLAGS := -X github.com/Sipaha/outwall/internal/version.version=$(shell git 
 # binary stays CGO-free.
 DESKTOP_TAGS ?= desktop
 
-.PHONY: build build-fast build-web build-desktop build-desktop-fast run run-server test fmt vet tidy
+.PHONY: build build-fast build-web build-desktop build-desktop-fast run run-server test fmt vet tidy \
+        check lint lint-go lint-web test-web fmt-check web-deps
 
 # Full build: rebuild the web UI first (its output lands in internal/daemon/webdist,
 # which the Go binary embeds via //go:embed), then compile the binary.
@@ -59,3 +60,35 @@ vet:
 
 tidy:
 	go mod tidy
+
+# ---- Full pre-release gate -------------------------------------------------
+# `make check` is the single command every agent runs before a release/merge. It runs BOTH sides:
+# Go (gofmt-check, go vet, golangci-lint, go test, CGO-free build) and web (eslint, tsc typecheck,
+# vitest). If any linter/test/build fails, check fails. Individual pieces are runnable on their own.
+check: fmt-check vet lint test test-web build-fast
+	@echo "✓ make check passed — gofmt, vet, golangci-lint, eslint, tsc, go test, vitest, build"
+
+# lint runs every configured linter, Go and web.
+lint: lint-go lint-web
+
+# fmt-check fails (non-zero) if any Go file is not gofmt-clean, without modifying files.
+fmt-check:
+	@files=$$(gofmt -l .); if [ -n "$$files" ]; then echo "gofmt needed on:"; echo "$$files"; exit 1; fi
+
+# lint-go runs golangci-lint (config: .golangci.yml). Required — install if missing.
+lint-go:
+	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not installed (required by make lint/check) — https://golangci-lint.run/welcome/install/"; exit 1; }
+	golangci-lint run ./...
+
+# web-deps installs the web toolchain once; lint-web and test-web depend on it (make dedups it).
+web-deps:
+	pnpm -C web install --frozen-lockfile=false
+
+# lint-web runs eslint + the TypeScript typecheck (tsc --noEmit) over the SPA.
+lint-web: web-deps
+	pnpm -C web lint
+	pnpm -C web exec tsc --noEmit
+
+# test-web runs the vitest unit suite for the SPA.
+test-web: web-deps
+	pnpm -C web exec vitest run

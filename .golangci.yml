@@ -1,0 +1,16 @@
+# golangci-lint v2 config for outwall. Wired into `make check` (see Makefile) as the Go static-analysis
+# gate every agent runs before release. Kept intentionally close to the golangci defaults: the standard
+# linter set (errcheck, govet, ineffassign, staticcheck, unused) plus the std-error-handling exclusion
+# preset so the universally-accepted "unchecked error" patterns (fmt.Fprint* to stdout, deferred
+# .Close()) don't produce noise. Tighten/extend deliberately, not ad hoc.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  exclusions:
+    generated: lax
+    presets:
+      - std-error-handling

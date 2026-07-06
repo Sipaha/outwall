@@ -92,3 +92,4 @@ Stage: alpha (pre-Plan-1).
 ## findings/ — non-obvious discoveries
 
 - [`2026-06-vault-cli-needs-tty.md`](findings/2026-06-vault-cli-needs-tty.md) — `vault init`/`unlock` need a real TTY; add `--password-stdin` later.
+- [`2026-07-06-ui-security-hardening.md`](findings/2026-07-06-ui-security-hardening.md) — operator-webview posture (loopback-only SPA, no `dangerouslySetInnerHTML`, minimal Wails IPC, key zeroize) + applied hardening (build-time strict CSP, eslint ban) + backlog (headless core under a separate OS user; Wails native bindings; alpha risk). Same-user isolation = separate OS identity, not `SO_PEERCRED`/token.

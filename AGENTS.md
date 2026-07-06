@@ -40,14 +40,18 @@ make test       # go test ./...
 make fmt        # gofmt -w .
 make vet        # go vet ./...
 make tidy       # go mod tidy
-make lint       # golangci-lint (once configured)
-make check      # fmt-check + vet + lint + test  (the full local gate — run before committing)
+make lint       # ALL linters: golangci-lint (Go) + eslint + tsc (web)
+make lint-web   # web only: eslint + tsc          make test-web  # web only: vitest
+make check      # FULL pre-release gate — gofmt-check + vet + golangci-lint + go test + eslint + tsc
+                # + vitest + build. Run this before every commit/merge/release.
 ```
 
 ## Architecture (one-liner per plane)
 
-- **Control plane** — ONE MCP server (streamable HTTP, localhost): `list_upstreams`,
-  `request_access(host, purpose)`, `get_access`, `whoami`. Agents register dynamically.
+- **Control plane** — a plain HTTP/JSON handler on a `0600` unix socket (`agent.sock`), driven by the
+  `outwall` CLI (`list-upstreams`, `request-host-access`/`request-access`/`request-preset`,
+  `get-access`, `whoami`, `get-kubeconfig`); agents self-register (per-project token). Operator
+  mutations are gated by a master-password session. MCP + go-sdk were removed (ADR-0040/0041).
 - **Data plane** — reverse proxy `http://localhost:PORT/<upstream>/...` + agent bearer
   token. TLS terminated at outwall (no MITM). Secrets never leave outwall.
 - **Vault** — Argon2id(master-password) → key; per-secret AES-256-GCM. Locked at start.

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Modal } from './Modal'
 import { ApiError } from '../lib/api'
 import { useOperatorSession } from '../lib/operatorSession'
@@ -18,15 +18,19 @@ export function OperatorSessionModal() {
   const [busy, setBusy] = useState(false)
 
   // This modal is mounted for the app's whole lifetime, so its local state must not linger past a
-  // close — in particular the master password should not sit in memory once the prompt is gone,
-  // whether it closed via a successful unlock or the operator dismissing it.
-  useEffect(() => {
-    if (!promptOpen) {
-      setPassword('')
-      setError('')
-      setBusy(false)
-    }
-  }, [promptOpen])
+  // close — in particular the master password must not sit in memory once the prompt is gone. Both
+  // close paths clear it: a successful unlock (below) and an operator dismiss (onClose). Resetting in
+  // these event handlers, rather than a promptOpen effect, keeps the setState out of an effect body.
+  function reset() {
+    setPassword('')
+    setError('')
+    setBusy(false)
+  }
+
+  function close() {
+    reset()
+    dismiss()
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -38,7 +42,7 @@ export function OperatorSessionModal() {
     setBusy(true)
     try {
       await unlock(password)
-      setPassword('')
+      reset()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Request failed')
     } finally {
@@ -51,7 +55,7 @@ export function OperatorSessionModal() {
       open={promptOpen}
       title="Operator session"
       width="sm"
-      onClose={dismiss}
+      onClose={close}
       onSubmit={submit}
       footer={
         <button
