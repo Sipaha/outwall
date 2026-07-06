@@ -18,6 +18,7 @@ import { FormField, fieldControlClass } from '../components/FormField'
 import { Select } from '../components/Select'
 import { Tabs } from '../components/Tabs'
 import { useToastStore } from '../lib/toast'
+import { useUpstreamsTab } from '../lib/upstreamsTab'
 import { Clusters, type ClustersHandle } from './Clusters'
 
 /** True when the host carries a (non-"none") credential — drives the credential-status badge. */
@@ -358,7 +359,8 @@ const UPSTREAM_TABS = [
 ]
 
 export function Upstreams() {
-  const [tab, setTab] = useState('http')
+  const tab = useUpstreamsTab((s) => s.tab)
+  const setTab = useUpstreamsTab((s) => s.setTab)
   const [upstreams, setUpstreams] = useState<Upstream[]>([])
   const [addOpen, setAddOpen] = useState(false)
   const [name, setName] = useState('')
