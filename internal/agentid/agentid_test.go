@@ -1,10 +1,13 @@
 package agentid_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -48,4 +51,44 @@ func TestTokenPathNonRepoDiffers(t *testing.T) {
 	p2, err := agentid.TokenPath(d2)
 	require.NoError(t, err)
 	require.NotEqual(t, p1, p2)
+}
+
+func TestLoadOrRegisterMintsOnce(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir() // non-repo project
+
+	var calls int32
+	register := func(name string) (string, string, error) {
+		n := atomic.AddInt32(&calls, 1)
+		return "id-" + name, fmt.Sprintf("owa_tok_%d", n), nil
+	}
+
+	const N = 16
+	var wg sync.WaitGroup
+	tokens := make([]string, N)
+	errs := make([]error, N)
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			tokens[i], errs[i] = agentid.LoadOrRegister(dir, register)
+		}(i)
+	}
+	wg.Wait()
+
+	for i := range errs {
+		require.NoError(t, errs[i])
+	}
+	require.Equal(t, int32(1), atomic.LoadInt32(&calls), "register must be called exactly once")
+	for i := 1; i < N; i++ {
+		require.Equal(t, tokens[0], tokens[i])
+	}
+
+	// A later call reads the persisted token without registering again.
+	tok, err := agentid.LoadOrRegister(dir, func(string) (string, string, error) {
+		t.Fatal("register must not be called when a token exists")
+		return "", "", nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, tokens[0], tok)
 }

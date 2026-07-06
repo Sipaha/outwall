@@ -10,10 +10,13 @@ package agentid
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/Sipaha/outwall/internal/config"
 )
@@ -51,4 +54,70 @@ func TokenPath(cwd string) (string, error) {
 		return "", err
 	}
 	return tokenPathForKey(key), nil
+}
+
+// LoadOrRegister returns the per-project agent token, minting it once on first use. It serializes
+// concurrent first-calls with an exclusive flock on <tokenpath>.lock so exactly one agent is
+// registered: the winner calls register and writes the token atomically; losers block on the flock
+// and then read the file. register receives the basename of the project key as the agent name.
+func LoadOrRegister(cwd string, register func(name string) (id, token string, err error)) (string, error) {
+	key, err := projectKey(cwd)
+	if err != nil {
+		return "", err
+	}
+	path := tokenPathForKey(key)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create agents dir: %w", err)
+	}
+
+	lockPath := path + ".lock"
+	lf, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("open lock: %w", err)
+	}
+	defer lf.Close()
+	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX); err != nil {
+		return "", fmt.Errorf("flock: %w", err)
+	}
+	defer func() { _ = syscall.Flock(int(lf.Fd()), syscall.LOCK_UN) }()
+
+	// Fast path: a token was already minted for this project (by us or an earlier flock holder).
+	if b, rerr := os.ReadFile(path); rerr == nil {
+		if tok := strings.TrimSpace(string(b)); tok != "" {
+			return tok, nil
+		}
+	} else if !errors.Is(rerr, os.ErrNotExist) {
+		return "", fmt.Errorf("read token: %w", rerr)
+	}
+
+	// Mint once, then write atomically (temp file in the same dir + rename).
+	_, token, err := register(filepath.Base(key))
+	if err != nil {
+		return "", fmt.Errorf("register agent: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, ".token-*")
+	if err != nil {
+		return "", fmt.Errorf("create temp token: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.WriteString(token); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return "", fmt.Errorf("write temp token: %w", err)
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return "", fmt.Errorf("chmod temp token: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return "", fmt.Errorf("close temp token: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return "", fmt.Errorf("rename token: %w", err)
+	}
+	return token, nil
 }
