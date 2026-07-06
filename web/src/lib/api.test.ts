@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, vaultUnlock, listAgents, openOperatorSession } from './api'
+import { ApiError, vaultUnlock, listAgents, openOperatorSession, setSessionRequiredHandler } from './api'
 
 afterEach(() => {
   vi.restoreAllMocks()
+  setSessionRequiredHandler(null)
 })
 
 describe('api client', () => {
@@ -77,5 +78,48 @@ describe('api client', () => {
     const [url, opts] = fetchMock.mock.calls[0]
     expect(url).toBe('/api/agents')
     expect(opts.headers['X-Outwall-CSRF']).toBeUndefined()
+  })
+
+  it('retries the original call once after the operator opens the session on a 403 gate', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'operator session required' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([{ id: 'a1', name: 'claude', status: 'new' }]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    setSessionRequiredHandler(() => Promise.resolve(true))
+
+    const agents = await listAgents()
+
+    expect(agents).toHaveLength(1)
+    expect(agents[0].name).toBe('claude')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('throws the original 403 without retrying when the operator dismisses the session prompt', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: 'operator session required' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    setSessionRequiredHandler(() => Promise.resolve(false))
+
+    await expect(listAgents()).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 403,
+      message: 'operator session required',
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

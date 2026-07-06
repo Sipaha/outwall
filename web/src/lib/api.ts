@@ -53,23 +53,29 @@ function fetchWithTimeout(url: string, opts?: RequestInit, timeoutMs = 30_000): 
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
-let sessionRequiredHandler: (() => void) | null = null
+let sessionRequiredHandler: (() => Promise<boolean>) | null = null
 
 /**
  * Register a callback fired when the daemon rejects a privileged call with 403 "operator session
- * required", so the UI can prompt for the master password. Passing null clears it.
+ * required", so the UI can prompt for the master password. The callback returns a promise that
+ * resolves `true` once the operator successfully opens the session, or `false` if they dismiss the
+ * prompt without opening one — `request` awaits it to decide whether to retry. Passing null clears
+ * it. Concurrent callers should share one pending promise so only one modal ever shows.
  */
-export function setSessionRequiredHandler(fn: (() => void) | null): void {
+export function setSessionRequiredHandler(fn: (() => Promise<boolean>) | null): void {
   sessionRequiredHandler = fn
 }
 
 /**
  * Single transport: prefixes API_BASE, sets Content-Type, serializes the body, and converts
  * every non-2xx into an ApiError. When the daemon returns 403 "operator session required" (the
- * operator plane is sealed behind the master-password session — ADR-0041) it fires the
- * registered handler so the UI can prompt, then throws so the caller still sees the failure.
+ * operator plane is sealed behind the master-password session — ADR-0041) it fires the registered
+ * handler so the UI can prompt, awaits the outcome, and — mirroring the CLI's sudo-style
+ * `doPrivileged` (internal/cli/session.go) — retries the call exactly once if the operator opened
+ * the session. `isRetry` guards against retrying more than once (a 403 on the retry itself is
+ * thrown, not retried again).
  */
-async function request<T>(method: HttpMethod, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: HttpMethod, path: string, body?: unknown, isRetry = false): Promise<T> {
   const headers: Record<string, string> = {}
   let payload: BodyInit | undefined
   if (body !== undefined) {
@@ -79,8 +85,11 @@ async function request<T>(method: HttpMethod, path: string, body?: unknown): Pro
   const res = await fetchWithTimeout(API_BASE + path, { method, headers, body: payload })
   if (!res.ok) {
     const err = await extractApiError(res)
-    if (err.status === 403 && err.message === 'operator session required') {
-      sessionRequiredHandler?.()
+    if (!isRetry && err.status === 403 && err.message === 'operator session required' && sessionRequiredHandler) {
+      const opened = await sessionRequiredHandler()
+      if (opened) {
+        return request<T>(method, path, body, true)
+      }
     }
     throw err
   }

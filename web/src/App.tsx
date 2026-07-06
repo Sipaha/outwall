@@ -52,9 +52,11 @@ export default function App() {
     }
   }, [unlocked, connect, disconnect])
 
-  // Let the api transport pop the master-password prompt on a 403 "operator session required".
+  // Let the api transport pop the master-password prompt on a 403 "operator session required",
+  // and await the operator's decision so the transport can retry the gated call once (mirrors the
+  // CLI's sudo-style doPrivileged — ADR-0041).
   useEffect(() => {
-    setSessionRequiredHandler(() => requirePrompt())
+    setSessionRequiredHandler(requirePrompt)
     return () => setSessionRequiredHandler(null)
   }, [requirePrompt])
 

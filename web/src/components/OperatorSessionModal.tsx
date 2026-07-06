@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Modal } from './Modal'
 import { ApiError } from '../lib/api'
 import { useOperatorSession } from '../lib/operatorSession'
@@ -16,6 +16,17 @@ export function OperatorSessionModal() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+
+  // This modal is mounted for the app's whole lifetime, so its local state must not linger past a
+  // close — in particular the master password should not sit in memory once the prompt is gone,
+  // whether it closed via a successful unlock or the operator dismissing it.
+  useEffect(() => {
+    if (!promptOpen) {
+      setPassword('')
+      setError('')
+      setBusy(false)
+    }
+  }, [promptOpen])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
