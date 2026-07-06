@@ -110,6 +110,28 @@ func (v *Vault) Unlock(password string) error {
 	return nil
 }
 
+// Verify checks the master password against the stored Argon2id salt/verifier WITHOUT changing the
+// vault's locked/unlocked state (it never sets or clears the resident key). The operator session
+// uses it to confirm the operator's identity while the data plane keeps serving — and it works even
+// while the vault is locked (it derives from the DB, not the resident key). Returns ErrNotInitialized
+// when no vault exists and ErrBadPassword when the password is wrong (identical to Unlock).
+func (v *Vault) Verify(password string) error {
+	var salt, verifier []byte
+	err := v.store.DB().QueryRow(`SELECT salt, verifier FROM vault_meta WHERE id=1`).Scan(&salt, &verifier)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotInitialized
+	}
+	if err != nil {
+		return fmt.Errorf("load vault_meta: %w", err)
+	}
+	key := deriveKey(password, salt)
+	got, err := openWith(key, verifier)
+	if err != nil || string(got) != string(verifierPlaintext) {
+		return ErrBadPassword
+	}
+	return nil
+}
+
 // Lock zeroes the in-memory key.
 func (v *Vault) Lock() {
 	v.mu.Lock()

@@ -43,3 +43,29 @@ func TestInitUnlockRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "s3cr3t", string(dec))
 }
+
+func TestVerify(t *testing.T) {
+	v := newVault(t)
+
+	// Not initialized yet → ErrNotInitialized.
+	require.ErrorIs(t, v.Verify("pw"), ErrNotInitialized)
+
+	require.NoError(t, v.Init("correct horse"))
+	require.False(t, v.Locked()) // Init leaves it unlocked.
+
+	// Correct password verifies and leaves the vault UNLOCKED (state unchanged).
+	require.NoError(t, v.Verify("correct horse"))
+	require.False(t, v.Locked())
+
+	// Wrong password → ErrBadPassword; state still unlocked.
+	require.ErrorIs(t, v.Verify("nope"), ErrBadPassword)
+	require.False(t, v.Locked())
+
+	// While LOCKED, Verify still works (it needs no resident key) and leaves it LOCKED.
+	v.Lock()
+	require.True(t, v.Locked())
+	require.NoError(t, v.Verify("correct horse"))
+	require.True(t, v.Locked(), "Verify must NOT unlock a locked vault")
+	require.ErrorIs(t, v.Verify("nope"), ErrBadPassword)
+	require.True(t, v.Locked())
+}
