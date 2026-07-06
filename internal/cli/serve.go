@@ -23,7 +23,7 @@ func newServeCmd(gf *globalFlags) *cobra.Command {
 			d, err := daemon.New(daemon.Config{
 				DBPath: gf.db, SocketPath: gf.socket, Listen: gf.listen,
 				UIListen: gf.uiListen, CallbackListen: gf.callbackListen,
-				BrowseDomain: gf.browseDomain,
+				BrowseDomain: gf.browseDomain, AgentSocketPath: gf.agentSocket,
 			})
 			if err != nil {
 				return err
@@ -31,8 +31,8 @@ func newServeCmd(gf *globalFlags) *cobra.Command {
 			defer d.Close()
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			fmt.Fprintf(cmd.OutOrStdout(), "outwall serving: data plane %s, mcp %s, ui %s, admin %s\n",
-				gf.listen, daemon.DefaultMCPListen, gf.uiListen, gf.socket)
+			fmt.Fprintf(cmd.OutOrStdout(), "outwall serving: data plane %s, agent-socket %s, ui %s, admin %s\n",
+				gf.listen, gf.agentSocket, gf.uiListen, gf.socket)
 			return d.Serve(ctx)
 		},
 	}

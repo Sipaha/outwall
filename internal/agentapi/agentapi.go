@@ -7,6 +7,7 @@ package agentapi
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -94,7 +95,9 @@ func (s *server) hRegister(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	// An absent/empty body is a valid anonymous registration (no name); only malformed JSON is
+	// rejected.
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		httpErr(w, http.StatusBadRequest, "bad json")
 		return
 	}

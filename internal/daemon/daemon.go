@@ -17,12 +17,12 @@ import (
 
 	"github.com/Sipaha/outwall/internal/access"
 	"github.com/Sipaha/outwall/internal/agent"
+	"github.com/Sipaha/outwall/internal/agentapi"
 	"github.com/Sipaha/outwall/internal/approval"
 	"github.com/Sipaha/outwall/internal/audit"
 	"github.com/Sipaha/outwall/internal/authn"
 	"github.com/Sipaha/outwall/internal/events"
 	"github.com/Sipaha/outwall/internal/k8s"
-	owmcp "github.com/Sipaha/outwall/internal/mcp"
 	"github.com/Sipaha/outwall/internal/mcpsvc"
 	"github.com/Sipaha/outwall/internal/policy"
 	"github.com/Sipaha/outwall/internal/proxy"
@@ -34,9 +34,6 @@ import (
 
 // DefaultListen is the default localhost address for the data-plane listener.
 const DefaultListen = "127.0.0.1:8080"
-
-// DefaultMCPListen is the default localhost address for the MCP control-plane listener.
-const DefaultMCPListen = "127.0.0.1:8181"
 
 // DefaultUIListen is the default localhost address for the desktop-UI control API + SSE listener.
 const DefaultUIListen = "127.0.0.1:8182"
@@ -58,8 +55,11 @@ type Config struct {
 	DBPath     string
 	SocketPath string
 	Listen     string // data-plane TCP listen address, e.g. 127.0.0.1:8080
-	MCPListen  string // MCP control-plane TCP listen address, e.g. 127.0.0.1:8181
 	UIListen   string // desktop-UI control API + SSE TCP listen address, e.g. 127.0.0.1:8182
+
+	// AgentSocketPath is the unix socket for the agent plane (agentapi). Empty defaults to
+	// <dir(DBPath)>/agent.sock. It is created 0600 alongside the admin socket.
+	AgentSocketPath string
 	// CallbackListen is the dedicated loopback bind for the OIDC browser-login callback
 	// (default DefaultCallbackListen). Its /callback path is the redirect URI registered in the IdP.
 	CallbackListen string
@@ -106,7 +106,7 @@ type Daemon struct {
 	oauthLogins *oauthLogins
 	callback    *callbackServer // on-demand OIDC callback listener (up only during a login)
 	dataPlane   http.Handler
-	mcp         http.Handler
+	agentPlane  http.Handler
 }
 
 // publish emits a domain event onto the daemon bus (nil-safe).
@@ -118,9 +118,6 @@ func (d *Daemon) publish(eventType string, data any) {
 
 // New constructs a Daemon (does not start listeners).
 func New(cfg Config) (*Daemon, error) {
-	if cfg.MCPListen == "" {
-		cfg.MCPListen = DefaultMCPListen
-	}
 	if cfg.UIListen == "" {
 		cfg.UIListen = DefaultUIListen
 	}
@@ -135,6 +132,9 @@ func New(cfg Config) (*Daemon, error) {
 	}
 	if cfg.CADir == "" {
 		cfg.CADir = filepath.Dir(cfg.DBPath)
+	}
+	if cfg.AgentSocketPath == "" {
+		cfg.AgentSocketPath = filepath.Join(filepath.Dir(cfg.DBPath), "agent.sock")
 	}
 	ca, err := tlsca.LoadOrCreateCA(cfg.CADir)
 	if err != nil {
@@ -160,13 +160,7 @@ func New(cfg Config) (*Daemon, error) {
 	svc.SetApprovals(appr)
 	svc.SetKubeconfigParams("https://"+cfg.Listen, string(ca.CAPEM()))
 	svc.SetBrowseDomain(cfg.BrowseDomain)
-	mcpHandler, err := owmcp.NewHandler(owmcp.Deps{
-		Svc: svc, Agents: ag, Locked: v.Locked,
-	})
-	if err != nil {
-		_ = s.Close()
-		return nil, fmt.Errorf("build mcp handler: %w", err)
-	}
+	agentPlane := agentapi.NewHandler(agentapi.Deps{Svc: svc, Agents: ag, Locked: v.Locked})
 	authMgr := authn.NewManager(nil)
 	d := &Daemon{
 		cfg: cfg, store: s, vault: v, agents: ag, upstreams: up, policy: pol, access: acc,
@@ -179,7 +173,7 @@ func New(cfg Config) (*Daemon, error) {
 			Approvals: appr, AuthManager: authMgr, Vault: v, Audit: aud,
 			BrowseDomain: cfg.BrowseDomain,
 		}),
-		mcp: mcpHandler,
+		agentPlane: agentPlane,
 	}
 	// Issue the static loopback cert once at construction time (used by the data-plane TLS
 	// GetCertificate callback for non-browse SNIs: IP addresses, "localhost", and empty SNI).
@@ -249,8 +243,17 @@ func (d *Daemon) Serve(ctx context.Context) error {
 
 	adminSrv := &http.Server{Handler: d.AdminHandler()}
 	dataSrv := &http.Server{Addr: d.cfg.Listen, Handler: d.dataPlane, TLSConfig: dataTLS}
-	mcpSrv := &http.Server{Addr: d.cfg.MCPListen, Handler: d.mcp}
 	uiSrv := &http.Server{Addr: d.cfg.UIListen, Handler: d.UIHandler()}
+
+	_ = os.Remove(d.cfg.AgentSocketPath)
+	agentLn, err := net.Listen("unix", d.cfg.AgentSocketPath)
+	if err != nil {
+		return fmt.Errorf("listen agent socket: %w", err)
+	}
+	if err := os.Chmod(d.cfg.AgentSocketPath, 0o600); err != nil {
+		return fmt.Errorf("chmod agent socket: %w", err)
+	}
+	agentSrv := &http.Server{Handler: d.agentPlane}
 	// The OIDC callback listener (d.callback) is started on demand by hOAuthLogin and stopped after
 	// the callback / login TTL — it is NOT bound here, so the fixed port stays free while idle.
 
@@ -266,14 +269,15 @@ func (d *Daemon) Serve(ctx context.Context) error {
 	errc := make(chan error, 4)
 	go func() { errc <- adminSrv.Serve(ln) }()
 	go func() { errc <- dataSrv.ListenAndServeTLS("", "") }()
-	go func() { errc <- mcpSrv.ListenAndServe() }()
+	go func() { errc <- agentSrv.Serve(agentLn) }()
 	go func() { errc <- uiSrv.ListenAndServe() }()
 
 	select {
 	case <-ctx.Done():
 		_ = adminSrv.Close()
 		_ = dataSrv.Close()
-		_ = mcpSrv.Close()
+		_ = agentSrv.Close()
+		_ = os.Remove(d.cfg.AgentSocketPath)
 		_ = uiSrv.Close()
 		d.callback.shutdown()
 		_ = os.Remove(d.cfg.SocketPath)

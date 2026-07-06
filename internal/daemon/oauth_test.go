@@ -30,7 +30,7 @@ func TestOAuthCallbackDeliversResponseOverListener(t *testing.T) {
 	dir := t.TempDir()
 	d, err := New(Config{
 		DBPath: filepath.Join(dir, "d.db"), SocketPath: filepath.Join(dir, "d.sock"),
-		Listen: "127.0.0.1:0", MCPListen: "127.0.0.1:0", UIListen: "127.0.0.1:0",
+		Listen: "127.0.0.1:0", UIListen: "127.0.0.1:0",
 		CallbackListen: "127.0.0.1:24112", // fixed so the real callback URL is known
 	})
 	require.NoError(t, err)

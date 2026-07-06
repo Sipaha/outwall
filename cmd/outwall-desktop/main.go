@@ -46,11 +46,11 @@ import (
 var logoPNG []byte
 
 // Loopback binds for the in-process daemon. The webview loads UIListen; the
-// data plane and MCP control plane are bound for agents running on the host.
+// data plane is bound for agents running on the host (the control plane is the
+// agent unix socket, which defaults to <dataDir>/agent.sock — no explicit bind here).
 const (
 	uiListen   = "127.0.0.1:8182"
 	dataListen = "127.0.0.1:8099"
-	mcpListen  = "127.0.0.1:8181"
 	// cbListen is the fixed OIDC browser-login callback bind; its /callback is the redirect URI
 	// registered in the IdP.
 	cbListen = "127.0.0.1:23312"
@@ -113,7 +113,6 @@ func run() error {
 		SocketPath:     socketPath,
 		Listen:         dataListen,
 		UIListen:       uiListen,
-		MCPListen:      mcpListen,
 		CallbackListen: cbListen,
 		OnFocusRequest: func() { application.InvokeAsync(raiseToFront) },
 		// The embedded webview drops window.open, so OIDC browser-login URLs are opened in the

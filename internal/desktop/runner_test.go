@@ -19,8 +19,7 @@ func TestRunStartsAndStops(t *testing.T) {
 		SocketPath:     filepath.Join(dir, "o.sock"),
 		Listen:         "127.0.0.1:0",
 		UIListen:       "127.0.0.1:18299", // fixed free-ish port for the test
-		MCPListen:      "127.0.0.1:0",
-		CallbackListen: "127.0.0.1:0", // ephemeral — never the fixed 23312 (a running app may hold it)
+		CallbackListen: "127.0.0.1:0",     // ephemeral — never the fixed 23312 (a running app may hold it)
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = h.Stop(context.Background()) })
