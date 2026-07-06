@@ -4,6 +4,7 @@ import { getVaultStatus, ApiError, setSessionRequiredHandler } from './lib/api'
 import type { VaultStatus } from './lib/types'
 import { useEventStore } from './lib/events'
 import { useOperatorSession } from './lib/operatorSession'
+import { useOpenApprovalsRoute } from './lib/useOpenApprovalsRoute'
 import { Sidebar } from './components/Sidebar'
 import { ToastContainer } from './components/Toast'
 import { OperatorSessionModal } from './components/OperatorSessionModal'
@@ -65,11 +66,10 @@ export default function App() {
     if (unlocked) refreshSession()
   }, [unlocked, refreshSession])
 
-  // Navigate to the Approvals page whenever the desktop sends a "open-approvals" signal (e.g. on
-  // notification click), so the operator lands on the pending request directly.
-  useEffect(() => {
-    if (openApprovals > 0) navigate('/approvals')
-  }, [openApprovals, navigate])
+  // Route to the Approvals page when the desktop sends a NEW "open-approvals" signal (e.g. an OS
+  // notification click). Gating on the counter's increase — not on `> 0` — is what keeps tab
+  // switching from bouncing back to Approvals (see useOpenApprovalsRoute).
+  useOpenApprovalsRoute(openApprovals, navigate)
 
   // The operator-session gate covers vault init/unlock too (a fresh daemon start has no open
   // session), so the master-password prompt must be mounted on every branch below — not just the
