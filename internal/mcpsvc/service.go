@@ -1,9 +1,9 @@
 // Package mcpsvc is the SDK-free domain service behind the four MCP control-plane tools.
 //
 // It resolves a host/upstream, derives an agent's per-upstream status from the policy rules,
-// and builds the tool responses. It deliberately does NOT import the MCP go-sdk — the thin
-// adapter in internal/mcp wires these results to the wire protocol — so this logic stays
-// SDK-version-independent and fully unit-testable.
+// and builds the tool responses. It deliberately does NOT import the MCP go-sdk — internal/agentapi
+// wires these results to the agent-socket HTTP/JSON wire protocol — so this logic stays
+// SDK-independent and fully unit-testable.
 package mcpsvc
 
 import (

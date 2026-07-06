@@ -1,7 +1,7 @@
 // Package agentapi is the plain net/http HTTP/JSON adapter that exposes mcpsvc.Service over the
-// agent unix socket. It mirrors the retired internal/mcp adapter but authenticates each request by
-// the agent's bearer token (agent.Registry.Authenticate) instead of an MCP SDK session — there is no
-// session cache. It is unprivileged by construction: it cannot express approve/grant/unlock.
+// agent unix socket. It authenticates each request by the agent's bearer token
+// (agent.Registry.Authenticate) rather than an MCP SDK session — there is no session cache. It is
+// unprivileged by construction: it cannot express approve/grant/unlock.
 package agentapi
 
 import (
