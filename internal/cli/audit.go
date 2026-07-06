@@ -74,7 +74,7 @@ func newAuditCmd(gf *globalFlags) *cobra.Command {
 				return err
 			}
 			var resp map[string]int64
-			if err := newClient(gf).Do("POST", "/audit/prune",
+			if err := doPrivileged(gf, "POST", "/audit/prune",
 				map[string]string{"older_than_rfc3339": cutoff.UTC().Format(time.RFC3339)}, &resp); err != nil {
 				return err
 			}

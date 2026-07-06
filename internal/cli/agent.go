@@ -15,7 +15,7 @@ func newAgentCmd(gf *globalFlags) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			var out map[string]string
-			if err := newClient(gf).Do("POST", "/agents/register", map[string]string{"name": args[0]}, &out); err != nil {
+			if err := doPrivileged(gf, "POST", "/agents/register", map[string]string{"name": args[0]}, &out); err != nil {
 				return err
 			}
 			fmt.Fprintf(c.OutOrStdout(), "agent id=%s\ntoken=%s\n", out["id"], out["token"])

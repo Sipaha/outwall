@@ -54,7 +54,7 @@ func newClusterCmd(gf *globalFlags) *cobra.Command {
 				"name": args[0], "base_url": apiURL, "kind": upstream.KindK8s, "auth": auth,
 			}
 			var out map[string]string
-			if err := newClient(gf).Do("POST", "/upstreams", req, &out); err != nil {
+			if err := doPrivileged(gf, "POST", "/upstreams", req, &out); err != nil {
 				return err
 			}
 			fmt.Fprintf(c.OutOrStdout(), "registered cluster %s (id=%s)\n", args[0], out["id"])
@@ -94,7 +94,7 @@ func newClusterCmd(gf *globalFlags) *cobra.Command {
 		Short: "Remove a registered cluster",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			if err := newClient(gf).Do("DELETE", "/upstreams/"+args[0], nil, nil); err != nil {
+			if err := doPrivileged(gf, "DELETE", "/upstreams/"+args[0], nil, nil); err != nil {
 				return err
 			}
 			fmt.Fprintln(c.OutOrStdout(), "removed")

@@ -18,7 +18,7 @@ func newKubeconfigCmd(gf *globalFlags) *cobra.Command {
 		RunE: func(c *cobra.Command, args []string) error {
 			req := map[string]any{"cluster": args[0], "token": token}
 			var out map[string]string
-			if err := newClient(gf).Do("POST", "/kubeconfig", req, &out); err != nil {
+			if err := doPrivileged(gf, "POST", "/kubeconfig", req, &out); err != nil {
 				return err
 			}
 			fmt.Fprint(c.OutOrStdout(), out["kubeconfig"])

@@ -42,7 +42,7 @@ func newAccessCmd(gf *globalFlags) *cobra.Command {
 			if status == "" {
 				return fmt.Errorf("--status is required (granted|denied|dismissed)")
 			}
-			if err := newClient(gf).Do("POST", "/access-requests/"+args[0]+"/resolve",
+			if err := doPrivileged(gf, "POST", "/access-requests/"+args[0]+"/resolve",
 				map[string]string{"status": status}, nil); err != nil {
 				return err
 			}

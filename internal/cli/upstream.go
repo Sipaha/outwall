@@ -28,7 +28,7 @@ func newUpstreamCmd(gf *globalFlags) *cobra.Command {
 				},
 			}
 			var out map[string]string
-			if err := newClient(gf).Do("POST", "/upstreams", req, &out); err != nil {
+			if err := doPrivileged(gf, "POST", "/upstreams", req, &out); err != nil {
 				return err
 			}
 			fmt.Fprintf(c.OutOrStdout(), "created upstream %s (id=%s)\n", args[0], out["id"])

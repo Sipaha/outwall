@@ -42,7 +42,7 @@ func newRuleCmd(gf *globalFlags) *cobra.Command {
 				req["op_value_policies"] = policies
 			}
 			var out map[string]string
-			if err := newClient(gf).Do("POST", "/rules", req, &out); err != nil {
+			if err := doPrivileged(gf, "POST", "/rules", req, &out); err != nil {
 				return err
 			}
 			fmt.Fprintf(c.OutOrStdout(), "created rule id=%s\n", out["id"])
@@ -84,7 +84,7 @@ func newRuleCmd(gf *globalFlags) *cobra.Command {
 		Short: "Delete a policy rule",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			if err := newClient(gf).Do("DELETE", "/rules/"+args[0], nil, nil); err != nil {
+			if err := doPrivileged(gf, "DELETE", "/rules/"+args[0], nil, nil); err != nil {
 				return err
 			}
 			fmt.Fprintln(c.OutOrStdout(), "deleted")
