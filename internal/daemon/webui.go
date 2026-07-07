@@ -4,6 +4,7 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
+	"strings"
 )
 
 //go:embed all:webdist
@@ -28,7 +29,15 @@ func staticUI() http.Handler {
 			return
 		}
 		if _, err := fs.Stat(sub, p[1:]); err != nil {
-			http.ServeFileFS(w, r, sub, "index.html") // SPA fallback
+			// A missing hashed asset is a real 404 — never fall back to index.html for it,
+			// or the browser receives text/html for a .js/.css request and fails with a
+			// confusing "not a valid MIME type" error (masking an index.html/assets hash
+			// mismatch). The SPA fallback is only for client-side routes.
+			if strings.HasPrefix(p, "/assets/") {
+				http.NotFound(w, r)
+				return
+			}
+			http.ServeFileFS(w, r, sub, "index.html") // SPA fallback for client routes
 			return
 		}
 		files.ServeHTTP(w, r)

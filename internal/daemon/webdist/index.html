@@ -4,16 +4,28 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>outwall</title>
-    <!-- Anti-FOUC: paint the dark window background before the bundle loads, so
-         the first frame is the app's charcoal surface rather than the webview's
-         default white. outwall is dark-only in 6A (no theme toggle yet). -->
-    <script>
-      document.documentElement.style.backgroundColor = '#1e1f22'
-    </script>
-    <script type="module" crossorigin src="/assets/index-X11_BqEg.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-zLeU7Ndu.css">
+    <style>
+      html { background-color: #1e1f22; color: #e6edf3; font: 14px/1.5 system-ui, sans-serif; }
+      body { margin: 0; }
+      .placeholder { display: flex; align-items: center; justify-content: center; min-height: 100vh; text-align: center; padding: 24px; }
+      code { color: #4f8cff; }
+    </style>
+    <!--
+      INERT BUILD SEED — not the real bundle. `//go:embed all:webdist` needs a committed
+      index.html so `go build` succeeds before the web bundle exists. `make build`/`make run`
+      run `build-web`, which OVERWRITES this file (and webdist/assets/, gitignored) with the
+      real Vite output — hashed asset links, strict CSP, anti-FOUC. Never commit that generated
+      output over this seed: a stale hashed <script>/<link> here ships a broken bundle whose
+      missing /assets/* 404s fall back to index.html (text/html), breaking with a confusing
+      "not a valid JavaScript/CSS MIME type" error. If you see build churn on this file, reset
+      it back to this inert seed, not forward to a hashed bundle.
+    -->
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="placeholder">
+        Web bundle not built. Run <code>&nbsp;make build&nbsp;</code> (or <code>&nbsp;make run&nbsp;</code>) to generate it.
+      </div>
+    </div>
   </body>
 </html>

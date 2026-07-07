@@ -7,9 +7,12 @@
 /coverage.out
 /coverage.html
 
-# Web UI: node deps + Vite build outputs. The committed webdist/index.html is a
-# placeholder so `go build`/`go test` compile before any `pnpm build`; the real
-# bundle (index.html + assets/) is produced by `make build-web` and not tracked.
+# Web UI: node deps + Vite build outputs. The committed webdist/index.html is an
+# INERT placeholder (no hashed asset links) so `go build`/`go test` compile before any
+# `pnpm build`; `make build-web` OVERWRITES it with the real bundle (index.html + assets/,
+# assets/ not tracked). Never commit that generated bundle over the seed — a stale hashed
+# link ships a broken UI (missing /assets/* → SPA fallback → text/html MIME error). If this
+# file shows churn, reset it to the inert seed.
 /web/node_modules/
 /web/dist/
 /internal/daemon/webdist/assets/
