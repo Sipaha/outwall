@@ -954,6 +954,58 @@ func TestApprovePresetFansOutAgentScopedRules(t *testing.T) {
 	require.Equal(t, 1, citeckRead)
 }
 
+// Re-approving a preset (or approving two presets that share a rule) must not create duplicate
+// rules — approvePreset is idempotent (ADR-0029).
+func TestApprovePresetIsIdempotent(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, 200, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+	up := d.mustUpstreamProfiled(t, "cite2.test", "https://cite2.test", "http", "citeck")
+	agentID := d.mustAgent(t, "a1")
+
+	approveOnce := func() {
+		before := map[string]bool{}
+		for _, p := range d.approvals.List() {
+			before[p.ID] = true
+		}
+		go func() {
+			_, _ = d.approvals.Submit(context.Background(), approval.Pending{
+				Kind: approval.KindPreset, AgentID: agentID, UpstreamID: up.ID, Host: up.Name,
+				PresetID: "citeck-readonly", Bindings: map[string]string{"sourceId": "*", "workspace": "*"},
+			})
+		}()
+		var id string
+		require.Eventually(t, func() bool {
+			for _, p := range d.approvals.List() {
+				if p.Kind == approval.KindPreset && !before[p.ID] { // the newly-parked one
+					id = p.ID
+					return true
+				}
+			}
+			return false
+		}, time.Second, 10*time.Millisecond)
+		require.Equal(t, 200, req(t, h, "POST", "/approvals/"+id+"/resolve",
+			`{"approve":true,"bindings":{"sourceId":"*","workspace":"*"}}`).Code)
+	}
+
+	approveOnce()
+	approveOnce() // identical second approval must be a no-op, not a duplicate
+
+	rules, err := d.policy.ForUpstream(up.ID)
+	require.NoError(t, err)
+	var browse, citeckRead int
+	for _, r := range rules {
+		if r.BrowsePath == "/**" {
+			browse++
+		}
+		if r.Profile == "citeck" {
+			citeckRead++
+		}
+	}
+	require.Equal(t, 1, browse, "browse rule duplicated on re-approval")
+	require.Equal(t, 1, citeckRead, "citeck read rule duplicated on re-approval")
+}
+
 func TestApprovePresetFanoutIsAtomic(t *testing.T) {
 	d := newDaemon(t)
 	h := d.AdminHandler()

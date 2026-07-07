@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -32,13 +33,46 @@ func (d *Daemon) approvePreset(p approval.Pending, bindings map[string]string) e
 	if err != nil {
 		return fmt.Errorf("expand preset: %w", err)
 	}
+	// Idempotent (ADR-0029, like approveK8sAccess/approveOperation): skip any preset rule identical
+	// to one this agent already holds on the upstream. Otherwise re-approving a preset — or
+	// approving two presets that share a rule (e.g. browse-get and citeck-readonly both grant
+	// `allow browse GET,HEAD /**`) — spawns duplicate rules.
+	existing, err := d.policy.ForUpstream(p.UpstreamID)
+	if err != nil {
+		return fmt.Errorf("load rules: %w", err)
+	}
+	// Empty profile params are persisted as "{}" (policy.Registry.Create), so normalise before
+	// comparing — a freshly-built browse rule carries "" and must still match the stored "{}".
+	normParams := func(pp json.RawMessage) string {
+		if s := string(pp); s != "" && s != "{}" {
+			return s
+		}
+		return "{}"
+	}
+	isDup := func(r policy.Rule) bool {
+		for _, e := range existing {
+			if e.SubjectAgentID == p.AgentID && e.Outcome == r.Outcome &&
+				e.BrowseMethods == r.BrowseMethods && e.BrowsePath == r.BrowsePath &&
+				e.Profile == r.Profile && normParams(e.ProfileParams) == normParams(r.ProfileParams) {
+				return true
+			}
+		}
+		return false
+	}
 	rules := make([]policy.Rule, 0, len(tmpls))
 	for _, t := range tmpls {
-		rules = append(rules, policy.Rule{
+		r := policy.Rule{
 			SubjectAgentID: p.AgentID, UpstreamID: p.UpstreamID, Outcome: t.Outcome,
 			BrowseMethods: t.BrowseMethods, BrowsePath: t.BrowsePath,
 			Profile: t.Profile, ProfileParams: t.ProfileParams,
-		})
+		}
+		if isDup(r) {
+			continue
+		}
+		rules = append(rules, r)
+	}
+	if len(rules) == 0 {
+		return nil
 	}
 	if _, err := d.policy.CreateMany(rules); err != nil {
 		return fmt.Errorf("create preset rules: %w", err)
