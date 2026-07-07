@@ -392,11 +392,16 @@ function PresetCard({ approval, onResolve }: CardProps) {
     setBindings((b) => ({ ...b, [key]: value }))
   }
 
-  // Preset naming convention: `*-readonly` presets only ever create read rules; every other
-  // preset (e.g. `citeck-readwrite`) can create both read and write rules.
-  const presetScope = (approval.preset_id ?? '').endsWith('-readonly')
-    ? { label: 'READ', kind: 'read' as const }
-    : { label: 'READ/WRITE', kind: 'write' as const }
+  // Scope is derived from what the preset ACTUALLY creates (the live preview), not from its
+  // name — a `browse-get` preset only grants GET/HEAD browse, so it must read READ, not
+  // READ/WRITE. A rule is a write iff it mutates Records (`"op":"write"`) or allows a mutating
+  // browse method. Until the preview loads, default to the safer READ.
+  const grantsWrite = preview.some(
+    (r) => /"op"\s*:\s*"write"/.test(r) || /\bbrowse\b[^\n]*\b(POST|PUT|PATCH|DELETE)\b/i.test(r),
+  )
+  const presetScope = grantsWrite
+    ? { label: 'READ/WRITE', kind: 'write' as const }
+    : { label: 'READ', kind: 'read' as const }
 
   return (
     <div className={cardClass}>
