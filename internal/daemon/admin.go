@@ -82,6 +82,7 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	gate("POST /approvals/{id}/resolve", d.hApprovalResolve)
 	gate("POST /access-requests/{id}/resolve", d.hAccessRequestResolve)
 	gate("POST /access-requests/{id}/revoke", d.hAccessRequestRevoke)
+	gate("POST /grants/revoke", d.hGrantRevoke)
 	gate("POST /audit/prune", d.hAuditPrune)
 	gate("PUT /settings/audit-retention", d.hAuditRetentionSet)
 	return mux
@@ -954,6 +955,37 @@ func (d *Daemon) hAccessRequestRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 	d.publish("access.revoked", map[string]any{"id": id})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// hGrantRevoke withdraws a whole grant: it removes every policy rule for (agent, upstream) and
+// marks matching granted access-requests "revoked". This is the grant-scoped successor to the
+// per-request revoke (hAccessRequestRevoke) — the Access UI anchors Revoke to the grant, not a
+// history row, since one grant can be the product of several resolved access-requests. Gated
+// (operator session required) — see apiMux.
+func (d *Daemon) hGrantRevoke(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		AgentID    string `json:"agent_id"`
+		UpstreamID string `json:"upstream_id"`
+	}
+	if err := decode(r, &body); err != nil {
+		adminErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if body.UpstreamID == "" {
+		adminErr(w, http.StatusBadRequest, "upstream_id required")
+		return
+	}
+	removed, err := d.policy.DeleteBySubjectUpstream(body.AgentID, body.UpstreamID)
+	if err != nil {
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := d.access.MarkRevokedBySubjectUpstream(body.AgentID, body.UpstreamID); err != nil {
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	d.publish("access.revoked", map[string]any{"agent_id": body.AgentID, "upstream_id": body.UpstreamID})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "rules_removed": removed})
 }
 
 // hOIDCDiscover fetches an OpenID Connect provider's discovery document for an operator-entered

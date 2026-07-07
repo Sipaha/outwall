@@ -321,6 +321,15 @@ export function revokeAccessRequest(id: string): Promise<{ ok: boolean }> {
   return request('POST', `/access-requests/${encodeURIComponent(id)}/revoke`)
 }
 
+/**
+ * Revoke a whole grant by (agent, upstream) (privileged) — removes every policy rule for the pair
+ * and marks its granted access-requests "revoked". The grant-scoped successor to
+ * revokeAccessRequest: the Access UI anchors Revoke to the grant, not a history row.
+ */
+export function revokeGrant(agentId: string, upstreamId: string): Promise<{ ok: boolean; rules_removed: number }> {
+  return request('POST', '/grants/revoke', { agent_id: agentId, upstream_id: upstreamId })
+}
+
 // --- Audit ---
 
 export function listAudit(limit = 50): Promise<AuditEntry[]> {

@@ -161,6 +161,63 @@ func TestAccessRequestRevokeRemovesRuleAndIsGated(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, req(t, h, "POST", "/access-requests/nope/revoke", "").Code)
 }
 
+func TestGrantRevokeRemovesRuleAndIsGated(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	wu := req(t, h, "POST", "/upstreams", `{"name":"gh","base_url":"https://api.github.com","auth":{"type":"none"}}`)
+	require.Equal(t, http.StatusOK, wu.Code)
+	var up map[string]string
+	require.NoError(t, json.Unmarshal(wu.Body.Bytes(), &up))
+
+	wa := req(t, h, "POST", "/agents/register", `{"name":"claude"}`)
+	require.Equal(t, http.StatusOK, wa.Code)
+	var reg map[string]string
+	require.NoError(t, json.Unmarshal(wa.Body.Bytes(), &reg))
+	agentID := reg["id"]
+
+	// Simulate a prior grant: an access-request record resolved to "granted", plus the rule it
+	// produced.
+	accReq, err := d.access.Create(agentID, up["id"], "ci access")
+	require.NoError(t, err)
+	wres := req(t, h, "POST", "/access-requests/"+accReq.ID+"/resolve", `{"status":"granted"}`)
+	require.Equal(t, http.StatusOK, wres.Code, wres.Body.String())
+	wr := req(t, h, "POST", "/rules",
+		`{"subject_agent_id":"`+agentID+`","upstream_id":"`+up["id"]+`","outcome":"allow","browse_methods":"GET","browse_path":"/**"}`)
+	require.Equal(t, http.StatusOK, wr.Code, wr.Body.String())
+
+	body := `{"agent_id":"` + agentID + `","upstream_id":"` + up["id"] + `"}`
+
+	// Gated: closing the operator session makes the revoke 403.
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/operator/session/lock", "").Code)
+	require.Equal(t, http.StatusForbidden, req(t, h, "POST", "/grants/revoke", body).Code)
+
+	// Re-open and revoke: the rule is gone and the access-request status is "revoked".
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/operator/session/open", `{"password":"pw"}`).Code)
+	wv := req(t, h, "POST", "/grants/revoke", body)
+	require.Equal(t, http.StatusOK, wv.Code, wv.Body.String())
+	var revokeResp map[string]any
+	require.NoError(t, json.Unmarshal(wv.Body.Bytes(), &revokeResp))
+	require.Equal(t, true, revokeResp["ok"])
+	require.EqualValues(t, 1, revokeResp["rules_removed"])
+
+	rules, err := d.policy.List()
+	require.NoError(t, err)
+	for _, r := range rules {
+		if r.SubjectAgentID == agentID && r.UpstreamID == up["id"] {
+			t.Fatal("rule for the revoked grant still present")
+		}
+	}
+	require.Empty(t, rules)
+
+	accessReqs, err := d.access.List()
+	require.NoError(t, err)
+	require.Len(t, accessReqs, 1)
+	require.Equal(t, accReq.ID, accessReqs[0].ID)
+	require.Equal(t, "revoked", accessReqs[0].Status)
+}
+
 func TestAgentDeleteCascadesRulesAndIsGated(t *testing.T) {
 	d := newDaemon(t)
 	h := d.AdminHandler()
