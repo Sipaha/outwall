@@ -35,6 +35,15 @@ describe('<UpstreamGroupCard>', () => {
     expect(screen.getByText(/агентов/)).toBeInTheDocument() // agent count in the header
   })
 
+  it('toggles collapse when the upstream header is clicked', () => {
+    render(<UpstreamGroupCard upstreamId="up1" upstream={up} grants={grants} agents={agents} onChanged={() => {}} />)
+    expect(screen.getByText('claude')).toBeInTheDocument() // expanded by default
+    fireEvent.click(screen.getByText('gitlab.example.com')) // click the upstream header
+    expect(screen.queryByText('claude')).not.toBeInTheDocument() // collapsed → nested agents hidden
+    fireEvent.click(screen.getByText('gitlab.example.com'))
+    expect(screen.getByText('claude')).toBeInTheDocument() // expanded again
+  })
+
   it('revokes a specific agent’s grant on this upstream', async () => {
     const spy = vi.spyOn(api, 'revokeGrant').mockResolvedValue({ ok: true, rules_removed: 1 })
     const onChanged = vi.fn()

@@ -1,4 +1,5 @@
-import { Globe, Database, Boxes } from 'lucide-react'
+import { useState } from 'react'
+import { Globe, Database, Boxes, ChevronRight } from 'lucide-react'
 import { revokeGrant, ApiError } from '../../lib/api'
 import type { Agent, Upstream } from '../../lib/types'
 import { grantExpiry } from '../../lib/grants'
@@ -7,10 +8,12 @@ import { RuleRow } from './RuleRow'
 import { useToastStore } from '../../lib/toast'
 
 /**
- * UpstreamGroupCard renders one upstream as the container in the by-upstream grouping: the upstream
- * header on top, then a nested section per agent that holds a grant on it (agent label + Revoke +
- * that agent's rules). This is the transpose of the by-agent AgentCard → UpstreamGrantCard nesting,
- * so the two toggle modes read differently (here the upstream is the outer object).
+ * UpstreamGroupCard renders one upstream as the collapsible container in the by-upstream grouping:
+ * the upstream header on top (chevron, hostname, kind, agent count) whose click toggles collapse,
+ * then a nested section per agent that holds a grant on it (agent label + Revoke + that agent's
+ * rules). This mirrors the by-agent AgentCard's collapse behaviour — it is the transpose of the
+ * AgentCard → UpstreamGrantCard nesting, so the two toggle modes read differently (here the upstream
+ * is the outer object).
  */
 export function UpstreamGroupCard({
   upstreamId,
@@ -25,6 +28,7 @@ export function UpstreamGroupCard({
   agents: Agent[]
   onChanged: () => void
 }) {
+  const [open, setOpen] = useState(true)
   const push = useToastStore((s) => s.push)
   const iconKind = upstream?.profile ? 'citeck' : upstream?.kind
   const host = upstream?.name ?? upstreamId
@@ -42,7 +46,11 @@ export function UpstreamGroupCard({
 
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
-      <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-3.5 py-2.5">
+      <div
+        onClick={() => setOpen((o) => !o)}
+        className="flex cursor-pointer select-none items-center gap-2 border-b border-border bg-muted/30 px-3.5 py-2.5"
+      >
+        <ChevronRight size={14} className={`text-muted-foreground ${open ? 'rotate-90 transition' : 'transition'}`} />
         {iconKind === 'k8s' ? (
           <Boxes size={15} className="text-muted-foreground" />
         ) : iconKind === 'citeck' ? (
@@ -57,6 +65,7 @@ export function UpstreamGroupCard({
           {grants.length === 1 ? 'агент' : 'агентов'}
         </span>
       </div>
+      {open && (
       <div className="space-y-2.5 px-3.5 py-3">
         {grants.map((g) => {
           const agent = agents.find((a) => a.id === g.agentId)
@@ -88,6 +97,7 @@ export function UpstreamGroupCard({
           )
         })}
       </div>
+      )}
     </div>
   )
 }
