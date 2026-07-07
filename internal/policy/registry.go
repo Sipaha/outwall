@@ -227,6 +227,19 @@ func dedupe(xs []string) []string {
 	return out
 }
 
+// Renew sets a rule's expiry to expiresAt (zero time ⇒ "" = never expires). Used by the operator's
+// renew action so an expired-but-valuable rule can be extended instead of recreated (ADR-0045).
+func (r *Registry) Renew(id string, expiresAt time.Time) error {
+	expiresStr := ""
+	if !expiresAt.IsZero() {
+		expiresStr = expiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	if _, err := r.store.DB().Exec(`UPDATE rules SET expires_at=? WHERE id=?`, expiresStr, id); err != nil {
+		return fmt.Errorf("renew rule: %w", err)
+	}
+	return nil
+}
+
 // Delete removes a rule by ID.
 func (r *Registry) Delete(id string) error {
 	_, err := r.store.DB().Exec(`DELETE FROM rules WHERE id=?`, id)

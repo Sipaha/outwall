@@ -212,6 +212,25 @@ func TestRuleExpiresAtRoundTrip(t *testing.T) {
 	require.True(t, got2[0].ExpiresAt.IsZero())
 }
 
+func TestRenew(t *testing.T) {
+	r := newReg(t)
+	past := time.Now().UTC().Add(-time.Hour)
+	out, err := r.Create(Rule{UpstreamID: "u1", Outcome: Allow, BrowsePath: "/**", ExpiresAt: past})
+	require.NoError(t, err)
+
+	future := time.Now().UTC().Add(24 * time.Hour)
+	require.NoError(t, r.Renew(out.ID, future))
+	got, err := r.ForUpstream("u1")
+	require.NoError(t, err)
+	require.WithinDuration(t, future, got[0].ExpiresAt, time.Millisecond)
+
+	// Zero time clears expiry (make permanent).
+	require.NoError(t, r.Renew(out.ID, time.Time{}))
+	got, err = r.ForUpstream("u1")
+	require.NoError(t, err)
+	require.True(t, got[0].ExpiresAt.IsZero())
+}
+
 func TestCreateManyAtomic(t *testing.T) {
 	reg := newReg(t)
 
