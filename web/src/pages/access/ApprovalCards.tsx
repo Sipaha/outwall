@@ -368,6 +368,36 @@ function K8sAccessCard({ approval, onResolve }: CardProps) {
   )
 }
 
+// presetScopeFromPreview derives the scope badge from what the preset ACTUALLY creates (the live
+// `previewPreset` rules), never from its name. Safety asymmetry: understating scope (READ on a
+// grant that can write) is dangerous, so READ is shown ONLY when EVERY rule is a recognised
+// read-only form; any write signal is READ/WRITE; anything unrecognised — or the preview not yet
+// loaded — falls back to a neutral badge rather than a possibly-wrong READ.
+//
+// Preview rule strings come from summarizeTemplate (internal/daemon/admin_preset.go):
+//   browse:  "<outcome> browse <methods> <path>"     e.g. "allow browse GET,HEAD /**"
+//   profile: "<outcome> <profile> <paramsJSON>"      e.g. `allow citeck {"op":"write",...}`
+function presetScopeFromPreview(preview: string[]): {
+  label: string
+  kind: 'read' | 'write' | 'browse'
+} {
+  const NEUTRAL = { label: 'СМ. НИЖЕ', kind: 'browse' as const }
+  if (preview.length === 0) return NEUTRAL // preview not loaded yet — don't assert a scope
+
+  const isWrite = (r: string) =>
+    /"op"\s*:\s*"write"/.test(r) || /\bbrowse\b[^\n]*\b(POST|PUT|PATCH|DELETE)\b/i.test(r)
+  if (preview.some(isWrite)) return { label: 'READ/WRITE', kind: 'write' }
+
+  // A rule is provably read-only only in a recognised shape: an allow-browse limited to GET/HEAD,
+  // or an allow-profile with "op":"read". Any other shape → neutral (we can't prove read-only).
+  const isReadOnly = (r: string) =>
+    /^allow\s+browse\s+(?:GET|HEAD)(?:,(?:GET|HEAD))*\s+\S+$/i.test(r) ||
+    /^allow\s+\S+\s+.*"op"\s*:\s*"read"/i.test(r)
+  if (preview.every(isReadOnly)) return { label: 'READ', kind: 'read' }
+
+  return NEUTRAL
+}
+
 /** MCP preset card: editable slots (seeded from the requested bindings) + a live rule preview. */
 function PresetCard({ approval, onResolve }: CardProps) {
   const preset = approval.preset
@@ -392,16 +422,7 @@ function PresetCard({ approval, onResolve }: CardProps) {
     setBindings((b) => ({ ...b, [key]: value }))
   }
 
-  // Scope is derived from what the preset ACTUALLY creates (the live preview), not from its
-  // name — a `browse-get` preset only grants GET/HEAD browse, so it must read READ, not
-  // READ/WRITE. A rule is a write iff it mutates Records (`"op":"write"`) or allows a mutating
-  // browse method. Until the preview loads, default to the safer READ.
-  const grantsWrite = preview.some(
-    (r) => /"op"\s*:\s*"write"/.test(r) || /\bbrowse\b[^\n]*\b(POST|PUT|PATCH|DELETE)\b/i.test(r),
-  )
-  const presetScope = grantsWrite
-    ? { label: 'READ/WRITE', kind: 'write' as const }
-    : { label: 'READ', kind: 'read' as const }
+  const presetScope = presetScopeFromPreview(preview)
 
   return (
     <div className={cardClass}>

@@ -29,4 +29,13 @@ describe('<PresetCard> scope badge (derived from the live preview, not the id)',
     render(<ApprovalCard approval={presetApproval('citeck-readwrite', 'ReadWrite')} onResolve={() => {}} />)
     await waitFor(() => expect(screen.getByText('READ/WRITE')).toBeInTheDocument())
   })
+
+  it('an unrecognised (not provably read-only) rule shape is neutral, never READ', async () => {
+    // browse with ANY method ("*") is not provably GET/HEAD-only → must not claim READ.
+    vi.spyOn(api, 'previewPreset').mockResolvedValue({ rules: ['allow browse * /**'] })
+    render(<ApprovalCard approval={presetApproval('some-preset', 'Some')} onResolve={() => {}} />)
+    await waitFor(() => expect(screen.getByText('СМ. НИЖЕ')).toBeInTheDocument())
+    expect(screen.queryByText('READ')).not.toBeInTheDocument()
+    expect(screen.queryByText('READ/WRITE')).not.toBeInTheDocument()
+  })
 })
