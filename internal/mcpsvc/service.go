@@ -99,6 +99,9 @@ type AccessResult struct {
 	BasePath  string `json:"base_path"`
 	Memo      string `json:"memo"`
 	BrowseURL string `json:"browse_url,omitempty"` // https://<name>.<browse-domain>:<port> for http upstreams
+	// Hint carries profile-specific advice for the requested preset (e.g. steer a Citeck upstream's
+	// read access to citeck-readonly). Sourced from the upstream's server-profile — empty otherwise.
+	Hint string `json:"hint,omitempty"`
 }
 
 // Identity is the whoami payload (the agent's own view of itself).
@@ -212,6 +215,9 @@ func (s *Service) ListUpstreams(agentID string) ([]UpstreamInfo, error) {
 		}
 		profileName := u.Profile
 		presets := serverprofile.AvailablePresets(kind != upstream.KindK8s, profileName)
+		for i := range presets {
+			presets[i].Hint = serverprofile.PresetHint(profileName, presets[i].ID)
+		}
 		out = append(out, UpstreamInfo{
 			Name: u.Name, BaseURL: u.BaseURL, Kind: kind, Profile: profileName,
 			Status: st, Presets: presets,
@@ -500,6 +506,7 @@ func (s *Service) RequestPreset(agentID string, in RequestPresetInput) (AccessRe
 	if err := serverprofile.ValidateBindings(preset.Slots, serverprofile.Bindings(in.Bindings)); err != nil {
 		return AccessResult{}, fmt.Errorf("invalid preset bindings: %w", err)
 	}
+	hint := serverprofile.PresetHint(up.Profile, in.PresetID)
 
 	// Dedupe: the same preset already awaiting a decision for this agent+upstream → don't raise a second.
 	if s.pendingExists(func(p approval.Pending) bool {
@@ -507,7 +514,7 @@ func (s *Service) RequestPreset(agentID string, in RequestPresetInput) (AccessRe
 			p.PresetID == in.PresetID
 	}) {
 		res := AccessResult{Status: "pending", BasePath: "/" + up.Name,
-			Memo: "preset already submitted — call get_access (it waits for the decision)"}
+			Memo: "preset already submitted — call get_access (it waits for the decision)", Hint: hint}
 		res.BrowseURL = s.browseURL(up)
 		return res, nil
 	}
@@ -522,7 +529,7 @@ func (s *Service) RequestPreset(agentID string, in RequestPresetInput) (AccessRe
 		return AccessResult{}, err
 	}
 	res := AccessResult{Status: "pending", BasePath: "/" + up.Name,
-		Memo: "preset submitted for approval — call get_access (it waits for the decision)"}
+		Memo: "preset submitted for approval — call get_access (it waits for the decision)", Hint: hint}
 	res.BrowseURL = s.browseURL(up)
 	return res, nil
 }

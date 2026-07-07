@@ -23,3 +23,27 @@ func TestRegisterAndGet(t *testing.T) {
 	_, ok = Get("nope")
 	require.False(t, ok)
 }
+
+// fakeAdvisor is a profile that implements the optional PresetAdvisor capability.
+type fakeAdvisor struct{ fakeProfile }
+
+func (fakeAdvisor) PresetHint(presetID string) string {
+	if presetID == "browse-get" {
+		return "use the better preset"
+	}
+	return ""
+}
+
+func TestPresetHint(t *testing.T) {
+	Register("adv-x", fakeAdvisor{fakeProfile{name: "adv-x"}})
+	Register("plain-x", fakeProfile{name: "plain-x"})
+
+	// A profile implementing PresetAdvisor returns its advice for the matching preset...
+	require.Equal(t, "use the better preset", PresetHint("adv-x", "browse-get"))
+	// ...and "" for a preset it has no advice on.
+	require.Equal(t, "", PresetHint("adv-x", "something-else"))
+	// A profile that doesn't implement PresetAdvisor → "".
+	require.Equal(t, "", PresetHint("plain-x", "browse-get"))
+	// An unregistered profile → "".
+	require.Equal(t, "", PresetHint("nope", "browse-get"))
+}

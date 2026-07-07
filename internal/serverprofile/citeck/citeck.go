@@ -18,6 +18,19 @@ type profile struct{}
 
 func (profile) Name() string { return "citeck" }
 
+// PresetHint steers agents to the right read preset on a Citeck upstream. Bare browse-get grants
+// only GET/HEAD, which does not authorize the Records queries (POST) the Citeck web app issues, so
+// read access should use citeck-readonly (browse + Records read). This text lives in the plugin,
+// not the core (which stays profile-agnostic) — see serverprofile.PresetAdvisor / PresetHint.
+func (profile) PresetHint(presetID string) string {
+	if presetID == "browse-get" {
+		return "Citeck upstream: for read-only access request the citeck-readonly preset, not " +
+			"browse-get — browse-get allows only GET/HEAD and will not authorize the Records " +
+			"queries (POST) the app makes. Use citeck-readwrite when write access is needed."
+	}
+	return ""
+}
+
 func (profile) Classify(r serverprofile.Request) (serverprofile.Operation, bool, error) {
 	return classify(r)
 }

@@ -60,3 +60,12 @@ func findPreset(t *testing.T, id string) (serverprofile.Preset, bool) {
 	}
 	return serverprofile.Preset{}, false
 }
+
+func TestPresetHintSteersBrowseGetToReadonly(t *testing.T) {
+	p := New()
+	adv, ok := p.(serverprofile.PresetAdvisor)
+	require.True(t, ok, "citeck profile must implement PresetAdvisor")
+	require.Contains(t, adv.PresetHint("browse-get"), "citeck-readonly")
+	require.Empty(t, adv.PresetHint("citeck-readonly"))
+	require.Empty(t, adv.PresetHint("citeck-readwrite"))
+}

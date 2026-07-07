@@ -95,6 +95,9 @@ type Preset struct {
 	Label string                                 `json:"label"`
 	Slots []PresetSlot                           `json:"slots"`
 	Build func(Bindings) ([]RuleTemplate, error) `json:"-"`
+	// Hint is optional, profile-supplied advice about using this preset on a given upstream (filled
+	// by the caller via PresetHint; empty by default). E.g. steer a Citeck upstream off bare browse-get.
+	Hint string `json:"hint,omitempty"`
 }
 
 // ValidateBindings checks b against slots: every Required slot present and non-empty; "*" allowed
@@ -227,6 +230,28 @@ func Get(name string) (Profile, bool) {
 	defer mu.RUnlock()
 	p, ok := registry[name]
 	return p, ok
+}
+
+// PresetAdvisor is an optional Profile capability: given a preset id an agent may use on this
+// profile's upstream, PresetHint returns advisory text steering the agent to a better choice, or
+// "" for none. Profiles that don't implement it offer no advice.
+type PresetAdvisor interface {
+	PresetHint(presetID string) string
+}
+
+// PresetHint returns the named profile's advice for a preset id, or "" when the profile is
+// unregistered or offers none. This lets the core surface profile-specific guidance — e.g. steer a
+// Citeck upstream's read access to citeck-readonly — without embedding any profile logic in core.
+func PresetHint(profile, presetID string) string {
+	p, ok := Get(profile)
+	if !ok {
+		return ""
+	}
+	adv, ok := p.(PresetAdvisor)
+	if !ok {
+		return ""
+	}
+	return adv.PresetHint(presetID)
 }
 
 // Names returns the registered profile names (unordered).
