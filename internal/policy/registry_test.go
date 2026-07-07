@@ -191,6 +191,27 @@ func TestListOrdersNewestFirst(t *testing.T) {
 	require.Equal(t, []string{r3.ID, r2.ID, r1.ID}, []string{got[0].ID, got[1].ID, got[2].ID})
 }
 
+func TestRuleExpiresAtRoundTrip(t *testing.T) {
+	reg := newReg(t)
+	exp := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Nanosecond)
+	out, err := reg.Create(Rule{UpstreamID: "u1", Outcome: Allow, BrowsePath: "/**", ExpiresAt: exp})
+	require.NoError(t, err)
+	require.WithinDuration(t, exp, out.ExpiresAt, time.Millisecond)
+
+	got, err := reg.ForUpstream("u1")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.WithinDuration(t, exp, got[0].ExpiresAt, time.Millisecond)
+
+	// Zero value persists as "" and reads back zero (never expires).
+	out2, err := reg.Create(Rule{UpstreamID: "u2", Outcome: Allow, BrowsePath: "/**"})
+	require.NoError(t, err)
+	require.True(t, out2.ExpiresAt.IsZero())
+	got2, err := reg.ForUpstream("u2")
+	require.NoError(t, err)
+	require.True(t, got2[0].ExpiresAt.IsZero())
+}
+
 func TestCreateManyAtomic(t *testing.T) {
 	reg := newReg(t)
 

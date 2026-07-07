@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS rules (
 	profile_params     TEXT NOT NULL DEFAULT '{}',
 	browse_methods     TEXT NOT NULL DEFAULT '',
 	browse_path        TEXT NOT NULL DEFAULT '',
+	expires_at         TEXT NOT NULL DEFAULT '',
 	created_at         TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS rules_by_upstream ON rules(upstream_id);
@@ -158,6 +159,12 @@ var migrations = []migration{
 	{"access_request_edits", func(tx *sql.Tx) error {
 		if _, err := tx.Exec(`ALTER TABLE access_requests ADD COLUMN edits TEXT NOT NULL DEFAULT ''`); err != nil {
 			return fmt.Errorf("access_request_edits: %w", err)
+		}
+		return nil
+	}},
+	{"rule_expiry", func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`ALTER TABLE rules ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("rule_expiry: %w", err)
 		}
 		return nil
 	}},

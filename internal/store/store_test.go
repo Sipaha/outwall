@@ -162,6 +162,7 @@ func TestAgentLastSeenColumn(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, status TEXT NOT NULL, created_at TEXT NOT NULL);
 		CREATE TABLE access_requests (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, upstream_id TEXT NOT NULL, purpose TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, resolved_at TEXT NOT NULL DEFAULT '');
+		CREATE TABLE rules (id TEXT PRIMARY KEY, subject_agent_id TEXT NOT NULL DEFAULT '', upstream_id TEXT NOT NULL, op_method TEXT NOT NULL DEFAULT '', op_path_template TEXT NOT NULL DEFAULT '', op_query_template TEXT NOT NULL DEFAULT '{}', op_body_template TEXT NOT NULL DEFAULT '{}', op_value_policies TEXT NOT NULL DEFAULT '{}', outcome TEXT NOT NULL, rate_limit_per_min INTEGER NOT NULL DEFAULT 0, k8s_namespace TEXT NOT NULL DEFAULT '', k8s_resource TEXT NOT NULL DEFAULT '', k8s_verb TEXT NOT NULL DEFAULT '', profile TEXT NOT NULL DEFAULT '', profile_params TEXT NOT NULL DEFAULT '{}', browse_methods TEXT NOT NULL DEFAULT '', browse_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
 		PRAGMA user_version = 3;`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
@@ -171,7 +172,19 @@ func TestAgentLastSeenColumn(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, s2.Close()) })
 	_, err = s2.DB().Exec(`SELECT last_seen_at FROM agents LIMIT 0`)
 	require.NoError(t, err)
+	_, err = s2.DB().Exec(`SELECT expires_at FROM rules LIMIT 0`)
+	require.NoError(t, err)
 	require.Equal(t, len(migrations), userVersion(t, s2))
+}
+
+func TestRuleExpiresAtColumn(t *testing.T) {
+	// Fresh DB from current schema has the column.
+	s, err := Open(filepath.Join(t.TempDir(), "fresh.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	_, err = s.DB().Exec(`SELECT expires_at FROM rules LIMIT 0`)
+	require.NoError(t, err)
+	require.Equal(t, len(migrations), userVersion(t, s))
 }
 
 func TestSettingsRoundTrip(t *testing.T) {

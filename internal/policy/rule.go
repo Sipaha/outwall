@@ -30,6 +30,10 @@ type Rule struct {
 	RateLimitPerMin int
 	CreatedAt       time.Time
 
+	// ExpiresAt is the grant expiry: the zero value means never expires; otherwise Decide treats
+	// the rule as absent once now >= ExpiresAt (see ADR-0045). Persisted as RFC3339Nano ("" = never).
+	ExpiresAt time.Time
+
 	// HTTP operation rule (empty on k8s rules):
 	OpMethod        string                 // e.g. "GET"; matched case-insensitively
 	OpPathTemplate  string                 // optemplate path with {name:type} placeholders
