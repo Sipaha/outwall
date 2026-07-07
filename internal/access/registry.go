@@ -199,6 +199,25 @@ func (r *Registry) MarkRevoked(id string) error {
 	return nil
 }
 
+// MarkRevokedBySubjectUpstream marks every currently-granted request for (agentID, upstreamID)
+// "revoked" and stamps resolved_at. Used by the operator's grant revoke (which also removes the
+// underlying policy rules). Returns the number of requests marked. Pending/denied rows are left
+// untouched.
+func (r *Registry) MarkRevokedBySubjectUpstream(agentID, upstreamID string) (int64, error) {
+	res, err := r.store.DB().Exec(
+		`UPDATE access_requests SET status=?, resolved_at=? WHERE agent_id=? AND upstream_id=? AND status=?`,
+		StatusRevoked, time.Now().UTC().Format(time.RFC3339Nano), agentID, upstreamID, StatusGranted,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("mark revoked by subject+upstream: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("rows affected: %w", err)
+	}
+	return n, nil
+}
+
 // Resolve records the operator's decision (granted/denied/dismissed) and stamps resolved_at.
 func (r *Registry) Resolve(id, status string) error {
 	if !validResolveStatus(status) {

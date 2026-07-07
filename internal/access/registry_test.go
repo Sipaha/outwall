@@ -83,3 +83,32 @@ func TestGrantLatest(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 }
+
+func TestMarkRevokedBySubjectUpstream(t *testing.T) {
+	reg := newReg(t)
+	_, err := reg.Create("ag1", "up1", "p1")
+	require.NoError(t, err)
+	_, err = reg.GrantLatest("ag1", "up1")
+	require.NoError(t, err)
+	// A second, still-pending request for the same pair must NOT be revoked.
+	_, err = reg.Create("ag1", "up1", "p2")
+	require.NoError(t, err)
+
+	n, err := reg.MarkRevokedBySubjectUpstream("ag1", "up1")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), n)
+
+	all, err := reg.List()
+	require.NoError(t, err)
+	var revoked, pending int
+	for _, req := range all {
+		switch req.Status {
+		case StatusRevoked:
+			revoked++
+		case StatusPending:
+			pending++
+		}
+	}
+	require.Equal(t, 1, revoked)
+	require.Equal(t, 1, pending)
+}
