@@ -122,7 +122,7 @@ func ruleMatches(r serverprofile.Rule, op serverprofile.Operation) bool {
 		return false
 	}
 	for _, res := range op.Resources {
-		if !matchSource(p.SourceID, res.Resource) || !matchWorkspace(p.Workspace, res.Scope) {
+		if !matchSource(p.SourceID, res.Resource) || !matchWorkspace(p.Workspace, res.Scope, op.Kind) {
 			return false
 		}
 	}
@@ -182,14 +182,20 @@ func matchSource(ruleSrc, src string) bool {
 }
 
 // matchWorkspace: an empty/"*" rule workspace matches anything (incl. all/unknown). A concrete rule
-// workspace matches only a concrete request workspace via glob — never scopeAll/scopeUnknown (those
-// cannot be proven to be within a specific workspace).
-func matchWorkspace(ruleWs, scope string) bool {
+// workspace matches only a concrete request workspace via glob. scopeAll (a query spanning all
+// workspaces) can never be proven within one workspace, so a concrete rule never matches it.
+// scopeUnknown (a per-ref op whose workspace is not derivable) is workspace-relaxed for READS only:
+// a get-atts by exact ref is authorized on a concrete-workspace read grant (the ref is exact and
+// read is low-risk; the source gate still applies — see ADR-0043). Writes by ref (mutate/delete)
+// stay conservative: a concrete-workspace write rule does not match an unprovable workspace.
+func matchWorkspace(ruleWs, scope, opKind string) bool {
 	if ruleWs == "" || ruleWs == "*" {
 		return true
 	}
 	switch scope {
-	case scopeAll, scopeUnknown:
+	case scopeUnknown:
+		return opKind == "read"
+	case scopeAll:
 		return false
 	default:
 		return matchGlob(ruleWs, scope)

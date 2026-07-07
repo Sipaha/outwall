@@ -67,7 +67,9 @@ func wsAllowedForRead(source, ws string, agent, any []serverprofile.Rule) bool {
 			if p.Op != "" && p.Op != "read" {
 				continue
 			}
-			if !matchSource(p.SourceID, source) || !matchWorkspace(p.Workspace, ws) {
+			// ws here is always a concrete workspace (filterable reads exclude scopeUnknown); the
+			// opKind only affects the scopeUnknown branch, so "read" is behaviour-preserving.
+			if !matchSource(p.SourceID, source) || !matchWorkspace(p.Workspace, ws, "read") {
 				continue
 			}
 			switch r.Outcome {
