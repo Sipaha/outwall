@@ -1,12 +1,21 @@
 import { useCallback, useEffect, useState } from 'react'
-import { listAudit, getAudit, ApiError } from '../lib/api'
-import type { AuditEntry, AuditDetail } from '../lib/types'
+import { useSearchParams } from 'react-router'
+import { listAudit, getAudit, listAccessRequests, ApiError } from '../lib/api'
+import type { AuditEntry, AuditDetail, AccessRequest } from '../lib/types'
 import { useEventStore } from '../lib/events'
 import { DataTable } from '../components/DataTable'
 import { StatusBadge } from '../components/StatusBadge'
+import { Tabs } from '../components/Tabs'
 import { Modal } from '../components/Modal'
 import { JsonView } from '../components/JsonView'
 import { useToastStore } from '../lib/toast'
+
+type Tab = 'traffic' | 'requests'
+
+const AUDIT_TABS = [
+  { id: 'traffic', label: 'Трафик' },
+  { id: 'requests', label: 'Запросы прав' },
+]
 
 function fmtTime(iso: string): string {
   const d = new Date(iso)
@@ -30,10 +39,68 @@ function MetaRow({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
+/** Read-only history of access-request intents (the "Запросы прав" tab). No actions here — the
+ *  live grant actions (revoke, resolve) now live on the Access page; this is audit history only. */
+function AccessRequestsPanel({ agentFilter }: { agentFilter: string | null }) {
+  const [requests, setRequests] = useState<AccessRequest[]>([])
+  const push = useToastStore((s) => s.push)
+
+  const counters = useEventStore((s) => s.counters)
+  const counter = (counters['access.requested'] ?? 0) + (counters['access.revoked'] ?? 0)
+
+  const load = useCallback(() => {
+    listAccessRequests()
+      .then((r) => setRequests(r ?? []))
+      .catch((err) => {
+        push('error', err instanceof ApiError ? err.message : 'Failed to load access requests')
+      })
+  }, [push])
+
+  useEffect(load, [load, counter])
+
+  const rows = agentFilter ? requests.filter((r) => r.agent_id === agentFilter) : requests
+
+  return (
+    <section className="rounded-lg border border-border bg-card">
+      <DataTable
+        rows={rows}
+        rowKey={(r) => r.id}
+        empty="No access requests yet"
+        columns={[
+          { header: 'Agent', cell: (r) => r.agent_name || r.agent_id },
+          { header: 'Upstream', cell: (r) => r.upstream_name || r.upstream_id },
+          { header: 'Purpose', cell: (r) => r.purpose, className: 'max-w-xs truncate' },
+          {
+            header: 'Status',
+            cell: (r) => (
+              <div className="flex flex-col gap-0.5">
+                <StatusBadge status={r.status} />
+                {r.status === 'denied' && r.reason && (
+                  <span className="text-[11px] text-muted-foreground">{r.reason}</span>
+                )}
+              </div>
+            ),
+          },
+          { header: 'Requested', cell: (r) => fmtTime(r.created_at), className: 'text-muted-foreground whitespace-nowrap' },
+          {
+            header: 'Resolved',
+            cell: (r) => (r.resolved_at ? fmtTime(r.resolved_at) : '—'),
+            className: 'text-muted-foreground whitespace-nowrap',
+          },
+        ]}
+      />
+    </section>
+  )
+}
+
 export function Audit() {
+  const [searchParams] = useSearchParams()
+  const [tab, setTab] = useState<Tab>(searchParams.get('tab') === 'requests' ? 'requests' : 'traffic')
   const [entries, setEntries] = useState<AuditEntry[]>([])
   const [detail, setDetail] = useState<AuditDetail | null>(null)
   const push = useToastStore((s) => s.push)
+
+  const agentFilter = searchParams.get('agent')
 
   const counter = useEventStore((s) => s.counters['audit.recorded'])
 
@@ -62,39 +129,45 @@ export function Audit() {
     <div className="space-y-6 p-6">
       <h1 className="text-lg font-semibold">Audit</h1>
 
-      <section className="rounded-lg border border-border bg-card">
-        <DataTable
-          rows={entries}
-          rowKey={(e) => e.id}
-          empty="No audit entries yet"
-          columns={[
-            { header: 'When', cell: (e) => fmtTime(e.ts), className: 'text-muted-foreground whitespace-nowrap' },
-            { header: 'Agent', cell: (e) => e.agent_name || e.agent_id },
-            { header: 'Upstream', cell: (e) => e.upstream_name || e.upstream_id },
-            { header: 'Method', cell: (e) => e.method, className: 'font-mono' },
-            { header: 'Path', cell: (e) => e.path, className: 'font-mono max-w-xs truncate' },
-            {
-              header: 'Status',
-              cell: (e) => <span className={`font-mono ${statusClass(e.status_code)}`}>{e.status_code || '—'}</span>,
-            },
-            { header: 'Dur', cell: (e) => `${e.duration_ms}ms`, className: 'font-mono text-muted-foreground' },
-            { header: 'Decision', cell: (e) => <StatusBadge status={e.decision} /> },
-            {
-              header: '',
-              cell: (e) => (
-                <div className="flex justify-end">
-                  <button
-                    onClick={() => openDetail(e.id)}
-                    className="rounded bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-muted/70"
-                  >
-                    View
-                  </button>
-                </div>
-              ),
-            },
-          ]}
-        />
-      </section>
+      <Tabs tabs={AUDIT_TABS} active={tab} onChange={(id) => setTab(id as Tab)} />
+
+      {tab === 'traffic' ? (
+        <section className="rounded-lg border border-border bg-card">
+          <DataTable
+            rows={entries}
+            rowKey={(e) => e.id}
+            empty="No audit entries yet"
+            columns={[
+              { header: 'When', cell: (e) => fmtTime(e.ts), className: 'text-muted-foreground whitespace-nowrap' },
+              { header: 'Agent', cell: (e) => e.agent_name || e.agent_id },
+              { header: 'Upstream', cell: (e) => e.upstream_name || e.upstream_id },
+              { header: 'Method', cell: (e) => e.method, className: 'font-mono' },
+              { header: 'Path', cell: (e) => e.path, className: 'font-mono max-w-xs truncate' },
+              {
+                header: 'Status',
+                cell: (e) => <span className={`font-mono ${statusClass(e.status_code)}`}>{e.status_code || '—'}</span>,
+              },
+              { header: 'Dur', cell: (e) => `${e.duration_ms}ms`, className: 'font-mono text-muted-foreground' },
+              { header: 'Decision', cell: (e) => <StatusBadge status={e.decision} /> },
+              {
+                header: '',
+                cell: (e) => (
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => openDetail(e.id)}
+                      className="rounded bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-muted/70"
+                    >
+                      View
+                    </button>
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </section>
+      ) : (
+        <AccessRequestsPanel agentFilter={agentFilter} />
+      )}
 
       <Modal
         open={detail !== null}

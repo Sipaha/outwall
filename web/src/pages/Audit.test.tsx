@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { MemoryRouter } from 'react-router'
 import { Audit } from './Audit'
 import * as api from '../lib/api'
 
@@ -38,7 +39,11 @@ describe('<Audit>', () => {
       ],
     })
 
-    render(<Audit />)
+    render(
+      <MemoryRouter initialEntries={['/audit']}>
+        <Audit />
+      </MemoryRouter>,
+    )
     expect(await screen.findByRole('cell', { name: 'github' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'View' }))
@@ -47,5 +52,17 @@ describe('<Audit>', () => {
     // The masked header and the pretty-printed JSON body render in the detail modal.
     expect(await screen.findByText('***masked***')).toBeInTheDocument()
     expect(screen.getByText(/"ok": true/)).toBeInTheDocument()
+  })
+
+  it('shows the access-request history tab (read-only, all statuses)', async () => {
+    vi.spyOn(api, 'listAudit').mockResolvedValue([])
+    vi.spyOn(api, 'listAccessRequests').mockResolvedValue([
+      { id: 'q1', agent_id: 'ag1', agent_name: 'claude', upstream_id: 'up1', upstream_name: 'gitlab',
+        purpose: 'p', status: 'revoked', created_at: '2026-06-17T10:00:00Z', resolved_at: '2026-06-18T10:00:00Z' },
+    ])
+    render(<MemoryRouter initialEntries={['/audit?tab=requests']}><Audit /></MemoryRouter>)
+    expect(await screen.findByText('claude')).toBeInTheDocument()
+    expect(screen.getByText('revoked')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Revoke' })).not.toBeInTheDocument() // read-only
   })
 })
