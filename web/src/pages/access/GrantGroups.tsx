@@ -1,14 +1,14 @@
 import type { Agent, Upstream } from '../../lib/types'
 import type { Grant } from '../../lib/grants'
 import { AgentCard } from './AgentCard'
-import { UpstreamGrantCard } from './UpstreamGrantCard'
+import { UpstreamGroupCard } from './UpstreamGroupCard'
 
-/** GrantGroups renders the Access page's granted-rights list, grouped either by agent (one
- *  collapsible AgentCard per agent, including agents with zero grants — the Access page is the
- *  only place to see/manage agent metadata since the Agents page was removed) or by upstream
- *  (one header per upstream, with an agent-labelled UpstreamGrantCard per grant against it).
- *  Falls back to an empty-state message when there is nothing to show: no agents at all in
- *  by-agent mode, or no grants at all in by-upstream mode (which is grant-centric). */
+/** GrantGroups renders the Access page's granted-rights list in one of two transposed groupings:
+ *  by agent (a collapsible AgentCard per agent, including agents with zero grants — the Access page
+ *  is the only place to manage agent metadata since the Agents page was removed; upstreams nest
+ *  inside), or by upstream (an UpstreamGroupCard per upstream, with agents nested inside — the
+ *  "who can reach this upstream" view). Falls back to an empty-state when there is nothing to show:
+ *  no agents at all in by-agent mode, or no grants at all in by-upstream mode (grant-centric). */
 export function GrantGroups({
   grants, agents, upstreams, by, onChanged,
 }: {
@@ -47,26 +47,21 @@ export function GrantGroups({
       </div>
     )
   }
-  // by upstream: one group per upstream, each grant rendered as an UpstreamGrantCard (which already
-  // shows the upstream's hostname in its own header) with an "агент X" label above it — no separate
-  // upstream-name header here, since that would duplicate the hostname the card already renders.
+  // by upstream: the upstream is the container (one UpstreamGroupCard each), with its agents nested
+  // inside — the transpose of by-agent mode.
   const byUp = new Map<string, Grant[]>()
   for (const g of grants) byUp.set(g.upstreamId, [...(byUp.get(g.upstreamId) ?? []), g])
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       {[...byUp.entries()].map(([upId, gs]) => (
-        <div key={upId} className="space-y-1.5">
-          {gs.map((g) => {
-            const agent = agents.find((a) => a.id === g.agentId)
-            const up = upstreams.find((u) => u.id === upId)
-            return (
-              <div key={g.agentId}>
-                <div className="mb-1 px-1 text-[11px] text-muted-foreground">агент {agent?.name ?? g.agentId}</div>
-                <UpstreamGrantCard grant={g} upstream={up} onChanged={onChanged} />
-              </div>
-            )
-          })}
-        </div>
+        <UpstreamGroupCard
+          key={upId}
+          upstreamId={upId}
+          upstream={upstreams.find((u) => u.id === upId)}
+          grants={gs}
+          agents={agents}
+          onChanged={onChanged}
+        />
       ))}
     </div>
   )
