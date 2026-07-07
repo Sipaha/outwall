@@ -1,6 +1,7 @@
 import { Globe, Database, Boxes } from 'lucide-react'
 import { revokeGrant, ApiError } from '../../lib/api'
 import type { Agent, Upstream } from '../../lib/types'
+import { grantExpiry } from '../../lib/grants'
 import type { Grant } from '../../lib/grants'
 import { RuleRow } from './RuleRow'
 import { useToastStore } from '../../lib/toast'
@@ -60,6 +61,7 @@ export function UpstreamGroupCard({
         {grants.map((g) => {
           const agent = agents.find((a) => a.id === g.agentId)
           const name = agent?.name ?? g.agentId.slice(0, 8)
+          const exp = grantExpiry(g.rules)
           return (
             <div key={g.agentId} className="overflow-hidden rounded-lg border border-border bg-muted/20">
               <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
@@ -68,6 +70,8 @@ export function UpstreamGroupCard({
                 </span>
                 <span className="text-[13px] font-medium">{name}</span>
                 <span className="font-mono text-[11px] text-muted-foreground">{g.agentId.slice(0, 8)}</span>
+                {exp === 'expired' && <span className="rounded bg-destructive/15 px-1.5 text-[11px] text-destructive">истекло</span>}
+                {exp === 'expiring' && <span className="rounded bg-warning/15 px-1.5 text-[11px] text-warning">истекает</span>}
                 <button
                   onClick={() => revoke(g)}
                   className="ml-auto rounded border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:border-destructive/60 hover:text-destructive"

@@ -67,3 +67,24 @@ export function deriveGrants(rules: Rule[], requests: AccessRequest[]): Grant[] 
   }
   return [...byPair.values()]
 }
+
+/** isExpired reports whether a rule's expires_at (if any) is in the past. Kept as its own
+ *  function (rather than inlined `Date.now()` in a component body) so render stays pure. */
+export function isExpired(rule: Rule): boolean {
+  return !!rule.expires_at && new Date(rule.expires_at).getTime() < Date.now()
+}
+
+/** grantExpiry summarises a grant's rules: 'expired' if any rule is past its expiry, else
+ *  'expiring' if the soonest future expiry is under an hour away, else null (all permanent / far). */
+export function grantExpiry(rules: Rule[]): 'expired' | 'expiring' | null {
+  const now = Date.now()
+  let soonest = Infinity
+  for (const r of rules) {
+    if (!r.expires_at) continue
+    const t = new Date(r.expires_at).getTime()
+    if (t < now) return 'expired'
+    soonest = Math.min(soonest, t)
+  }
+  if (soonest !== Infinity && soonest - now < 3600_000) return 'expiring'
+  return null
+}

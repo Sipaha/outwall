@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { ChevronRight, Pencil, Trash2 } from 'lucide-react'
-import { deleteRule, ApiError } from '../../lib/api'
+import { deleteRule, renewRule, ApiError } from '../../lib/api'
 import type { Rule } from '../../lib/types'
-import { scopeOf, valueSummary } from '../../lib/grants'
+import { scopeOf, valueSummary, isExpired } from '../../lib/grants'
 import { ScopeBadge } from './scope'
 import { useToastStore } from '../../lib/toast'
 import { ValueSetEditor, NumberRangeEditor } from './valueEditors'
+import { RelTime } from '../../components/RelTime'
+import { DurationSelect, DEFAULT_TTL_SECONDS } from './DurationSelect'
 
 // segmentsOf splits a path template into fixed vs `{name:type}` variable pieces so the template can
 // render variable segments visually distinct from the fixed structure.
@@ -29,12 +31,15 @@ function segmentsOf(template: string): { text: string; variable: boolean }[] {
  *  number only — enum editing was dropped, see valueEditors.tsx). */
 export function RuleRow({ rule, onChanged }: { rule: Rule; onChanged: () => void }) {
   const [open, setOpen] = useState(false)
+  const [renewing, setRenewing] = useState(false)
+  const [ttl, setTtl] = useState(DEFAULT_TTL_SECONDS)
   const push = useToastStore((s) => s.push)
   const scope = scopeOf(rule)
   const summary = valueSummary(rule)
   const pols = rule.op_value_policies ?? {}
   const textVars = Object.entries(pols).filter(([, p]) => p.type === 'text')
   const numberVars = Object.entries(pols).filter(([, p]) => p.type === 'number')
+  const expired = isExpired(rule)
 
   async function remove() {
     try {
@@ -43,6 +48,17 @@ export function RuleRow({ rule, onChanged }: { rule: Rule; onChanged: () => void
       onChanged()
     } catch (err) {
       push('error', err instanceof ApiError ? err.message : 'Failed to delete operation')
+    }
+  }
+
+  async function renew() {
+    try {
+      await renewRule(rule.id, ttl)
+      push('success', 'Grant renewed')
+      setRenewing(false)
+      onChanged()
+    } catch (err) {
+      push('error', err instanceof ApiError ? err.message : 'Failed to renew')
     }
   }
 
@@ -74,6 +90,23 @@ export function RuleRow({ rule, onChanged }: { rule: Rule; onChanged: () => void
         </span>
         {summary && <span className="ml-1 text-[11px] text-muted-foreground">· {summary}</span>}
         <div className="ml-auto flex items-center gap-1">
+          {rule.expires_at &&
+            (expired ? (
+              <span className="rounded bg-destructive/15 px-1.5 text-[11px] text-destructive">истекло</span>
+            ) : (
+              <span className="text-[11px] text-muted-foreground" title="expires">
+                истекает <RelTime iso={rule.expires_at} />
+              </span>
+            ))}
+          {(expired || rule.expires_at) && (
+            <button
+              onClick={() => setRenewing((v) => !v)}
+              aria-label="Продлить"
+              className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground text-[11px]"
+            >
+              Продлить
+            </button>
+          )}
           <span className="mr-1 text-[11px] text-success">{rule.outcome}</span>
           {hasEditors && (
             <button
@@ -101,6 +134,14 @@ export function RuleRow({ rule, onChanged }: { rule: Rule; onChanged: () => void
           {numberVars.map(([name, p]) => (
             <NumberRangeEditor key={name} ruleID={rule.id} varName={name} policy={p} onChange={onChanged} />
           ))}
+        </div>
+      )}
+      {renewing && (
+        <div className="flex items-center gap-2 border-t border-border px-2.5 py-2">
+          <DurationSelect value={ttl} onChange={setTtl} />
+          <button onClick={renew} aria-label="ОК" className="rounded bg-primary px-2 py-1 text-[12px] text-primary-foreground">
+            ОК
+          </button>
         </div>
       )}
     </div>

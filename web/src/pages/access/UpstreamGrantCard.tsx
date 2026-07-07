@@ -1,5 +1,6 @@
 import { Globe, Database, Boxes } from 'lucide-react'
 import { revokeGrant, ApiError } from '../../lib/api'
+import { grantExpiry } from '../../lib/grants'
 import type { Grant } from '../../lib/grants'
 import type { Upstream } from '../../lib/types'
 import { RuleRow } from './RuleRow'
@@ -22,6 +23,7 @@ export function UpstreamGrantCard({
   const iconKind = upstream?.profile ? 'citeck' : upstream?.kind
   const Icon = iconKind === 'k8s' ? Boxes : iconKind === 'citeck' ? Database : Globe
   const host = upstream?.name ?? grant.upstreamId
+  const exp = grantExpiry(grant.rules)
 
   async function revoke() {
     try {
@@ -39,6 +41,8 @@ export function UpstreamGrantCard({
         <Icon size={15} className="text-muted-foreground" />
         <span className="font-mono text-[13px]">{host}</span>
         <span className="text-[11px] text-muted-foreground">· {kind}</span>
+        {exp === 'expired' && <span className="rounded bg-destructive/15 px-1.5 text-[11px] text-destructive">истекло</span>}
+        {exp === 'expiring' && <span className="rounded bg-warning/15 px-1.5 text-[11px] text-warning">истекает</span>}
         <button
           onClick={revoke}
           className="ml-auto rounded border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:border-destructive/60 hover:text-destructive"

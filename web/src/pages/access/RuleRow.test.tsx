@@ -33,4 +33,20 @@ describe('<RuleRow>', () => {
     await waitFor(() => expect(spy).toHaveBeenCalledWith('r1'))
     await waitFor(() => expect(onChanged).toHaveBeenCalled())
   })
+  it('shows an expired badge for a past expires_at and renews on click', async () => {
+    const spy = vi.spyOn(api, 'renewRule').mockResolvedValue({ ok: true })
+    const past = new Date(Date.now() - 3600_000).toISOString()
+    const pastRule = { ...rule, id: 'r1', expires_at: past }
+    render(<RuleRow rule={pastRule} onChanged={() => {}} />)
+    expect(screen.getByText('истекло')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Продлить' }))
+    fireEvent.change(screen.getByRole('combobox', { name: 'grant duration' }), { target: { value: '86400' } })
+    fireEvent.click(screen.getByRole('button', { name: 'ОК' }))
+    await waitFor(() => expect(spy).toHaveBeenCalledWith('r1', 86400))
+  })
+  it('shows no expired badge and no chip for a never-expiring rule', () => {
+    const neverRule = { ...rule, id: 'r2', expires_at: '' }
+    render(<RuleRow rule={neverRule} onChanged={() => {}} />)
+    expect(screen.queryByText('истекло')).not.toBeInTheDocument()
+  })
 })

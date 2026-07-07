@@ -16,6 +16,8 @@ const statusColor: Record<string, string> = {
   granted: C_RUNNING,
   denied: C_STALLED,
   dismissed: C_STOPPED,
+  revoked: C_STOPPED,
+  expired: C_STOPPED,
   // rule outcomes
   allow: C_RUNNING,
   deny: C_STALLED,
