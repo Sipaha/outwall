@@ -48,16 +48,18 @@ export function UpstreamGroupCard({
     <div className="overflow-hidden rounded-xl border border-border bg-card">
       <div
         onClick={() => setOpen((o) => !o)}
-        className="flex cursor-pointer select-none items-center gap-2 border-b border-border bg-muted/30 px-3.5 py-2.5"
+        className="flex cursor-pointer select-none items-center gap-2.5 border-b border-border bg-muted/30 px-3.5 py-2.5"
       >
         <ChevronRight size={14} className={`text-muted-foreground ${open ? 'rotate-90 transition' : 'transition'}`} />
-        {iconKind === 'k8s' ? (
-          <Boxes size={15} className="text-muted-foreground" />
-        ) : iconKind === 'citeck' ? (
-          <Database size={15} className="text-muted-foreground" />
-        ) : (
-          <Globe size={15} className="text-muted-foreground" />
-        )}
+        <span className="flex h-6 w-6 items-center justify-center rounded bg-primary/15 text-primary">
+          {iconKind === 'k8s' ? (
+            <Boxes size={14} />
+          ) : iconKind === 'citeck' ? (
+            <Database size={14} />
+          ) : (
+            <Globe size={14} />
+          )}
+        </span>
         <span className="font-mono text-sm">{host}</span>
         <span className="text-[11px] text-muted-foreground">· {kind}</span>
         <span className="ml-auto text-xs text-muted-foreground">
