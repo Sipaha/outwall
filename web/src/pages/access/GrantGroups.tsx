@@ -4,9 +4,11 @@ import { AgentCard } from './AgentCard'
 import { UpstreamGrantCard } from './UpstreamGrantCard'
 
 /** GrantGroups renders the Access page's granted-rights list, grouped either by agent (one
- *  collapsible AgentCard per agent that has at least one grant) or by upstream (one header per
- *  upstream, with an agent-labelled UpstreamGrantCard per grant against it). Falls back to an
- *  empty-state message when there are no grants at all. */
+ *  collapsible AgentCard per agent, including agents with zero grants — the Access page is the
+ *  only place to see/manage agent metadata since the Agents page was removed) or by upstream
+ *  (one header per upstream, with an agent-labelled UpstreamGrantCard per grant against it).
+ *  Falls back to an empty-state message when there is nothing to show: no agents at all in
+ *  by-agent mode, or no grants at all in by-upstream mode (which is grant-centric). */
 export function GrantGroups({
   grants, agents, upstreams, by, onChanged,
 }: {
@@ -16,18 +18,17 @@ export function GrantGroups({
   by: 'agent' | 'upstream'
   onChanged: () => void
 }) {
-  if (grants.length === 0) {
-    return (
-      <div className="rounded-lg border border-border bg-card px-3 py-6 text-center text-xs text-muted-foreground">
-        Прав ещё не выдано — действует запрет по умолчанию
-      </div>
-    )
-  }
   if (by === 'agent') {
-    const withGrants = agents.filter((a) => grants.some((g) => g.agentId === a.id))
+    if (agents.length === 0) {
+      return (
+        <div className="rounded-lg border border-border bg-card px-3 py-6 text-center text-xs text-muted-foreground">
+          Прав ещё не выдано — действует запрет по умолчанию
+        </div>
+      )
+    }
     return (
       <div className="space-y-2">
-        {withGrants.map((a) => (
+        {agents.map((a) => (
           <AgentCard
             key={a.id}
             agent={a}
@@ -36,6 +37,13 @@ export function GrantGroups({
             onChanged={onChanged}
           />
         ))}
+      </div>
+    )
+  }
+  if (grants.length === 0) {
+    return (
+      <div className="rounded-lg border border-border bg-card px-3 py-6 text-center text-xs text-muted-foreground">
+        Прав ещё не выдано — действует запрет по умолчанию
       </div>
     )
   }

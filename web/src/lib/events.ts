@@ -33,6 +33,8 @@ const EVENT_TYPES = [
   'access.requested',
   'audit.recorded',
   'desktop.open-approvals',
+  'rule.updated',
+  'access.revoked',
 ] as const
 
 export const useEventStore = create<EventState>((set, get) => ({
