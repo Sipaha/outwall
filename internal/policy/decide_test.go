@@ -3,6 +3,7 @@ package policy
 import (
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -152,6 +153,23 @@ func TestDecideHTTPTierPrecedence(t *testing.T) {
 
 	// a different agent rides the any-agent allow.
 	d, _ = reg.Decide(Input{AgentID: "a2", UpstreamID: "u1", Method: "GET", Path: "/x/1", Query: url.Values{}})
+	require.Equal(t, Allow, d.Outcome)
+}
+
+func TestDecideSkipsExpiredRule(t *testing.T) {
+	reg := newReg(t)
+	past := time.Now().UTC().Add(-time.Hour)
+	mk(t, reg, Rule{UpstreamID: "u1", Outcome: Allow, BrowseMethods: "GET", BrowsePath: "/**", ExpiresAt: past})
+
+	// Expired allow → default-deny.
+	d, err := reg.Decide(Input{UpstreamID: "u1", Method: "GET", Path: "/x"})
+	require.NoError(t, err)
+	require.Equal(t, Deny, d.Outcome)
+
+	// A live (future) rule still grants.
+	mk(t, reg, Rule{UpstreamID: "u2", Outcome: Allow, BrowseMethods: "GET", BrowsePath: "/**", ExpiresAt: time.Now().UTC().Add(time.Hour)})
+	d, err = reg.Decide(Input{UpstreamID: "u2", Method: "GET", Path: "/x"})
+	require.NoError(t, err)
 	require.Equal(t, Allow, d.Outcome)
 }
 

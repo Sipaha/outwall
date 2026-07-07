@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Sipaha/outwall/internal/optemplate"
 	"github.com/Sipaha/outwall/internal/serverprofile"
@@ -130,6 +131,17 @@ func (r *Registry) Decide(in Input) (Decision, error) {
 	if err != nil {
 		return Decision{}, err
 	}
+	// Expired rules are treated as absent (default-deny) for BOTH the raw and server-profile paths.
+	// They are never deleted — the operator sees and renews them in the UI (ADR-0045).
+	now := time.Now().UTC()
+	live := make([]*Rule, 0, len(rules))
+	for _, rule := range rules {
+		if !rule.ExpiresAt.IsZero() && rule.ExpiresAt.Before(now) {
+			continue
+		}
+		live = append(live, rule)
+	}
+	rules = live
 	// Server-profile path: if the upstream has a registered profile that claims this request, its
 	// own rules decide.
 	if in.Profile != "" && in.Profile != "raw-http" {
