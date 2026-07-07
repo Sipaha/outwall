@@ -14,3 +14,4 @@
 /web/dist/
 /internal/daemon/webdist/assets/
 /.playwright-mcp/
+.superpowers/
