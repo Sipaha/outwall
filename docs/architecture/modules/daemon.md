@@ -52,6 +52,10 @@ newest first; `resolved_at` RFC3339Nano or `""` if unresolved),
 `POST /access-requests/{id}/resolve` (`{status}` ∈ granted/denied/dismissed; 404 if absent),
 `POST /access-requests/{id}/revoke` (removes the granted policy rules for that
 agent+upstream, then marks the request `revoked`; publishes `access.revoked`; 404 if absent),
+`POST /grants/revoke {agent_id, upstream_id}` (the grant-scoped successor used by the Access UI,
+ADR-0042: `DeleteBySubjectUpstream` + `access.MarkRevokedBySubjectUpstream` — removes every rule
+for the pair and marks every currently-`granted` request for it `revoked`, leaving
+pending/denied rows untouched; returns `{ok, rules_removed}`; publishes `access.revoked`),
 `GET /audit?limit=N` (journal, newest first, no bodies), `GET /audit/{id}` (entry + masked
 headers + bodies; stored text bodies decoded to a `body` string, non-text → metadata only;
 404 if absent), `POST /audit/prune {older_than_rfc3339}` → `{deleted:N}`,
