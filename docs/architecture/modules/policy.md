@@ -58,15 +58,22 @@ unchanged tier/precedence logic. The proxy then parks the request on the approva
 `proxy.md` / ADR-0009). No verb whitelist is enforced at rule-creation time — an unknown verb
 simply never matches a real request.
 
-**Grant TTL (ADR-0045).** `Rule.ExpiresAt` (zero value = never) is the grant expiry. `Decide`
-filters expired rules — `!ExpiresAt.IsZero() && ExpiresAt.Before(now)` — out of the set loaded
-by `ForUpstream` *before* either the raw-HTTP or server-profile matching path runs, so an expired
-rule is treated as absent (default-deny) on both. `ForUpstream` and `List` themselves stay
-**unfiltered** — the daemon's admin UI needs to see expired rules to mark and renew them.
-`(*Registry).Renew(id string, expiresAt time.Time) error` recomputes and persists a rule's
-`expires_at` (zero time → never); it backs both the daemon's `POST /rules/{id}/renew` and the
-operation-approval "extend" path (re-approving with a new value also refreshes the rule's
-expiry).
+**Grant TTL (ADR-0045).** `Rule.ExpiresAt` (zero value = never) is the grant expiry.
+`LiveRules(rules []*Rule, now time.Time) []*Rule` is the single shared filter — a rule is dropped
+when `!ExpiresAt.IsZero() && ExpiresAt.Before(now)` — so "expired ⇒ absent" has exactly one
+definition. `Decide` calls it on the set loaded by `ForUpstream` *before* either the raw-HTTP or
+server-profile matching path runs, so an expired rule is treated as absent (default-deny) on both.
+It is reused beyond `Decide`: the proxy's k8s discovery/health gate (`agentHasAnyGrant` in
+`internal/proxy`) and `internal/mcpsvc`'s `statusFor` and k8s access-request dedup gate all call
+`LiveRules` right after their own `ForUpstream` load, so an expired-only rule can never keep k8s
+discovery open, report a status as `open`, or make a k8s tuple look already covered.
+`ForUpstream` and `List` themselves stay **unfiltered** — the daemon's admin UI needs to see
+expired rules to mark and renew them. `(*Registry).Renew(id string, expiresAt time.Time) error`
+recomputes and persists a rule's `expires_at` (zero time → never); it backs both the daemon's
+`POST /rules/{id}/renew` (an unconditional set — the operator is deliberately choosing a new
+expiry) and the operation-approval "extend" path, which instead renews **never-shrink**: only when
+the existing rule is finite and the new expiry is permanent or later, so re-approving with a
+routine (e.g. default 1h) ttl can never shorten — or un-permanent — a longer-lived existing grant.
 
 ## Public API
 
@@ -74,6 +81,7 @@ expiry).
 - `Rule struct { ID, SubjectAgentID, UpstreamID, Outcome string; RateLimitPerMin int; CreatedAt time.Time; OpMethod, OpPathTemplate string; OpQueryTemplate, OpBodyTemplate map[string]string; OpValuePolicies map[string]ValuePolicy; Namespace, Resource, Verb string; ExpiresAt time.Time }` (`SubjectAgentID=""` = any agent; `Op*` set on HTTP rules; `OpBodyTemplate` = JSON dotted path → literal/placeholder, ADR-0020; `Namespace`/`Resource`/`Verb` set on k8s rules only; `ExpiresAt` zero = never expires, ADR-0045).
 - `ValuePolicy struct { Type, Mode string; Values []string; Min, Max *float64 }` (`Type`: `"text"|"date"|"number"|"enum"`; `Mode`: `"set"|"any"|"range"`).
 - `MatchGlob(pattern, path string) bool` (used by the k8s namespace/resource globs).
+- `LiveRules(rules []*Rule, now time.Time) []*Rule` — drops rules with a past, non-zero `ExpiresAt`; the shared expiry filter used by `Decide` and by every other rule-reading decision path (`internal/proxy`'s k8s discovery gate, `internal/mcpsvc`'s status/dedup), ADR-0045.
 - `NewRegistry(s *store.Store) *Registry`
 - `(*Registry).Create(in Rule) (*Rule, error)` — assigns ID + CreatedAt; validates outcome and `RateLimitPerMin >= 0`; marshals `OpQueryTemplate`/`OpValuePolicies` to JSON columns.
 - `(*Registry).AddAllowedValue(ruleID, varName, value string) error` — extends a text variable's allowed-set (idempotent on a present value).

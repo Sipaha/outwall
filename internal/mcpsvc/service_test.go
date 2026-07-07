@@ -314,6 +314,37 @@ func TestRequestHostAccessAndStatusFlow(t *testing.T) {
 	require.Equal(t, "denied", res.Status)
 }
 
+// TestStatusForTreatsExpiredRuleAsAbsent verifies statusFor (the get_access/list_upstreams status
+// derivation) treats an expired-only allow rule as absent — the agent must see "needs-request", not
+// "open"/"granted", so it re-requests instead of assuming access still stands. Regression for the
+// bug where statusFor read ForUpstream unfiltered by expiry (ADR-0045 / policy.LiveRules).
+func TestStatusForTreatsExpiredRuleAsAbsent(t *testing.T) {
+	svc, ag, up, pol := build(t)
+	a, _, _ := ag.Register("claude")
+	u, err := up.Create("api.github.com", "https://api.github.com", upstream.AuthConfig{Type: "none"})
+	require.NoError(t, err)
+
+	// The only rule on this upstream already expired.
+	_, err = pol.Create(policy.Rule{
+		UpstreamID: u.ID, OpMethod: "GET", OpPathTemplate: "/repos/{repo:text}", Outcome: policy.Allow,
+		ExpiresAt: time.Now().UTC().Add(-time.Hour),
+	})
+	require.NoError(t, err)
+
+	st, _, err := svc.statusFor(a.ID, u.ID)
+	require.NoError(t, err)
+	require.Equal(t, stNeedsRequest, st, "an expired-only rule must not report open/granted")
+
+	res, err := svc.GetAccess(a.ID, "api.github.com")
+	require.NoError(t, err)
+	require.Equal(t, "pending", res.Status)
+
+	list, err := svc.ListUpstreams(a.ID)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	require.Equal(t, "needs-request", list[0].Status)
+}
+
 func TestK8sClusterDiscoveryAndKubeconfig(t *testing.T) {
 	svc, ag, up, pol := build(t)
 	a, token, _ := ag.Register("claude")
@@ -460,6 +491,34 @@ func TestRequestK8sAccessMultiGrant(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	require.Equal(t, []approval.K8sGrant{{Namespace: "enterprise-ecos24", Resource: "pods/log", Verb: "get"}}, newCard.K8sGrants)
+}
+
+// TestRequestK8sAccessReRequestsExpiredGrant verifies the dedup gate (k8sRuleCovers over
+// ForUpstream) treats an expired-only rule as absent: a tuple already "covered" only by an expired
+// rule must be re-requested, not silently dropped as already-granted. Regression for the bug where
+// the k8s access dedup path read ForUpstream unfiltered by expiry (ADR-0045 / policy.LiveRules).
+func TestRequestK8sAccessReRequestsExpiredGrant(t *testing.T) {
+	svc, ag, up, pol, q := buildWithQueue(t)
+	a, _, _ := ag.Register("claude")
+	cl, err := up.CreateKind("prod-cluster", "https://api.k8s:6443", upstream.KindK8s,
+		upstream.AuthConfig{Type: "none", K8sAuth: "token", Token: "secret"})
+	require.NoError(t, err)
+
+	// The agent's only grant for pods/get is a rule that already expired.
+	_, err = pol.Create(policy.Rule{
+		SubjectAgentID: a.ID, UpstreamID: cl.ID, Outcome: policy.Allow,
+		Namespace: "enterprise-ecos24", Resource: "pods", Verb: "get",
+		ExpiresAt: time.Now().UTC().Add(-time.Hour),
+	})
+	require.NoError(t, err)
+
+	res, err := svc.RequestK8sAccess(a.ID, "prod-cluster", "enterprise-ecos24",
+		[]K8sAccessSpec{{Resource: "pods", Verbs: []string{"get"}}}, "logs")
+	require.NoError(t, err)
+	require.Equal(t, "pending", res.Status, "an expired grant must be re-requestable, not silently covered")
+
+	p := waitPending(t, q)
+	require.Equal(t, []approval.K8sGrant{{Namespace: "enterprise-ecos24", Resource: "pods", Verb: "get"}}, p.K8sGrants)
 }
 
 func TestRequestK8sAccessDedupesPending(t *testing.T) {

@@ -135,6 +135,9 @@ func (s *Service) statusFor(agentID, upstreamID string) (string, []*policy.Rule,
 	if err != nil {
 		return "", nil, fmt.Errorf("load rules: %w", err)
 	}
+	// An expired rule is treated as absent, same as Decide (ADR-0045 / policy.LiveRules) — an
+	// expired-only allow must report needs-request, not open.
+	rules = policy.LiveRules(rules, time.Now().UTC())
 	var allowing []*policy.Rule
 	agentDeny := false
 	hasAllow := false
@@ -445,6 +448,9 @@ func (s *Service) RequestK8sAccess(agentID, cluster, namespace string, specs []K
 	if err != nil {
 		return AccessResult{}, fmt.Errorf("load rules: %w", err)
 	}
+	// An expired rule is treated as absent, same as Decide (ADR-0045 / policy.LiveRules) — an
+	// expired-only tuple must be re-requested, not silently treated as already covered.
+	rules = policy.LiveRules(rules, time.Now().UTC())
 	missing := make([]approval.K8sGrant, 0, len(want))
 	for _, g := range want {
 		if !k8sRuleCovers(rules, agentID, g) {

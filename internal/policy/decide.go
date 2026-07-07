@@ -124,6 +124,21 @@ type candidate struct {
 	newValues []VarValue
 }
 
+// LiveRules returns the rules not yet expired as of now (a zero ExpiresAt = never expires). It is
+// the single definition of "expired ⇒ absent" shared by Decide and every other rule-reading
+// decision path (the k8s discovery gate, mcpsvc status/dedup) so an expired rule can never grant
+// through a path that forgot to filter it out (ADR-0045).
+func LiveRules(rules []*Rule, now time.Time) []*Rule {
+	live := make([]*Rule, 0, len(rules))
+	for _, rule := range rules {
+		if !rule.ExpiresAt.IsZero() && rule.ExpiresAt.Before(now) {
+			continue
+		}
+		live = append(live, rule)
+	}
+	return live
+}
+
 // Decide applies precedence: agent-specific rules outrank any-subject rules outrank
 // default-deny; within the chosen tier, most-restrictive wins (deny > require-approval > allow).
 func (r *Registry) Decide(in Input) (Decision, error) {
@@ -133,15 +148,7 @@ func (r *Registry) Decide(in Input) (Decision, error) {
 	}
 	// Expired rules are treated as absent (default-deny) for BOTH the raw and server-profile paths.
 	// They are never deleted — the operator sees and renews them in the UI (ADR-0045).
-	now := time.Now().UTC()
-	live := make([]*Rule, 0, len(rules))
-	for _, rule := range rules {
-		if !rule.ExpiresAt.IsZero() && rule.ExpiresAt.Before(now) {
-			continue
-		}
-		live = append(live, rule)
-	}
-	rules = live
+	rules = LiveRules(rules, time.Now().UTC())
 	// Server-profile path: if the upstream has a registered profile that claims this request, its
 	// own rules decide.
 	if in.Profile != "" && in.Profile != "raw-http" {

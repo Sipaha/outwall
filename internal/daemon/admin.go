@@ -907,9 +907,12 @@ func (d *Daemon) approveOperation(p approval.Pending, trustAny []string, expires
 			}
 		}
 	}
-	// A re-approval of an existing template refreshes the grant's life to the operator's chosen ttl.
-	if err := d.policy.Renew(rule.ID, expiresAt); err != nil {
-		return fmt.Errorf("renew operation rule: %w", err)
+	// Extend (never shrink) the rule's expiry on re-approval: a permanent rule stays permanent, and a
+	// shorter new TTL never shortens a longer existing one (ADR-0045).
+	if !rule.ExpiresAt.IsZero() && (expiresAt.IsZero() || expiresAt.After(rule.ExpiresAt)) {
+		if err := d.policy.Renew(rule.ID, expiresAt); err != nil {
+			return fmt.Errorf("renew operation rule: %w", err)
+		}
 	}
 	return nil
 }

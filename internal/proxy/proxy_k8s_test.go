@@ -59,6 +59,38 @@ func TestK8sProxyReadInjectsClusterToken(t *testing.T) {
 	require.Equal(t, "/api/v1/namespaces/prod/pods", gotPath)
 }
 
+// TestK8sDiscoveryDeniedWhenOnlyGrantExpired verifies the discovery/health gate
+// (agentHasAnyGrant) treats an expired-only allow rule as absent: it must NOT open cluster
+// discovery (/version, /api, /apis, /openapi/...) for kubectl. Regression for the bug where
+// agentHasAnyGrant read ForUpstream unfiltered by expiry (ADR-0045 / policy.LiveRules).
+func TestK8sDiscoveryDeniedWhenOnlyGrantExpired(t *testing.T) {
+	api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"paths":["/api/v1"]}`)
+	}))
+	defer api.Close()
+
+	h, ag, up, pol, _, _ := build(t)
+	_, err := up.CreateKind("prod-cluster", api.URL, upstream.KindK8s, upstream.AuthConfig{
+		Type: "none", K8sAuth: "token", Token: "cluster-tok", CABundle: certPEM(t, api),
+	})
+	require.NoError(t, err)
+	cl, err := up.GetByName("prod-cluster")
+	require.NoError(t, err)
+	// The agent's ONLY grant on this cluster is a rule that already expired.
+	_, err = pol.Create(policy.Rule{
+		UpstreamID: cl.ID, Namespace: "prod", Resource: "pods", Verb: "list", Outcome: policy.Allow,
+		ExpiresAt: time.Now().UTC().Add(-time.Hour),
+	})
+	require.NoError(t, err)
+
+	_, token, err := ag.Register("claude")
+	require.NoError(t, err)
+
+	w := do(t, h, http.MethodGet, "/prod-cluster/api", token)
+	require.Equal(t, http.StatusForbidden, w.Code, "an expired-only grant must not open cluster discovery")
+}
+
 func TestK8sProxyNamespaceScopingDenies(t *testing.T) {
 	api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"kind":"PodList"}`)

@@ -518,6 +518,9 @@ func (h *handler) agentHasAnyGrant(agentID, upstreamID string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// An expired rule is treated as absent, same as Decide (ADR-0045 / policy.LiveRules) — an
+	// expired-only allow must not keep cluster discovery open.
+	rules = policy.LiveRules(rules, time.Now().UTC())
 	hasGrant := false
 	for _, rule := range rules {
 		if rule.SubjectAgentID != "" && rule.SubjectAgentID != agentID {

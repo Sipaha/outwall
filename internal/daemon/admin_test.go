@@ -976,6 +976,71 @@ func TestOperationApprovalWithTTLStampsAndRenewsExpiry(t *testing.T) {
 	require.WithinDuration(t, time.Now().UTC().Add(2*time.Hour), rules[0].ExpiresAt, time.Minute)
 }
 
+// TestOperationApprovalExtendNeverShrinksExpiry verifies the extend path's renew is never-shrink
+// (ADR-0045): a permanent rule stays permanent regardless of the re-approval's ttl, a finite rule
+// extends when the new ttl is later, and a finite rule is left unchanged when the new ttl is
+// shorter than its current expiry. Regression for the bug where the extend branch called
+// policy.Renew unconditionally, letting a shorter re-approval ttl silently shrink (or un-permanent)
+// an existing grant.
+func TestOperationApprovalExtendNeverShrinksExpiry(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	// (a) permanent rule + re-approval with a finite ttl → stays permanent.
+	hostA, _, err := d.upstreams.GetOrCreateByHost("perm.example")
+	require.NoError(t, err)
+	idA1 := submitOp(t, d, hostA.ID, map[string]string{"project_path": "infra/helm"})
+	require.Equal(t, http.StatusOK,
+		req(t, h, "POST", "/approvals/"+idA1+"/resolve", `{"approve":true,"ttl_seconds":0}`).Code)
+	rulesA, err := d.policy.ForUpstream(hostA.ID)
+	require.NoError(t, err)
+	require.Len(t, rulesA, 1)
+	require.True(t, rulesA[0].ExpiresAt.IsZero(), "first approval with ttl 0 must be permanent")
+
+	idA2 := submitOp(t, d, hostA.ID, map[string]string{"project_path": "apps/web"})
+	require.Equal(t, http.StatusOK,
+		req(t, h, "POST", "/approvals/"+idA2+"/resolve", `{"approve":true,"ttl_seconds":3600}`).Code)
+	rulesA, err = d.policy.ForUpstream(hostA.ID)
+	require.NoError(t, err)
+	require.Len(t, rulesA, 1)
+	require.True(t, rulesA[0].ExpiresAt.IsZero(), "re-approval must never shrink a permanent rule to finite")
+
+	// (b) finite rule + later ttl → extends.
+	hostB, _, err := d.upstreams.GetOrCreateByHost("extend.example")
+	require.NoError(t, err)
+	idB1 := submitOp(t, d, hostB.ID, map[string]string{"project_path": "infra/helm"})
+	require.Equal(t, http.StatusOK,
+		req(t, h, "POST", "/approvals/"+idB1+"/resolve", `{"approve":true,"ttl_seconds":3600}`).Code)
+	idB2 := submitOp(t, d, hostB.ID, map[string]string{"project_path": "apps/web"})
+	require.Equal(t, http.StatusOK,
+		req(t, h, "POST", "/approvals/"+idB2+"/resolve", `{"approve":true,"ttl_seconds":7200}`).Code)
+	rulesB, err := d.policy.ForUpstream(hostB.ID)
+	require.NoError(t, err)
+	require.Len(t, rulesB, 1)
+	require.WithinDuration(t, time.Now().UTC().Add(2*time.Hour), rulesB[0].ExpiresAt, time.Minute)
+
+	// (c) finite rule + shorter ttl → unchanged (never shrinks).
+	hostC, _, err := d.upstreams.GetOrCreateByHost("noshrink.example")
+	require.NoError(t, err)
+	idC1 := submitOp(t, d, hostC.ID, map[string]string{"project_path": "infra/helm"})
+	require.Equal(t, http.StatusOK,
+		req(t, h, "POST", "/approvals/"+idC1+"/resolve", `{"approve":true,"ttl_seconds":7200}`).Code)
+	rulesC, err := d.policy.ForUpstream(hostC.ID)
+	require.NoError(t, err)
+	require.Len(t, rulesC, 1)
+	originalExpiry := rulesC[0].ExpiresAt
+
+	idC2 := submitOp(t, d, hostC.ID, map[string]string{"project_path": "apps/web"})
+	require.Equal(t, http.StatusOK,
+		req(t, h, "POST", "/approvals/"+idC2+"/resolve", `{"approve":true,"ttl_seconds":3600}`).Code)
+	rulesC, err = d.policy.ForUpstream(hostC.ID)
+	require.NoError(t, err)
+	require.Len(t, rulesC, 1)
+	require.True(t, rulesC[0].ExpiresAt.Equal(originalExpiry),
+		"a shorter re-approval ttl must not shrink an existing finite expiry")
+}
+
 // mustUpstreamProfiled creates an upstream with the given profile for use in tests.
 func (d *Daemon) mustUpstreamProfiled(t *testing.T, name, baseURL, kind, profile string) *upstream.Upstream {
 	t.Helper()
