@@ -5,7 +5,9 @@ The SQLite persistence layer. Opens (or creates) the database via the pure-Go
 single connection (single writer), and applies the schema migrations idempotently.
 
 Schema tables: `vault_meta`, `upstreams`, `agents`, `rules`, `access_requests` (the Plan-1
-`grants` table was dropped in Plan 2 — see ADR-0002). `access_requests` is the MCP
+`grants` table was dropped in Plan 2 — see ADR-0002). `rules` carries an `expires_at TEXT NOT NULL
+DEFAULT ''` column (RFC3339Nano; `''` = never expires) — the per-rule grant TTL `policy.Decide`
+enforces (`rule_expiry` migration — ADR-0045). `access_requests` is the MCP
 control-plane's intent log (added in Plan 3 — see ADR-0003): `(id, agent_id, upstream_id,
 purpose, status, created_at, resolved_at)` with `status ∈ {pending,granted,denied,dismissed}`
 and an index on `status`. It also carries a `reason` (operator deny reason) and an `edits` column

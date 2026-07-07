@@ -58,17 +58,28 @@ unchanged tier/precedence logic. The proxy then parks the request on the approva
 `proxy.md` / ADR-0009). No verb whitelist is enforced at rule-creation time — an unknown verb
 simply never matches a real request.
 
+**Grant TTL (ADR-0045).** `Rule.ExpiresAt` (zero value = never) is the grant expiry. `Decide`
+filters expired rules — `!ExpiresAt.IsZero() && ExpiresAt.Before(now)` — out of the set loaded
+by `ForUpstream` *before* either the raw-HTTP or server-profile matching path runs, so an expired
+rule is treated as absent (default-deny) on both. `ForUpstream` and `List` themselves stay
+**unfiltered** — the daemon's admin UI needs to see expired rules to mark and renew them.
+`(*Registry).Renew(id string, expiresAt time.Time) error` recomputes and persists a rule's
+`expires_at` (zero time → never); it backs both the daemon's `POST /rules/{id}/renew` and the
+operation-approval "extend" path (re-approving with a new value also refreshes the rule's
+expiry).
+
 ## Public API
 
 - Outcome consts: `Allow = "allow"`, `Deny = "deny"`, `RequireApproval = "require-approval"`; `ValidOutcome(o string) bool`.
-- `Rule struct { ID, SubjectAgentID, UpstreamID, Outcome string; RateLimitPerMin int; CreatedAt time.Time; OpMethod, OpPathTemplate string; OpQueryTemplate, OpBodyTemplate map[string]string; OpValuePolicies map[string]ValuePolicy; Namespace, Resource, Verb string }` (`SubjectAgentID=""` = any agent; `Op*` set on HTTP rules; `OpBodyTemplate` = JSON dotted path → literal/placeholder, ADR-0020; `Namespace`/`Resource`/`Verb` set on k8s rules only).
+- `Rule struct { ID, SubjectAgentID, UpstreamID, Outcome string; RateLimitPerMin int; CreatedAt time.Time; OpMethod, OpPathTemplate string; OpQueryTemplate, OpBodyTemplate map[string]string; OpValuePolicies map[string]ValuePolicy; Namespace, Resource, Verb string; ExpiresAt time.Time }` (`SubjectAgentID=""` = any agent; `Op*` set on HTTP rules; `OpBodyTemplate` = JSON dotted path → literal/placeholder, ADR-0020; `Namespace`/`Resource`/`Verb` set on k8s rules only; `ExpiresAt` zero = never expires, ADR-0045).
 - `ValuePolicy struct { Type, Mode string; Values []string; Min, Max *float64 }` (`Type`: `"text"|"date"|"number"|"enum"`; `Mode`: `"set"|"any"|"range"`).
 - `MatchGlob(pattern, path string) bool` (used by the k8s namespace/resource globs).
 - `NewRegistry(s *store.Store) *Registry`
 - `(*Registry).Create(in Rule) (*Rule, error)` — assigns ID + CreatedAt; validates outcome and `RateLimitPerMin >= 0`; marshals `OpQueryTemplate`/`OpValuePolicies` to JSON columns.
 - `(*Registry).AddAllowedValue(ruleID, varName, value string) error` — extends a text variable's allowed-set (idempotent on a present value).
 - `(*Registry).SetVariableAny(ruleID, varName string) error` — flips a text variable to mode `any`, dropping its set (idempotent).
-- `(*Registry).List() ([]*Rule, error)` — newest first (`ORDER BY created_at DESC`), `(*Registry).Delete(id string) error`, `(*Registry).ForUpstream(upstreamID string) ([]*Rule, error)`.
+- `(*Registry).List() ([]*Rule, error)` — newest first (`ORDER BY created_at DESC`), `(*Registry).Delete(id string) error`, `(*Registry).ForUpstream(upstreamID string) ([]*Rule, error)` (both unfiltered by expiry, ADR-0045).
+- `(*Registry).Renew(id string, expiresAt time.Time) error` — sets a rule's `ExpiresAt` (zero time clears it, i.e. makes the rule permanent), ADR-0045.
 - `(*Registry).DeleteBySubject(agentID string) (int64, error)` — removes every rule granted to an agent (rows deleted); the cascade an agent delete performs (`internal/daemon.hAgentDelete`).
 - `(*Registry).DeleteBySubjectUpstream(agentID, upstreamID string) (int64, error)` — removes just the rules for one (agent, upstream) pair; used by the single-request revoke (`internal/daemon.hAccessRequestRevoke`) and the grant-scoped revoke (`internal/daemon.hGrantRevoke`, `POST /grants/revoke`, ADR-0042) that the Access UI calls.
 - `Input struct { AgentID, UpstreamID, Method, Path string; Query url.Values; Body []byte; Kind, Namespace, Resource, Subresource, Verb string }` (HTTP: set `Method`/`Path`/`Query`, and `Body` for body-variable gating; k8s: set `Kind="k8s"` + the tuple).

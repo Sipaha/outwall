@@ -24,14 +24,17 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
   body), `fetchWithTimeout`. One helper per endpoint (`getVaultStatus`, `vaultInit/Unlock`,
   `listAgents`/`deleteAgent`, `listUpstreams`/`createUpstream`/`deleteUpstream`/`setUpstreamAuth` (H3
   host credential set/replace), `listRules`/`createRule`/`deleteRule`/`setRuleVariablePolicy` (H3
-  value-set add/remove/trust-any), `listApprovals`/`resolveApproval` (H3 takes an optional
+  value-set add/remove/trust-any), `renewRule(id, ttl_seconds)` (`POST /rules/{id}/renew`;
+  `createRule` and `resolveApproval` both also take a `ttl_seconds` field, ADR-0045),
+  `listApprovals`/`resolveApproval` (H3 takes an optional
   `{ auth?, trust_any? }`), `listAccessRequests`/`resolveAccessRequest`/`revokeAccessRequest`
   (per-request revoke — kept for API/test coverage but no longer called from the UI, see ADR-0042),
   `revokeGrant(agentId, upstreamId)` (grant-scoped revoke → `POST /grants/revoke`, the Access page's
   only revoke path, ADR-0042), `listAudit`/`getAudit`/`pruneAudit`, `vaultLock`, and the K4 cluster
   helpers `createCluster`/`importClusters`/`getKubeconfig`).
 - `lib/types.ts` — TS interfaces mirroring the Go admin JSON field names (Agent, Upstream — with
-  the K4 `k8s_auth`/`k8s_insecure` cluster fields, ClusterAuthConfig, ClusterImportResult, Rule +
+  the K4 `k8s_auth`/`k8s_insecure` cluster fields, ClusterAuthConfig, ClusterImportResult, Rule
+  (gains `expires_at: string`, `''` = never — ADR-0045) +
   ValuePolicy, Approval — H3 adds the `kind`/`host`/`op_*`/`new_values`/`template` control-plane
   fields plus `OpVariable`/`NewValue`/`ResolveOptions`, AccessRequest,
   AuditEntry/AuditBody/AuditDetail, VaultStatus, OutwallEvent).
@@ -40,7 +43,10 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
   most recent `granted` access request for that pair (a grant is a derived view, no new storage,
   ADR-0042); `scopeOf(rule)` → `{label, kind}` colored scope badge (`READ`/`WRITE` for the citeck
   profile, `BROWSE`, k8s verb, else the HTTP method); `valueSummary(rule)` → the compact non-`*`
-  value-constraint tail (`"var: a, b · n: 1–50"`).
+  value-constraint tail (`"var: a, b · n: 1–50"`); `isExpired(rule)` (`expires_at` in the past) and
+  `grantExpiry(rules)` → `'expired' | 'expiring' | null` (an aggregate over a grant's rules: any
+  past expiry wins, else `'expiring'` when the soonest future expiry is under an hour away, else
+  `null` — ADR-0045).
 - `lib/accessGrouping.ts` — Zustand store for the Access page's grants grouping toggle (`by:
   'agent' | 'upstream'`, default `agent`).
 - `lib/events.ts` — Zustand store wrapping one `EventSource('/api/events')`. Tracks `connected`
@@ -53,7 +59,8 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
   native form controls — the `<select>` and its option popup — dark instead of light (ADR-0011).
 - `components/` — `Sidebar` (wordmark + nav + live SSE connection dot; nav is **Dashboard ·
   Upstreams · Access · Audit · Settings**, ADR-0042 — the earlier `Agents`/`Operations`
-  (`/rules`)/`Approvals` items are gone), `StatusBadge` (status → color pill), `Modal`, `Toast`
+  (`/rules`)/`Approvals` items are gone), `StatusBadge` (status → color pill; `expired`/`revoked`
+  both map to the stopped/destructive colour, ADR-0045), `Modal`, `Toast`
   (`ToastContainer`), `DataTable` (compact dense table), `FormField` (labelled control wrapper +
   shared themed `fieldControlClass`), `Select` (themed native `<select>`), `Tabs` (controlled,
   URL-query-backed tab bar; used by the Upstreams zone tabs and the Audit Трафик/Запросы-прав
@@ -68,7 +75,8 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
   - `Access` (`/access`) — a single scrolling page composed from `pages/access/`:
     - `RequestsPanel` — the aggregated pending-approval queue ("Запросы прав"), rendering
       `ApprovalCards.tsx`'s per-`kind` cards (host/operation/preset/new-value/plain-k8s) with a
-      scope-badge "hero" box for the concrete right and a Deny-with-reason modal.
+      scope-badge "hero" box for the concrete right, a `DurationSelect` (default 1h) that sets the
+      grant's `ttl_seconds` on approve, and a Deny-with-reason modal (ADR-0045).
     - `GrantGroups` — the granted-rights list ("Выданные права"), grouping `lib/grants.ts`'s
       `deriveGrants(rules, requests)` output either by agent (`AgentCard` → `UpstreamGrantCard`
       per grant, default) or by upstream (transposed), toggle persisted via
@@ -78,15 +86,21 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
       **⋮ kebab** with "История запросов в Audit" → `/audit?tab=requests&agent=<id>` and a
       duplicate delete). Header click anywhere toggles collapse; the trash/kebab
       `stopPropagation`.
-    - `UpstreamGrantCard` — one grant (agent×upstream): header (kind icon, hostname, kind label,
-      **Revoke** → `revokeGrant(agentId, upstreamId)`) followed by its `RuleRow`s.
+    - `UpstreamGrantCard` (by-agent grouping) / `UpstreamGroupCard` (by-upstream grouping,
+      transposed) — one grant (agent×upstream): header (kind icon, hostname, kind label, an
+      aggregate expiry badge from `grantExpiry(grant.rules)` — "истекло"/"истекает" — **Revoke**
+      → `revokeGrant(agentId, upstreamId)`) followed by its `RuleRow`s (ADR-0045).
     - `RuleRow` — one rule: scope badge (`scopeOf`), path/resource (variable segments as chips),
       `valueSummary` tail, outcome, edit/delete icons. Expandable per-variable editors from
       `valueEditors.tsx` — `ValueSetEditor` (text: chips + add + trust-any) and
       `NumberRangeEditor` (min–max + trust-any) only; **enum has no editor** (enforced, but not
-      user-editable here); `date` shows a static "auto" note.
+      user-editable here); `date` shows a static "auto" note. Also renders the rule's
+      `expires_at` via `RelTime` when set, a red "истекло" badge once it is in the past, and a
+      "Продлить" control that opens a `DurationSelect` popover and calls
+      `renewRule(id, ttlSeconds)` (ADR-0045).
     - `ManualRuleModal` — the `+ Выдать вручную` entry point: a `createRule` flow (http
-      method+path+var lines, k8s tuple, or citeck Records op/sourceId/workspace).
+      method+path+var lines, k8s tuple, or citeck Records op/sourceId/workspace), including a
+      `DurationSelect` for the grant's `ttl_seconds` (default 1h — ADR-0045).
   - `Audit` — tabbed (`Tabs`): **Трафик** — `listAudit(200)` table (status colored by class)
     refetched on `audit.recorded`, row "View" → `getAudit(id)` detail modal (meta grid,
     masked-headers table, request/response body panels via `JsonView`); **Запросы прав** —
@@ -132,7 +146,11 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
   `revokeGrant(agentId, upstreamId)` and then `onChanged`.
 - `pages/access/RuleRow.test.tsx` — renders the scope badge, path, and value-summary tail;
   expanding a text-policy rule shows its `ValueSetEditor` chip + "Trust any value" control;
-  delete calls `deleteRule(id)` and then `onChanged`.
+  delete calls `deleteRule(id)` and then `onChanged`; a rule with a past `expires_at` shows the
+  "истекло" badge and renews via `renewRule` on click; a never-expiring rule shows neither the
+  badge nor an expiry chip (ADR-0045).
+- `pages/access/DurationSelect.test.tsx` — renders the fixed duration options plus "Бессрочно";
+  selecting an option calls `onChange` with its `ttl_seconds` (ADR-0045).
 - `pages/access/scope.test.tsx` — `ScopeBadge` renders the right class per `kind`.
 - `pages/access/ManualRuleModal.test.tsx` — filling the path-template and submitting creates an
   http operation rule via `createRule`, then calls `onCreated`.

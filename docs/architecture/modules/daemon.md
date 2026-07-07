@@ -46,8 +46,13 @@ Admin endpoints: `POST /vault/init`, `POST /vault/unlock`, `GET /vault/status`,
 `GET /agents` (newest first; each row has `created_at`/`last_seen_at` RFC3339Nano strings,
 `last_seen_at` `""` if the agent never authenticated), `DELETE /agents/{id}` (cascades:
 deletes the agent's policy rules first, then the agent; publishes `agent.deleted`),
-`POST /rules`, `GET /rules` (newest first), `DELETE /rules/{id}`, `GET /approvals`,
-`POST /approvals/{id}/resolve`, `GET /access-requests` (joined with agent + upstream names;
+`POST /rules` (body takes a `ttl_seconds int`; `0` = never — the manual-grant TTL, ADR-0045),
+`GET /rules` (newest first; each row includes `expires_at`, `""` if permanent),
+`DELETE /rules/{id}`, `POST /rules/{id}/renew` (`hRuleRenew`, `{ttl_seconds}` → recomputes and
+persists the rule's `expires_at` via `policy.Registry.Renew`; `ttl_seconds:0` makes it permanent
+— ADR-0045), `GET /approvals`,
+`POST /approvals/{id}/resolve` (body also takes `ttl_seconds int`, stamped onto every rule the
+approval creates or extends via `expiryFromTTL` — ADR-0045), `GET /access-requests` (joined with agent + upstream names;
 newest first; `resolved_at` RFC3339Nano or `""` if unresolved),
 `POST /access-requests/{id}/resolve` (`{status}` ∈ granted/denied/dismissed; 404 if absent),
 `POST /access-requests/{id}/revoke` (removes the granted policy rules for that
