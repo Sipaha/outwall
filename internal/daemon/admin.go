@@ -78,6 +78,7 @@ func (d *Daemon) apiMux() *http.ServeMux {
 	gate("POST /kubeconfig", d.hKubeconfig)
 	gate("POST /rules", d.hRuleCreate)
 	gate("DELETE /rules/{id}", d.hRuleDelete)
+	gate("POST /rules/{id}/renew", d.hRuleRenew)
 	gate("POST /rules/{id}/value-policy", d.hRuleSetVariablePolicy)
 	gate("POST /approvals/{id}/resolve", d.hApprovalResolve)
 	gate("POST /access-requests/{id}/resolve", d.hAccessRequestResolve)
@@ -147,6 +148,15 @@ func adminErr(w http.ResponseWriter, code int, msg string) {
 }
 
 func decode(r *http.Request, v any) error { return json.NewDecoder(r.Body).Decode(v) }
+
+// expiryFromTTL converts an operator-chosen ttl_seconds into an absolute expiry. ttl <= 0 means the
+// grant never expires (zero time). Server-authoritative time (ADR-0045).
+func expiryFromTTL(ttlSeconds int) time.Time {
+	if ttlSeconds <= 0 {
+		return time.Time{}
+	}
+	return time.Now().UTC().Add(time.Duration(ttlSeconds) * time.Second)
+}
 
 func (d *Daemon) hVaultInit(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -516,6 +526,8 @@ func (d *Daemon) hRuleCreate(w http.ResponseWriter, r *http.Request) {
 		// browse policy fields:
 		BrowseMethods string `json:"browse_methods"`
 		BrowsePath    string `json:"browse_path"`
+		// TTLSeconds is the operator's chosen grant duration (0 = never expires).
+		TTLSeconds int `json:"ttl_seconds"`
 	}
 	if err := decode(r, &body); err != nil {
 		adminErr(w, http.StatusBadRequest, "bad json")
@@ -530,6 +542,7 @@ func (d *Daemon) hRuleCreate(w http.ResponseWriter, r *http.Request) {
 		Namespace:       body.Namespace, Resource: body.Resource, Verb: body.Verb,
 		Profile: body.Profile, ProfileParams: body.ProfileParams,
 		BrowseMethods: body.BrowseMethods, BrowsePath: body.BrowsePath,
+		ExpiresAt: expiryFromTTL(body.TTLSeconds),
 	})
 	if err != nil {
 		adminErr(w, http.StatusBadRequest, err.Error())
@@ -556,6 +569,12 @@ func (d *Daemon) hRuleList(w http.ResponseWriter, _ *http.Request) {
 			"namespace": rule.Namespace, "resource": rule.Resource, "verb": rule.Verb,
 			"profile": rule.Profile, "profile_params": rule.ProfileParams,
 			"browse_methods": rule.BrowseMethods, "browse_path": rule.BrowsePath,
+			"expires_at": func() string {
+				if rule.ExpiresAt.IsZero() {
+					return ""
+				}
+				return rule.ExpiresAt.UTC().Format(time.RFC3339Nano)
+			}(),
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -566,6 +585,24 @@ func (d *Daemon) hRuleDelete(w http.ResponseWriter, r *http.Request) {
 		adminErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// hRuleRenew updates a rule's expiry (the operator's "extend grant" action). ttl_seconds<=0 makes
+// the rule permanent again. Gated (operator session required) — see apiMux.
+func (d *Daemon) hRuleRenew(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		TTLSeconds int `json:"ttl_seconds"`
+	}
+	if err := decode(r, &body); err != nil {
+		adminErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if err := d.policy.Renew(r.PathValue("id"), expiryFromTTL(body.TTLSeconds)); err != nil {
+		adminErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	d.publish("rule.renewed", map[string]any{"id": r.PathValue("id")})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -667,6 +704,9 @@ func (d *Daemon) hApprovalResolve(w http.ResponseWriter, r *http.Request) {
 		// Bindings are the operator's final preset slot values for a KindPreset approval (may narrow
 		// the agent's requested values). Ignored for other kinds.
 		Bindings map[string]string `json:"bindings"`
+		// TTLSeconds is the operator's chosen grant duration for the rules this approval creates
+		// (0 = never expires). Ignored for a deny.
+		TTLSeconds int `json:"ttl_seconds"`
 	}
 	if err := decode(r, &body); err != nil {
 		adminErr(w, http.StatusBadRequest, "bad json")
@@ -679,7 +719,7 @@ func (d *Daemon) hApprovalResolve(w http.ResponseWriter, r *http.Request) {
 	// and are resolved by the queue alone (unchanged).
 	if p, ok := d.approvals.Get(id); ok {
 		if body.Approve {
-			if err := d.applyApprovalSideEffects(p, body.Auth, body.TrustAny, body.Bindings); err != nil {
+			if err := d.applyApprovalSideEffects(p, body.Auth, body.TrustAny, body.Bindings, expiryFromTTL(body.TTLSeconds)); err != nil {
 				adminErr(w, http.StatusBadRequest, err.Error())
 				return
 			}
@@ -724,7 +764,7 @@ func (d *Daemon) hApprovalResolve(w http.ResponseWriter, r *http.Request) {
 // approval (host or operation). It is a no-op for empty-Kind approvals (data-plane / k8s), whose
 // side effects already live on the proxy path. Errors are reported before the queue is unparked,
 // so a failed attach/rule-write does not silently approve.
-func (d *Daemon) applyApprovalSideEffects(p approval.Pending, auth *upstream.AuthConfig, trustAny []string, bindings map[string]string) error {
+func (d *Daemon) applyApprovalSideEffects(p approval.Pending, auth *upstream.AuthConfig, trustAny []string, bindings map[string]string, expiresAt time.Time) error {
 	switch p.Kind {
 	case approval.KindHostAccess:
 		// Attach the operator-entered credential to the lazily-created host upstream (optional).
@@ -746,11 +786,11 @@ func (d *Daemon) applyApprovalSideEffects(p approval.Pending, auth *upstream.Aut
 		}
 		return nil
 	case approval.KindOperation:
-		return d.approveOperation(p, trustAny)
+		return d.approveOperation(p, trustAny, expiresAt)
 	case approval.KindK8sAccess:
-		return d.approveK8sAccess(p)
+		return d.approveK8sAccess(p, expiresAt)
 	case approval.KindPreset:
-		return d.approvePreset(p, bindings)
+		return d.approvePreset(p, bindings, expiresAt)
 	default:
 		return nil
 	}
@@ -759,7 +799,7 @@ func (d *Daemon) applyApprovalSideEffects(p approval.Pending, auth *upstream.Aut
 // approveK8sAccess creates an agent-scoped allow k8s rule for each (namespace, resource, verb) tuple
 // on the pending. Grants are scoped to the requesting agent (not the whole cluster) — see ADR-0025.
 // Idempotent: a tuple whose identical rule already exists (same agent) is skipped (ADR-0029).
-func (d *Daemon) approveK8sAccess(p approval.Pending) error {
+func (d *Daemon) approveK8sAccess(p approval.Pending, expiresAt time.Time) error {
 	rules, err := d.policy.ForUpstream(p.UpstreamID)
 	if err != nil {
 		return fmt.Errorf("load rules: %w", err)
@@ -784,7 +824,7 @@ func (d *Daemon) approveK8sAccess(p approval.Pending) error {
 		}
 		missing = append(missing, policy.Rule{
 			SubjectAgentID: p.AgentID, UpstreamID: p.UpstreamID, Outcome: policy.Allow,
-			Namespace: g.Namespace, Resource: g.Resource, Verb: g.Verb,
+			Namespace: g.Namespace, Resource: g.Resource, Verb: g.Verb, ExpiresAt: expiresAt,
 		})
 	}
 	if len(missing) == 0 {
@@ -802,7 +842,7 @@ func (d *Daemon) approveK8sAccess(p approval.Pending) error {
 // when it is listed in trustAny; date variables are mode "any". Reuses Registry.AddAllowedValue so
 // approving a new value on an existing template grows that rule's set rather than spawning a new
 // one.
-func (d *Daemon) approveOperation(p approval.Pending, trustAny []string) error {
+func (d *Daemon) approveOperation(p approval.Pending, trustAny []string, expiresAt time.Time) error {
 	tmpl, err := optemplate.ParseWithBody(p.OpMethod, p.OpPathTemplate, p.OpQueryTemplate, p.OpBodyTemplate)
 	if err != nil {
 		return fmt.Errorf("parse operation template: %w", err)
@@ -843,7 +883,7 @@ func (d *Daemon) approveOperation(p approval.Pending, trustAny []string) error {
 		if _, err := d.policy.Create(policy.Rule{
 			UpstreamID: p.UpstreamID, Outcome: policy.Allow,
 			OpMethod: p.OpMethod, OpPathTemplate: p.OpPathTemplate, OpQueryTemplate: p.OpQueryTemplate,
-			OpBodyTemplate: p.OpBodyTemplate, OpValuePolicies: policies,
+			OpBodyTemplate: p.OpBodyTemplate, OpValuePolicies: policies, ExpiresAt: expiresAt,
 		}); err != nil {
 			return fmt.Errorf("create operation rule: %w", err)
 		}
@@ -866,6 +906,10 @@ func (d *Daemon) approveOperation(p approval.Pending, trustAny []string) error {
 				return fmt.Errorf("extend variable %q: %w", v.Name, err)
 			}
 		}
+	}
+	// A re-approval of an existing template refreshes the grant's life to the operator's chosen ttl.
+	if err := d.policy.Renew(rule.ID, expiresAt); err != nil {
+		return fmt.Errorf("renew operation rule: %w", err)
 	}
 	return nil
 }

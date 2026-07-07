@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/Sipaha/outwall/internal/approval"
 	"github.com/Sipaha/outwall/internal/policy"
@@ -14,7 +15,7 @@ import (
 // approvePreset expands a KindPreset approval into agent-scoped allow rules. The operator may have
 // narrowed the slot values (bindings); when nil the agent's requested bindings are used. The final
 // bindings are re-validated against the preset's slot schema before any rule is created (ADR-0037).
-func (d *Daemon) approvePreset(p approval.Pending, bindings map[string]string) error {
+func (d *Daemon) approvePreset(p approval.Pending, bindings map[string]string, expiresAt time.Time) error {
 	final := bindings
 	if final == nil {
 		final = p.Bindings
@@ -64,7 +65,7 @@ func (d *Daemon) approvePreset(p approval.Pending, bindings map[string]string) e
 		r := policy.Rule{
 			SubjectAgentID: p.AgentID, UpstreamID: p.UpstreamID, Outcome: t.Outcome,
 			BrowseMethods: t.BrowseMethods, BrowsePath: t.BrowsePath,
-			Profile: t.Profile, ProfileParams: t.ProfileParams,
+			Profile: t.Profile, ProfileParams: t.ProfileParams, ExpiresAt: expiresAt,
 		}
 		if isDup(r) {
 			continue

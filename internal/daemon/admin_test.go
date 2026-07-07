@@ -714,7 +714,7 @@ func TestHostApproveRefusesK8sCredential(t *testing.T) {
 
 	err = d.applyApprovalSideEffects(
 		approval.Pending{Kind: approval.KindHostAccess, UpstreamID: cl.ID, Host: cl.Name},
-		&upstream.AuthConfig{Type: "static", Header: "Authorization", Token: "Bearer x"}, nil, nil)
+		&upstream.AuthConfig{Type: "static", Header: "Authorization", Token: "Bearer x"}, nil, nil, time.Time{})
 	require.Error(t, err, "attaching an HTTP credential to a k8s cluster must be refused")
 
 	// The cluster's k8s token credential is intact (not clobbered).
@@ -885,6 +885,95 @@ func TestRuleCreateWithBrowseFields(t *testing.T) {
 	body := req(t, h, "GET", "/rules", "").Body.String()
 	require.Contains(t, body, `"browse_path":"/**"`)
 	require.Contains(t, body, `"browse_methods":"GET,HEAD"`)
+}
+
+// TestManualRuleCreateWithTTL verifies POST /rules honors ttl_seconds, stamping ExpiresAt on the
+// created rule (ADR-0045 grant TTL).
+func TestManualRuleCreateWithTTL(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, 200, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	wu := req(t, h, "POST", "/upstreams", `{"name":"gh","base_url":"https://api.github.com","auth":{"type":"none"}}`)
+	require.Equal(t, 200, wu.Code, wu.Body.String())
+	var up map[string]string
+	require.NoError(t, json.Unmarshal(wu.Body.Bytes(), &up))
+
+	body := `{"upstream_id":"` + up["id"] + `","outcome":"allow","browse_path":"/**","browse_methods":"GET","ttl_seconds":7200}`
+	res := req(t, h, "POST", "/rules", body)
+	require.Equal(t, 200, res.Code, res.Body.String())
+
+	rules, err := d.policy.ForUpstream(up["id"])
+	require.NoError(t, err)
+	require.Len(t, rules, 1)
+	require.False(t, rules[0].ExpiresAt.IsZero())
+	require.WithinDuration(t, time.Now().UTC().Add(2*time.Hour), rules[0].ExpiresAt, time.Minute)
+}
+
+// TestRuleRenewEndpoint drives POST /rules/{id}/renew: a positive ttl_seconds refreshes the rule's
+// expiry, and ttl_seconds:0 makes it permanent again.
+func TestRuleRenewEndpoint(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, 200, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	wu := req(t, h, "POST", "/upstreams", `{"name":"gh","base_url":"https://api.github.com","auth":{"type":"none"}}`)
+	require.Equal(t, 200, wu.Code, wu.Body.String())
+	var up map[string]string
+	require.NoError(t, json.Unmarshal(wu.Body.Bytes(), &up))
+
+	rule, err := d.policy.Create(policy.Rule{
+		UpstreamID: up["id"], Outcome: policy.Allow, BrowsePath: "/**",
+		ExpiresAt: time.Now().UTC().Add(-time.Hour),
+	})
+	require.NoError(t, err)
+
+	res := req(t, h, "POST", "/rules/"+rule.ID+"/renew", `{"ttl_seconds":86400}`)
+	require.Equal(t, 200, res.Code, res.Body.String())
+	got, err := d.policy.ForUpstream(up["id"])
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.WithinDuration(t, time.Now().UTC().Add(24*time.Hour), got[0].ExpiresAt, time.Minute)
+
+	// ttl_seconds:0 makes it permanent.
+	res = req(t, h, "POST", "/rules/"+rule.ID+"/renew", `{"ttl_seconds":0}`)
+	require.Equal(t, 200, res.Code, res.Body.String())
+	got, err = d.policy.ForUpstream(up["id"])
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.True(t, got[0].ExpiresAt.IsZero())
+}
+
+// TestOperationApprovalWithTTLStampsAndRenewsExpiry verifies an approved MCP operation approval
+// stamps the created rule's expiry from ttl_seconds, and that re-approving the SAME template
+// (the extend path) refreshes (renews) the expiry to the new ttl.
+func TestOperationApprovalWithTTLStampsAndRenewsExpiry(t *testing.T) {
+	d := newDaemon(t)
+	h := d.AdminHandler()
+	require.Equal(t, http.StatusOK, req(t, h, "POST", "/vault/init", `{"password":"pw"}`).Code)
+
+	hostUp, _, err := d.upstreams.GetOrCreateByHost("gitlab.example")
+	require.NoError(t, err)
+
+	id1 := submitOp(t, d, hostUp.ID, map[string]string{"project_path": "infra/helm"})
+	require.Equal(t, http.StatusOK,
+		req(t, h, "POST", "/approvals/"+id1+"/resolve", `{"approve":true,"ttl_seconds":3600}`).Code)
+
+	rules, err := d.policy.ForUpstream(hostUp.ID)
+	require.NoError(t, err)
+	require.Len(t, rules, 1)
+	require.False(t, rules[0].ExpiresAt.IsZero())
+	require.WithinDuration(t, time.Now().UTC().Add(time.Hour), rules[0].ExpiresAt, time.Minute)
+
+	// Extend path: approving a NEW value on the same template refreshes the expiry to the new ttl.
+	id2 := submitOp(t, d, hostUp.ID, map[string]string{"project_path": "apps/web"})
+	require.Equal(t, http.StatusOK,
+		req(t, h, "POST", "/approvals/"+id2+"/resolve", `{"approve":true,"ttl_seconds":7200}`).Code)
+
+	rules, err = d.policy.ForUpstream(hostUp.ID)
+	require.NoError(t, err)
+	require.Len(t, rules, 1)
+	require.WithinDuration(t, time.Now().UTC().Add(2*time.Hour), rules[0].ExpiresAt, time.Minute)
 }
 
 // mustUpstreamProfiled creates an upstream with the given profile for use in tests.
