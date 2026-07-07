@@ -11,9 +11,7 @@ import { OperatorSessionModal } from './components/OperatorSessionModal'
 import { Unlock } from './pages/Unlock'
 import { Dashboard } from './pages/Dashboard'
 import { Upstreams } from './pages/Upstreams'
-import { Agents } from './pages/Agents'
-import { Rules } from './pages/Rules'
-import { Approvals } from './pages/Approvals'
+import { Access } from './pages/Access'
 import { Audit } from './pages/Audit'
 import { Settings } from './pages/Settings'
 
@@ -66,9 +64,9 @@ export default function App() {
     if (unlocked) refreshSession()
   }, [unlocked, refreshSession])
 
-  // Route to the Approvals page when the desktop sends a NEW "open-approvals" signal (e.g. an OS
+  // Route to the Access page when the desktop sends a NEW "open-approvals" signal (e.g. an OS
   // notification click). Gating on the counter's increase — not on `> 0` — is what keeps tab
-  // switching from bouncing back to Approvals (see useOpenApprovalsRoute).
+  // switching from bouncing back to Access (see useOpenApprovalsRoute).
   useOpenApprovalsRoute(openApprovals, navigate)
 
   // The operator-session gate covers vault init/unlock too (a fresh daemon start has no open
@@ -97,9 +95,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/upstreams" element={<Upstreams />} />
-            <Route path="/agents" element={<Agents />} />
-            <Route path="/rules" element={<Rules />} />
-            <Route path="/approvals" element={<Approvals />} />
+            <Route path="/access" element={<Access />} />
             <Route path="/audit" element={<Audit />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>

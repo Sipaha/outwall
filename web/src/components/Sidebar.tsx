@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router'
-import { LayoutDashboard, Server, Bot, ShieldCheck, CheckSquare, ScrollText, Settings, Lock } from 'lucide-react'
+import { LayoutDashboard, Server, KeyRound, ScrollText, Settings, Lock } from 'lucide-react'
 import { useEventStore } from '../lib/events'
 import { useOperatorSession } from '../lib/operatorSession'
 
@@ -9,13 +9,10 @@ interface NavItem {
   icon: typeof LayoutDashboard
 }
 
-// Only Dashboard is wired in 6A; the rest are routes Plan 6B fills.
 const NAV: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/upstreams', label: 'Upstreams', icon: Server },
-  { to: '/agents', label: 'Agents', icon: Bot },
-  { to: '/rules', label: 'Operations', icon: ShieldCheck },
-  { to: '/approvals', label: 'Approvals', icon: CheckSquare },
+  { to: '/access', label: 'Access', icon: KeyRound },
   { to: '/audit', label: 'Audit', icon: ScrollText },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
