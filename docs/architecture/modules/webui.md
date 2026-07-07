@@ -64,13 +64,11 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
     `approval.enqueued`, `approval.resolved`; Approve/Deny → `resolveApproval`) — a quick-glance
     summary, distinct from the Access page's full pending-queue-plus-grants view.
   - `Upstreams` — `HTTP` / `Citeck` / `Kubernetes` zone tabs (ADR-0036) over `listUpstreams`;
-    per-zone add/credential/remove/kubeconfig-import flows unchanged by this redesign.
-  - `Access` (`/access`, replaces the old **Agents** + **Operations** (`/rules`) + **Approvals**
-    pages — ADR-0042) — a single scrolling page composed from `pages/access/`:
+    per-zone add/credential/remove/kubeconfig-import flows.
+  - `Access` (`/access`) — a single scrolling page composed from `pages/access/`:
     - `RequestsPanel` — the aggregated pending-approval queue ("Запросы прав"), rendering
-      `ApprovalCards.tsx`'s per-`kind` cards (host/operation/preset/new-value/legacy plain-k8s,
-      same resolve semantics as the old Approvals page) with a scope-badge "hero" box for the
-      concrete right and a Deny-with-reason modal.
+      `ApprovalCards.tsx`'s per-`kind` cards (host/operation/preset/new-value/plain-k8s) with a
+      scope-badge "hero" box for the concrete right and a Deny-with-reason modal.
     - `GrantGroups` — the granted-rights list ("Выданные права"), grouping `lib/grants.ts`'s
       `deriveGrants(rules, requests)` output either by agent (`AgentCard` → `UpstreamGrantCard`
       per grant, default) or by upstream (transposed), toggle persisted via
@@ -81,29 +79,26 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
       duplicate delete). Header click anywhere toggles collapse; the trash/kebab
       `stopPropagation`.
     - `UpstreamGrantCard` — one grant (agent×upstream): header (kind icon, hostname, kind label,
-      **Revoke** → `revokeGrant(agentId, upstreamId)`, ADR-0042) followed by its `RuleRow`s.
+      **Revoke** → `revokeGrant(agentId, upstreamId)`) followed by its `RuleRow`s.
     - `RuleRow` — one rule: scope badge (`scopeOf`), path/resource (variable segments as chips),
       `valueSummary` tail, outcome, edit/delete icons. Expandable per-variable editors from
       `valueEditors.tsx` — `ValueSetEditor` (text: chips + add + trust-any) and
-      `NumberRangeEditor` (min–max + trust-any) only; **enum has no editor** (dropped by design,
-      ADR-0042 — still enforced, just not user-editable here); `date` shows a static "auto" note.
-    - `ManualRuleModal` — the `+ Выдать вручную` entry point; the same `createRule` flow the old
-      Operations "Add operation" modal used (http method+path+var lines, k8s tuple, or citeck
-      Records op/sourceId/workspace), now reachable from Access.
+      `NumberRangeEditor` (min–max + trust-any) only; **enum has no editor** (enforced, but not
+      user-editable here); `date` shows a static "auto" note.
+    - `ManualRuleModal` — the `+ Выдать вручную` entry point: a `createRule` flow (http
+      method+path+var lines, k8s tuple, or citeck Records op/sourceId/workspace).
   - `Audit` — tabbed (`Tabs`): **Трафик** — `listAudit(200)` table (status colored by class)
     refetched on `audit.recorded`, row "View" → `getAudit(id)` detail modal (meta grid,
-    masked-headers table, request/response body panels via `JsonView`); **Запросы прав**
-    (ADR-0042) — the read-only access-request history moved off the old Approvals page (agent,
-    upstream, purpose, status badge + deny reason, requested-at, resolved-at), no
-    Revoke/Dismiss here (those are grant/queue actions now), filterable by `?agent=<id>` (the
-    Access agent-card kebab link) and tab-selected via `?tab=requests`.
+    masked-headers table, request/response body panels via `JsonView`); **Запросы прав** —
+    the read-only access-request history (agent, upstream, purpose, status badge + deny reason,
+    requested-at, resolved-at), no Revoke/Dismiss here, filterable by `?agent=<id>` (the Access
+    agent-card kebab link) and tab-selected via `?tab=requests`.
   - `Settings` — vault status + Lock vault (`vaultLock` then reload → Unlock screen); audit
     prune control (`pruneAudit` older-than-N-days); a localhost-only daemon note.
 - `App.tsx` — on mount `getVaultStatus()`: not-initialized → Unlock(init); locked →
   Unlock(unlock); else the shell (Sidebar + routed `<main>`), connecting the SSE store. Routes:
-  `/`, `/upstreams`, `/access`, `/audit`, `/settings` (ADR-0042 — `/agents`, `/rules`,
-  `/approvals` are gone). `useOpenApprovalsRoute` routes to `/access` on a new
-  `desktop.open-approvals` signal (retargeted from the deleted `/approvals`, ADR-0042).
+  `/`, `/upstreams`, `/access`, `/audit`, `/settings`. `useOpenApprovalsRoute` routes to
+  `/access` on a `desktop.open-approvals` signal.
 
 ## Tests
 
@@ -126,9 +121,8 @@ bind. See ADR-0006 for the rationale (embed, `/api` prefix, SSE CSRF exemption, 
 - `pages/access/RequestsPanel.test.tsx` — shows the "Запросы прав (N)" count and renders a card
   (a host-kind fixture) with its purpose/host; shows "Нет запросов прав" when empty; Approve calls
   `resolveApproval` then `onChanged`. `ApprovalCards.tsx`'s other per-`kind` shapes (operation
-  example-URL, broad-placeholder warning, new-value trust-any, legacy plain/k8s) and the Deny
-  reason-modal path have no dedicated test in the new location — this coverage existed on the old
-  `pages/Approvals.test.tsx` (deleted with the page) and was not fully re-created.
+  example-URL, broad-placeholder warning, new-value trust-any, plain/k8s) and the Deny
+  reason-modal path have no dedicated test.
 - No standalone test for `GrantGroups`; its by-agent/by-upstream rendering is exercised indirectly
   through `Access.test.tsx` plus `AgentCard.test.tsx`/`UpstreamGrantCard.test.tsx`.
 - `pages/access/AgentCard.test.tsx` — header click toggles collapse (expanded by default); the
