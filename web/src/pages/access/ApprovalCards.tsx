@@ -2,12 +2,14 @@
  * This module is a shared card library, not a fast-refresh boundary: it intentionally exports
  * helpers (shortId, exampleURL, segmentsOf) alongside the card components for reuse by both
  * Approvals.tsx and the Access page. */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
+import { MessageSquare } from 'lucide-react'
 import { previewPreset } from '../../lib/api'
 import type { Approval, ResolveOptions, UpstreamAuthConfig } from '../../lib/types'
 import { StatusBadge } from '../../components/StatusBadge'
 import { FormField, fieldControlClass } from '../../components/FormField'
 import { Select } from '../../components/Select'
+import { ScopeBadge } from './scope'
 
 export function shortId(id: string): string {
   return id.length > 8 ? id.slice(0, 8) : id
@@ -47,7 +49,25 @@ export function segmentsOf(template: string): { text: string; variable: boolean 
   return out
 }
 
-const cardClass = 'rounded-lg border border-border bg-card p-3 space-y-3'
+// Segments renders a path/query template inline, highlighting `{name:type}` variables as chips.
+function Segments({ template }: { template: string }) {
+  return (
+    <>
+      {segmentsOf(template).map((s, i) => (
+        <span key={i} className={s.variable ? 'rounded bg-primary/15 px-1 text-primary' : 'text-foreground'}>
+          {s.text}
+        </span>
+      ))}
+    </>
+  )
+}
+
+function fmtTime(iso: string): string {
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? iso : d.toLocaleString()
+}
+
+const cardClass = 'rounded-lg border border-border bg-card p-3 space-y-2'
 const approveBtn =
   'rounded bg-success/15 px-2.5 py-1 text-[11px] font-medium text-success hover:bg-success/25'
 const denyBtn =
@@ -58,6 +78,58 @@ const trustBtn =
 interface CardProps {
   approval: Approval
   onResolve: (id: string, approve: boolean, opts?: ResolveOptions) => void
+}
+
+/**
+ * CardHeader is the "право — герой" header row shared by every restyled card: agent → upstream,
+ * a type tag, a right-aligned muted timestamp, and the resolve actions. Agent name and time live
+ * here ONLY — the body below never repeats them.
+ */
+function CardHeader({
+  agentId,
+  upstream,
+  tag,
+  createdAt,
+  actions,
+}: {
+  agentId: string
+  upstream: string
+  tag: string
+  createdAt: string
+  actions: ReactNode
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-xs">
+        <span className="font-semibold">{shortId(agentId)}</span>
+        <span className="text-muted-foreground">→</span>
+        <span className="truncate font-mono text-muted-foreground">{upstream}</span>
+        <StatusBadge status={tag} />
+      </div>
+      <span className="shrink-0 text-[11px] text-muted-foreground">{fmtTime(createdAt)}</span>
+      <div className="flex shrink-0 gap-1.5">{actions}</div>
+    </div>
+  )
+}
+
+/** HeroBox is the bordered "what this grants" box: a ScopeBadge + the concrete resource/path. */
+function HeroBox({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5">
+      {children}
+    </div>
+  )
+}
+
+/** PurposeLine is the readable "why" line under the hero box. Omits agent/time (already in header). */
+function PurposeLine({ purpose }: { purpose?: string }) {
+  if (!purpose) return null
+  return (
+    <div className="flex items-start gap-1.5 text-[13px] text-foreground">
+      <MessageSquare size={13} className="mt-0.5 shrink-0 text-muted-foreground" />
+      <span>{purpose}</span>
+    </div>
+  )
 }
 
 /** Tier-1 host card: agent + host + purpose, with an optional credential to attach on approve. */
@@ -71,16 +143,29 @@ function HostCard({ approval, onResolve }: CardProps) {
 
   return (
     <div className={cardClass}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="space-y-1">
-          <div className="text-[11px] text-muted-foreground">
-            Host access · agent <span className="font-mono">{shortId(approval.agent_id)}</span>
-          </div>
-          <div className="font-mono text-sm">{approval.host}</div>
-          {approval.purpose && <div className="text-xs text-muted-foreground">{approval.purpose}</div>}
-        </div>
-        <StatusBadge status="host" />
-      </div>
+      <CardHeader
+        agentId={approval.agent_id}
+        upstream={approval.host || shortId(approval.upstream_id)}
+        tag="host"
+        createdAt={approval.created_at}
+        actions={
+          <>
+            <button onClick={approve} className={approveBtn}>
+              Approve
+            </button>
+            <button onClick={() => onResolve(approval.id, false)} className={denyBtn}>
+              Deny
+            </button>
+          </>
+        }
+      />
+
+      <HeroBox>
+        <ScopeBadge scope={{ label: 'HOST', kind: 'browse' }} />
+        <span className="font-mono text-[13px] font-semibold">Full access to this host</span>
+      </HeroBox>
+
+      <PurposeLine purpose={approval.purpose} />
 
       <div className="rounded border border-border/60 bg-muted/30 p-2 space-y-2">
         <div className="text-[11px] text-muted-foreground">Credential (attach now or later)</div>
@@ -139,15 +224,6 @@ function HostCard({ approval, onResolve }: CardProps) {
           </>
         )}
       </div>
-
-      <div className="flex justify-end gap-1.5">
-        <button onClick={approve} className={approveBtn}>
-          Approve
-        </button>
-        <button onClick={() => onResolve(approval.id, false)} className={denyBtn}>
-          Deny
-        </button>
-      </div>
     </div>
   )
 }
@@ -166,43 +242,39 @@ function OperationCard({ approval, onResolve }: CardProps) {
 
   return (
     <div className={cardClass}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="space-y-1">
-          <div className="text-[11px] text-muted-foreground">
-            Operation access · agent <span className="font-mono">{shortId(approval.agent_id)}</span> ·{' '}
-            <span className="font-mono">{approval.host}</span>
-          </div>
-          {approval.purpose && <div className="text-xs text-muted-foreground">{approval.purpose}</div>}
-        </div>
-        <StatusBadge status="operation" />
-      </div>
+      <CardHeader
+        agentId={approval.agent_id}
+        upstream={approval.host || shortId(approval.upstream_id)}
+        tag="operation"
+        createdAt={approval.created_at}
+        actions={
+          <>
+            <button onClick={approve} className={approveBtn}>
+              Approve
+            </button>
+            <button onClick={() => onResolve(approval.id, false)} className={denyBtn}>
+              Deny
+            </button>
+          </>
+        }
+      />
 
-      {/* The operation shape: fixed vs variable segments visually distinct. */}
-      <div className="font-mono text-xs">
-        <span className="font-semibold">{approval.op_method} </span>
-        {segmentsOf(approval.op_path_template ?? '').map((s, i) => (
-          <span
-            key={i}
-            className={s.variable ? 'rounded bg-primary/15 px-1 text-primary' : 'text-foreground'}
-          >
-            {s.text}
-          </span>
-        ))}
-        {Object.entries(approval.op_query_template ?? {}).map(([k, v], i) => (
-          <span key={k}>
-            {i === 0 ? '?' : '&'}
-            {k}=
-            {segmentsOf(v).map((s, j) => (
-              <span
-                key={j}
-                className={s.variable ? 'rounded bg-primary/15 px-1 text-primary' : 'text-foreground'}
-              >
-                {s.text}
-              </span>
-            ))}
-          </span>
-        ))}
-      </div>
+      {/* The hero box: the method scope + the resource shape, variables highlighted as chips. */}
+      <HeroBox>
+        <ScopeBadge scope={{ label: approval.op_method || 'GET', kind: 'method' }} />
+        <span className="font-mono text-[13px] font-semibold">
+          <Segments template={approval.op_path_template ?? ''} />
+          {Object.entries(approval.op_query_template ?? {}).map(([k, v], i) => (
+            <span key={k}>
+              {i === 0 ? '?' : '&'}
+              {k}=
+              <Segments template={v} />
+            </span>
+          ))}
+        </span>
+      </HeroBox>
+
+      <PurposeLine purpose={approval.purpose} />
 
       {/* The concrete example URL built from the agent's requested values. */}
       <div className="rounded border border-border/60 bg-muted/30 p-2">
@@ -246,15 +318,6 @@ function OperationCard({ approval, onResolve }: CardProps) {
           before approving.
         </div>
       )}
-
-      <div className="flex justify-end gap-1.5">
-        <button onClick={approve} className={approveBtn}>
-          Approve
-        </button>
-        <button onClick={() => onResolve(approval.id, false)} className={denyBtn}>
-          Deny
-        </button>
-      </div>
     </div>
   )
 }
@@ -270,33 +333,37 @@ function K8sAccessCard({ approval, onResolve }: CardProps) {
       : [{ namespace: p.namespace ?? '', resource: p.resource ?? '', verb: p.verb ?? '' }]
   return (
     <div className={cardClass}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="space-y-1">
-          <div className="text-[11px] text-muted-foreground">
-            k8s access · agent <span className="font-mono">{shortId(p.agent_id)}</span> ·{' '}
-            <span className="font-mono">{p.host}</span>
-          </div>
-          <div className="space-y-0.5">
-            {grants.map((g, i) => (
-              <div key={i} className="font-mono text-xs">
-                <span className="text-muted-foreground">{g.namespace || '*'}</span>
-                <span className="text-muted-foreground">{' / '}</span>
-                <span>{g.resource || '*'}</span> <StatusBadge status={g.verb || '*'} />
-              </div>
-            ))}
-          </div>
-          {p.purpose && <div className="text-xs text-muted-foreground">{p.purpose}</div>}
-        </div>
-        <StatusBadge status="k8s" />
+      <CardHeader
+        agentId={p.agent_id}
+        upstream={p.host || shortId(p.upstream_id)}
+        tag="k8s"
+        createdAt={p.created_at}
+        actions={
+          <>
+            <button onClick={() => onResolve(p.id, true)} className={approveBtn}>
+              Approve
+            </button>
+            <button onClick={() => onResolve(p.id, false)} className={denyBtn}>
+              Deny
+            </button>
+          </>
+        }
+      />
+
+      <div className="space-y-1.5">
+        {grants.map((g, i) => (
+          <HeroBox key={i}>
+            <ScopeBadge scope={{ label: g.verb || '*', kind: 'verb' }} />
+            <span className="font-mono text-[13px] font-semibold">
+              <span className="text-muted-foreground">{g.namespace || '*'}</span>
+              <span className="text-muted-foreground"> / </span>
+              <span>{g.resource || '*'}</span>
+            </span>
+          </HeroBox>
+        ))}
       </div>
-      <div className="flex justify-end gap-1.5">
-        <button onClick={() => onResolve(p.id, true)} className={approveBtn}>
-          Approve
-        </button>
-        <button onClick={() => onResolve(p.id, false)} className={denyBtn}>
-          Deny
-        </button>
-      </div>
+
+      <PurposeLine purpose={p.purpose} />
     </div>
   )
 }
@@ -325,19 +392,37 @@ function PresetCard({ approval, onResolve }: CardProps) {
     setBindings((b) => ({ ...b, [key]: value }))
   }
 
+  // Preset naming convention: `*-readonly` presets only ever create read rules; every other
+  // preset (e.g. `citeck-readwrite`) can create both read and write rules.
+  const presetScope = (approval.preset_id ?? '').endsWith('-readonly')
+    ? { label: 'READ', kind: 'read' as const }
+    : { label: 'READ/WRITE', kind: 'write' as const }
+
   return (
     <div className={cardClass}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="space-y-1">
-          <div className="text-[11px] text-muted-foreground">
-            Preset · agent <span className="font-mono">{shortId(approval.agent_id)}</span> ·{' '}
-            <span className="font-mono">{approval.host}</span>
-          </div>
-          <div className="text-sm font-medium">{preset?.label ?? approval.preset_id}</div>
-          {approval.purpose && <div className="text-xs text-muted-foreground">{approval.purpose}</div>}
-        </div>
-        <StatusBadge status="preset" />
-      </div>
+      <CardHeader
+        agentId={approval.agent_id}
+        upstream={approval.host || shortId(approval.upstream_id)}
+        tag="preset"
+        createdAt={approval.created_at}
+        actions={
+          <>
+            <button onClick={() => onResolve(approval.id, true, { bindings })} className={approveBtn}>
+              Approve
+            </button>
+            <button onClick={() => onResolve(approval.id, false)} className={denyBtn}>
+              Deny
+            </button>
+          </>
+        }
+      />
+
+      <HeroBox>
+        <ScopeBadge scope={presetScope} />
+        <span className="font-mono text-[13px] font-semibold">{preset?.label ?? approval.preset_id}</span>
+      </HeroBox>
+
+      <PurposeLine purpose={approval.purpose} />
 
       {(preset?.slots ?? []).length > 0 && (
         <div className="space-y-2">
@@ -378,15 +463,6 @@ function PresetCard({ approval, onResolve }: CardProps) {
           ))
         )}
       </div>
-
-      <div className="flex justify-end gap-1.5">
-        <button onClick={() => onResolve(approval.id, true, { bindings })} className={approveBtn}>
-          Approve
-        </button>
-        <button onClick={() => onResolve(approval.id, false)} className={denyBtn}>
-          Deny
-        </button>
-      </div>
     </div>
   )
 }
@@ -404,18 +480,34 @@ function NewValueCard({ approval, onResolve }: CardProps) {
 
   return (
     <div className={cardClass}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="space-y-1">
-          <div className="text-[11px] text-muted-foreground">
-            New value · agent <span className="font-mono">{shortId(approval.agent_id)}</span>
-          </div>
-          <div className="font-mono text-xs">
-            <span className="font-semibold text-muted-foreground">{approval.method || '*'} </span>
-            <span>{approval.template}</span>
-          </div>
-        </div>
-        <StatusBadge status="new-value" />
-      </div>
+      <CardHeader
+        agentId={approval.agent_id}
+        upstream={approval.host || shortId(approval.upstream_id)}
+        tag="new-value"
+        createdAt={approval.created_at}
+        actions={
+          <>
+            <button onClick={() => approve(false)} className={approveBtn}>
+              Approve
+            </button>
+            <button onClick={() => approve(true)} className={trustBtn}>
+              Approve + trust any
+            </button>
+            <button onClick={() => onResolve(approval.id, false)} className={denyBtn}>
+              Deny
+            </button>
+          </>
+        }
+      />
+
+      <HeroBox>
+        <ScopeBadge scope={{ label: approval.method || '*', kind: 'method' }} />
+        <span className="font-mono text-[13px] font-semibold">
+          <Segments template={approval.template ?? ''} />
+        </span>
+      </HeroBox>
+
+      <PurposeLine purpose={approval.purpose} />
 
       <div className="space-y-1">
         {newVals.map((nv) => (
@@ -425,18 +517,6 @@ function NewValueCard({ approval, onResolve }: CardProps) {
             <span className="rounded bg-primary/15 px-1 font-mono text-primary">{nv.value}</span>
           </div>
         ))}
-      </div>
-
-      <div className="flex justify-end gap-1.5">
-        <button onClick={() => approve(false)} className={approveBtn}>
-          Approve
-        </button>
-        <button onClick={() => approve(true)} className={trustBtn}>
-          Approve + trust any
-        </button>
-        <button onClick={() => onResolve(approval.id, false)} className={denyBtn}>
-          Deny
-        </button>
       </div>
     </div>
   )

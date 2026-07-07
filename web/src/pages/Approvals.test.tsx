@@ -271,10 +271,9 @@ describe('<Approvals>', () => {
 
     render(<Approvals />)
 
-    // Template + the new (variable, value) are shown.
-    expect(
-      await screen.findByText('/api/v4/projects/{project_path:text}/pipelines'),
-    ).toBeInTheDocument()
+    // The template's fixed and variable segments are shown (variables rendered as chips).
+    expect(await screen.findByText('/api/v4/projects/')).toBeInTheDocument()
+    expect(screen.getByText('{project_path:text}')).toBeInTheDocument()
     expect(screen.getByText('project_path')).toBeInTheDocument()
     expect(screen.getByText('other')).toBeInTheDocument()
 
