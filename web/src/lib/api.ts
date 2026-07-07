@@ -254,6 +254,11 @@ export function deleteRule(id: string): Promise<{ ok: boolean }> {
   return request('DELETE', `/rules/${encodeURIComponent(id)}`)
 }
 
+/** Renew a rule's grant TTL (0 = never expires) — resets expires_at from now. */
+export function renewRule(id: string, ttl_seconds: number): Promise<{ ok: boolean }> {
+  return request('POST', `/rules/${encodeURIComponent(id)}/renew`, { ttl_seconds })
+}
+
 // --- Profiles ---
 
 export function getProfiles(): Promise<ProfileSchema[]> {

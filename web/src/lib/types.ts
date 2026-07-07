@@ -118,6 +118,7 @@ export interface Rule {
   profile_params?: Record<string, unknown>
   browse_methods?: string // http methods allowed for browse access (e.g. "GET,HEAD")
   browse_path?: string // path glob for browse access (e.g. "/**")
+  expires_at?: string // RFC3339Nano or '' (never)
 }
 
 export interface ProfileField { key: string; label: string; type: string; options?: string[] }
@@ -200,6 +201,7 @@ export interface ResolveOptions {
   trust_any?: string[]
   reason?: string // operator's explanation on deny, surfaced to the agent
   bindings?: Record<string, string>
+  ttl_seconds?: number // grant duration in seconds (0 = never); rides the approve payload
 }
 
 /** GET /api/access-requests — logged access-request intents. */

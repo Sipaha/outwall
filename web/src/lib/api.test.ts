@@ -5,6 +5,7 @@ import {
   listAgents,
   deleteAgent,
   revokeAccessRequest,
+  renewRule,
   openOperatorSession,
   setSessionRequiredHandler,
 } from './api'
@@ -122,6 +123,25 @@ describe('api client', () => {
     expect(url).toBe('/api/access-requests/ar1/revoke')
     expect(opts.method).toBe('POST')
     expect(opts.headers['X-Outwall-CSRF']).toBeUndefined()
+  })
+
+  it('renewRule POSTs ttl_seconds to /api/rules/{id}/renew with NO CSRF header', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await renewRule('r1', 86400)
+    expect(res).toEqual({ ok: true })
+
+    const [url, opts] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/rules/r1/renew')
+    expect(opts.method).toBe('POST')
+    expect(opts.headers['X-Outwall-CSRF']).toBeUndefined()
+    expect(JSON.parse(opts.body)).toEqual({ ttl_seconds: 86400 })
   })
 
   it('retries the original call once after the operator opens the session on a 403 gate', async () => {
