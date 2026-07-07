@@ -102,6 +102,10 @@ type AccessResult struct {
 	// Hint carries profile-specific advice for the requested preset (e.g. steer a Citeck upstream's
 	// read access to citeck-readonly). Sourced from the upstream's server-profile — empty otherwise.
 	Hint string `json:"hint,omitempty"`
+	// OperatorEdits reports the preset slots the operator narrowed when granting (empty when the
+	// request was approved unchanged) so the agent learns its request was altered — e.g. workspace
+	// "*" → "ECOSENT". See ADR-0044.
+	OperatorEdits []access.BindingEdit `json:"operator_edits,omitempty"`
 }
 
 // Identity is the whoami payload (the agent's own view of itself).
@@ -686,8 +690,34 @@ func (s *Service) accessStatus(agentID string, up *upstream.Upstream) (AccessRes
 				res.Memo = "denied by the operator"
 			}
 		}
+		return res, nil
+	}
+	// Granted: surface any operator narrowing recorded on the latest request so the agent learns its
+	// request was edited (e.g. workspace "*" → "ECOSENT"). Best-effort — a lookup error never blocks
+	// the grant.
+	if req, ok, lerr := s.access.Latest(agentID, up.ID); lerr == nil && ok && len(req.Edits) > 0 {
+		res.OperatorEdits = req.Edits
+		res.Memo = editsNote(req.Edits) + " — " + res.Memo
 	}
 	return res, nil
+}
+
+// editsNote renders operator slot edits as a one-line human summary, e.g.
+// "operator narrowed workspace: * → ECOSENT".
+func editsNote(edits []access.BindingEdit) string {
+	parts := make([]string, 0, len(edits))
+	for _, e := range edits {
+		req := e.Requested
+		if req == "" {
+			req = "(none)"
+		}
+		granted := e.Granted
+		if granted == "" {
+			granted = "(none)"
+		}
+		parts = append(parts, e.Slot+": "+req+" → "+granted)
+	}
+	return "operator narrowed " + strings.Join(parts, ", ")
 }
 
 // hasPendingRequest reports whether the agent has an outstanding (pending) access request for the

@@ -122,6 +122,7 @@ func TestServerProfileColumns(t *testing.T) {
 	_, err = db.Exec(`CREATE TABLE upstreams (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, base_url TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'http', auth_type TEXT NOT NULL, auth_config BLOB, created_at TEXT NOT NULL);
 		CREATE TABLE rules (id TEXT PRIMARY KEY, subject_agent_id TEXT NOT NULL DEFAULT '', upstream_id TEXT NOT NULL, op_method TEXT NOT NULL DEFAULT '', op_path_template TEXT NOT NULL DEFAULT '', op_query_template TEXT NOT NULL DEFAULT '{}', op_body_template TEXT NOT NULL DEFAULT '{}', op_value_policies TEXT NOT NULL DEFAULT '{}', outcome TEXT NOT NULL, rate_limit_per_min INTEGER NOT NULL DEFAULT 0, k8s_namespace TEXT NOT NULL DEFAULT '', k8s_resource TEXT NOT NULL DEFAULT '', k8s_verb TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
 		CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, status TEXT NOT NULL, created_at TEXT NOT NULL);
+		CREATE TABLE access_requests (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, upstream_id TEXT NOT NULL, purpose TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, resolved_at TEXT NOT NULL DEFAULT '');
 		PRAGMA user_version = 1;`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
@@ -160,6 +161,7 @@ func TestAgentLastSeenColumn(t *testing.T) {
 	db, err := sql.Open("sqlite", p)
 	require.NoError(t, err)
 	_, err = db.Exec(`CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, status TEXT NOT NULL, created_at TEXT NOT NULL);
+		CREATE TABLE access_requests (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, upstream_id TEXT NOT NULL, purpose TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, resolved_at TEXT NOT NULL DEFAULT '');
 		PRAGMA user_version = 3;`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())

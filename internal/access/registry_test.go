@@ -67,7 +67,7 @@ func TestGrantLatest(t *testing.T) {
 	r2, err := reg.Create("a1", "u1", "second")
 	require.NoError(t, err)
 
-	ok, err := reg.GrantLatest("a1", "u1")
+	ok, err := reg.GrantLatest("a1", "u1", nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 
@@ -77,18 +77,63 @@ func TestGrantLatest(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, r2.ID, latest.ID)
 	require.Equal(t, StatusGranted, latest.Status)
+	require.Empty(t, latest.Edits)
 
 	// No pending row for a different (agent, upstream) → no-op.
-	ok, err = reg.GrantLatest("a1", "other")
+	ok, err = reg.GrantLatest("a1", "other", nil)
 	require.NoError(t, err)
 	require.False(t, ok)
+}
+
+func TestGrantLatestRecordsOperatorEdits(t *testing.T) {
+	reg := newReg(t)
+	_, err := reg.Create("a1", "u1", "read a record")
+	require.NoError(t, err)
+
+	edits := []BindingEdit{{Slot: "workspace", Requested: "*", Granted: "ECOSENT"}}
+	ok, err := reg.GrantLatest("a1", "u1", edits)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	latest, found, err := reg.Latest("a1", "u1")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, StatusGranted, latest.Status)
+	require.Equal(t, edits, latest.Edits)
+}
+
+func TestDiffBindings(t *testing.T) {
+	// No change → no edits.
+	require.Empty(t, DiffBindings(
+		map[string]string{"sourceId": "*", "workspace": "*"},
+		map[string]string{"sourceId": "*", "workspace": "*"},
+	))
+	// One narrowed slot, reported; unchanged slot omitted.
+	require.Equal(t,
+		[]BindingEdit{{Slot: "workspace", Requested: "*", Granted: "ECOSENT"}},
+		DiffBindings(
+			map[string]string{"sourceId": "*", "workspace": "*"},
+			map[string]string{"sourceId": "*", "workspace": "ECOSENT"},
+		),
+	)
+	// Multiple edits are sorted by slot.
+	require.Equal(t,
+		[]BindingEdit{
+			{Slot: "sourceId", Requested: "*", Granted: "emodel/ept-issue"},
+			{Slot: "workspace", Requested: "*", Granted: "ECOSENT"},
+		},
+		DiffBindings(
+			map[string]string{"sourceId": "*", "workspace": "*"},
+			map[string]string{"sourceId": "emodel/ept-issue", "workspace": "ECOSENT"},
+		),
+	)
 }
 
 func TestMarkRevokedBySubjectUpstream(t *testing.T) {
 	reg := newReg(t)
 	_, err := reg.Create("ag1", "up1", "p1")
 	require.NoError(t, err)
-	_, err = reg.GrantLatest("ag1", "up1")
+	_, err = reg.GrantLatest("ag1", "up1", nil)
 	require.NoError(t, err)
 	// A second, still-pending request for the same pair must NOT be revoked.
 	_, err = reg.Create("ag1", "up1", "p2")

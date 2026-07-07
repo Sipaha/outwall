@@ -8,7 +8,8 @@ Schema tables: `vault_meta`, `upstreams`, `agents`, `rules`, `access_requests` (
 `grants` table was dropped in Plan 2 — see ADR-0002). `access_requests` is the MCP
 control-plane's intent log (added in Plan 3 — see ADR-0003): `(id, agent_id, upstream_id,
 purpose, status, created_at, resolved_at)` with `status ∈ {pending,granted,denied,dismissed}`
-and an index on `status`. Plan 4 added the audit journal (see ADR-0004): `audit_log`
+and an index on `status`. It also carries a `reason` (operator deny reason) and an `edits` column
+(operator preset-slot narrowing on grant, JSON; `access_request_edits` migration — ADR-0044). Plan 4 added the audit journal (see ADR-0004): `audit_log`
 (`id, ts, agent_id/name, upstream_id/name, method, path, query, status_code, duration_ms,
 req_bytes, resp_bytes, decision, rule_id, headers_json, error`, indexed by `ts`) and
 `audit_bodies` (`log_id, kind, content_type, size, sha256, truncated, stored`, keyed by

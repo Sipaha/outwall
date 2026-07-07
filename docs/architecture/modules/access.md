@@ -27,7 +27,9 @@ the Access UI calls; `hAccessRequestRevoke`/`MarkRevoked` remain for the single-
 
 - `ErrNotFound`.
 - Status consts: `StatusPending = "pending"`, `StatusGranted = "granted"`, `StatusDenied = "denied"`, `StatusDismissed = "dismissed"`, `StatusRevoked = "revoked"`.
-- `Request struct { ID, AgentID, UpstreamID, Purpose, Status, Reason string; CreatedAt time.Time; ResolvedAt string }` (`Reason` = operator deny reason, ADR-0024).
+- `Request struct { ID, AgentID, UpstreamID, Purpose, Status, Reason string; Edits []BindingEdit; CreatedAt time.Time; ResolvedAt string }` (`Reason` = operator deny reason, ADR-0024; `Edits` = operator preset-slot narrowing on grant, ADR-0044).
+- `BindingEdit struct { Slot, Requested, Granted string }` — one preset slot the operator changed when approving.
+- `DiffBindings(requested, granted map[string]string) []BindingEdit` — the slots whose granted value differs from requested (sorted by slot; empty when unchanged), ADR-0044.
 - `NewRegistry(s *store.Store) *Registry`.
 - `(*Registry).Create(agentID, upstreamID, purpose string) (*Request, error)` — logs a new intent with status `pending`.
 - `(*Registry).GetByID(id string) (*Request, error)` — `ErrNotFound` if absent.
@@ -37,4 +39,5 @@ the Access UI calls; `hAccessRequestRevoke`/`MarkRevoked` remain for the single-
 - `(*Registry).MarkRevoked(id string) error` — sets status `revoked` + `resolved_at=now`; `ErrNotFound` if absent.
 - `(*Registry).MarkRevokedBySubjectUpstream(agentID, upstreamID string) (int64, error)` — bulk-marks every `granted` request for the pair `revoked` + `resolved_at=now`; returns the number affected (ADR-0042).
 - `(*Registry).DenyLatest(agentID, upstreamID, reason string) (bool, error)` — marks the latest *pending* request for the pair denied + reason; reports whether a row matched (ADR-0024).
+- `(*Registry).GrantLatest(agentID, upstreamID string, edits []BindingEdit) (bool, error)` — marks the latest *pending* request for the pair granted + `resolved_at=now`, recording any operator slot edits; reports whether a row matched (ADR-0025 §C, ADR-0044).
 - `(*Registry).Latest(agentID, upstreamID string) (*Request, bool, error)` — the most recent request for the pair; `get_access` consults it to surface a denial + reason.

@@ -40,7 +40,7 @@ real credentials are never included. `internal/agentapi` exposes it as `GET
 ## Public API
 
 - `UpstreamInfo struct { Name, BaseURL, Kind, Status string }` (Status: `open|needs-request|denied`).
-- `AccessResult struct { Status, BasePath, Memo string }` (Status: `granted|pending|denied`).
+- `AccessResult struct { Status, BasePath, Memo, BrowseURL, Hint string; OperatorEdits []access.BindingEdit }` (Status: `granted|pending|denied`). `OperatorEdits` lists the preset slots the operator narrowed on grant, also prepended to `Memo` as a human note (`operator narrowed workspace: * → ECOSENT`), surfaced by both `GetAccess` and `RequestPreset` — ADR-0044.
 - `Variable struct { Name, Type string }` (`Type`: `text|date`).
 - `RequestAccessInput struct { Host, Method, PathTemplate string; QueryTemplate, BodyTemplate, Values map[string]string; Variables []Variable; Purpose string }` (`BodyTemplate` = JSON dotted path → literal/placeholder for request-body variables, ADR-0020).
 - `Identity struct { AgentID, Name, Status string; Accesses []string }`.

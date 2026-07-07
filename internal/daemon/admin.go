@@ -685,8 +685,18 @@ func (d *Daemon) hApprovalResolve(w http.ResponseWriter, r *http.Request) {
 			}
 			// Keep the access-request history in sync with the card decision so the table is a
 			// faithful read-only log (ADR-0025). MCP kinds (host/operation/k8s) log an intent row.
+			// For a preset approval, record any slots the operator narrowed relative to the agent's
+			// request so the agent learns of the edit when it polls get_access (ADR-0044).
 			if p.Kind != "" {
-				if _, gerr := d.access.GrantLatest(p.AgentID, p.UpstreamID); gerr != nil {
+				var edits []access.BindingEdit
+				if p.Kind == approval.KindPreset {
+					granted := body.Bindings
+					if granted == nil {
+						granted = p.Bindings
+					}
+					edits = access.DiffBindings(p.Bindings, granted)
+				}
+				if _, gerr := d.access.GrantLatest(p.AgentID, p.UpstreamID, edits); gerr != nil {
 					slog.Warn("record grant", "err", gerr)
 				}
 			}

@@ -241,6 +241,39 @@ func TestGetAccessSurfacesDenyReason(t *testing.T) {
 	require.Contains(t, res.Memo, "prod is off limits")
 }
 
+func TestGetAccessSurfacesOperatorEdits(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "m.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	v := secret.NewVault(s)
+	require.NoError(t, v.Init("pw"))
+	ag := agent.NewRegistry(s)
+	up := upstream.NewRegistry(s, v)
+	pol := policy.NewRegistry(s)
+	acc := access.NewRegistry(s)
+	svc := New(ag, up, pol, acc)
+
+	a, _, err := ag.Register("claude")
+	require.NoError(t, err)
+	u, err := up.Create("api.github.com", "https://api.github.com", upstream.AuthConfig{Type: "none"})
+	require.NoError(t, err)
+	_, err = acc.Create(a.ID, u.ID, "read a record")
+	require.NoError(t, err)
+
+	// Operator grants (a rule opens access) and narrows a preset slot relative to the request.
+	_, err = pol.Create(policy.Rule{UpstreamID: u.ID, OpMethod: "GET", OpPathTemplate: "/x", Outcome: policy.Allow})
+	require.NoError(t, err)
+	ok, err := acc.GrantLatest(a.ID, u.ID, []access.BindingEdit{{Slot: "workspace", Requested: "*", Granted: "ECOSENT"}})
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	res, err := svc.GetAccess(a.ID, "api.github.com")
+	require.NoError(t, err)
+	require.Equal(t, "granted", res.Status)
+	require.Equal(t, []access.BindingEdit{{Slot: "workspace", Requested: "*", Granted: "ECOSENT"}}, res.OperatorEdits)
+	require.Contains(t, res.Memo, "operator narrowed workspace: * → ECOSENT")
+}
+
 func TestRequestHostAccessAndStatusFlow(t *testing.T) {
 	svc, ag, up, pol, _ := buildWithQueue(t)
 	a, _, _ := ag.Register("claude")

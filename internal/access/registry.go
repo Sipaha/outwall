@@ -6,8 +6,10 @@ package access
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/Sipaha/outwall/internal/store"
@@ -27,6 +29,36 @@ const (
 	StatusRevoked = "revoked"
 )
 
+// BindingEdit records one preset slot the operator changed when approving a request: the value the
+// agent asked for versus the value that was actually granted. Surfaced to the agent so it learns the
+// operator narrowed its request (e.g. workspace "*" → "ECOSENT").
+type BindingEdit struct {
+	Slot      string `json:"slot"`
+	Requested string `json:"requested"`
+	Granted   string `json:"granted"`
+}
+
+// DiffBindings returns, sorted by slot, the entries whose granted value differs from the requested
+// value (the union of both maps' keys; a slot absent on one side compares against ""). An empty
+// result means the operator approved the request unchanged.
+func DiffBindings(requested, granted map[string]string) []BindingEdit {
+	keys := map[string]struct{}{}
+	for k := range requested {
+		keys[k] = struct{}{}
+	}
+	for k := range granted {
+		keys[k] = struct{}{}
+	}
+	var edits []BindingEdit
+	for k := range keys {
+		if requested[k] != granted[k] {
+			edits = append(edits, BindingEdit{Slot: k, Requested: requested[k], Granted: granted[k]})
+		}
+	}
+	sort.Slice(edits, func(i, j int) bool { return edits[i].Slot < edits[j].Slot })
+	return edits
+}
+
 // Request is a logged access-request intent.
 type Request struct {
 	ID         string
@@ -35,6 +67,9 @@ type Request struct {
 	Purpose    string
 	Status     string
 	Reason     string // operator's deny reason (when Status == denied), surfaced to the agent
+	// Edits are the preset slots the operator narrowed when granting (empty when unchanged or for
+	// non-preset requests), surfaced to the agent alongside the grant.
+	Edits      []BindingEdit
 	CreatedAt  time.Time
 	ResolvedAt string
 }
@@ -73,7 +108,7 @@ func (r *Registry) Create(agentID, upstreamID, purpose string) (*Request, error)
 	return req, nil
 }
 
-const reqCols = `id, agent_id, upstream_id, purpose, status, reason, created_at, resolved_at`
+const reqCols = `id, agent_id, upstream_id, purpose, status, reason, edits, created_at, resolved_at`
 
 func (r *Registry) scanRows(query string, args ...any) ([]*Request, error) {
 	rows, err := r.store.DB().Query(query, args...)
@@ -86,10 +121,16 @@ func (r *Registry) scanRows(query string, args ...any) ([]*Request, error) {
 		var (
 			req     Request
 			created string
+			edits   string
 		)
 		if err := rows.Scan(&req.ID, &req.AgentID, &req.UpstreamID, &req.Purpose,
-			&req.Status, &req.Reason, &created, &req.ResolvedAt); err != nil {
+			&req.Status, &req.Reason, &edits, &created, &req.ResolvedAt); err != nil {
 			return nil, err
+		}
+		if edits != "" {
+			if err := json.Unmarshal([]byte(edits), &req.Edits); err != nil {
+				return nil, fmt.Errorf("decode access-request edits: %w", err)
+			}
 		}
 		req.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 		out = append(out, &req)
@@ -131,15 +172,24 @@ func (r *Registry) DenyLatest(agentID, upstreamID, reason string) (bool, error) 
 }
 
 // GrantLatest marks the most recent PENDING request for (agentID, upstreamID) as granted, stamping
-// resolved_at. It reports whether a row was updated. Used by the approval-resolve path so the
-// access-request history stays in sync with a card Approve (see ADR-0025).
-func (r *Registry) GrantLatest(agentID, upstreamID string) (bool, error) {
+// resolved_at and recording any operator slot edits. It reports whether a row was updated. Used by
+// the approval-resolve path so the access-request history stays in sync with a card Approve (see
+// ADR-0025) and the agent learns of an operator narrowing (see ADR-0044).
+func (r *Registry) GrantLatest(agentID, upstreamID string, edits []BindingEdit) (bool, error) {
+	editsJSON := ""
+	if len(edits) > 0 {
+		b, err := json.Marshal(edits)
+		if err != nil {
+			return false, fmt.Errorf("encode access-request edits: %w", err)
+		}
+		editsJSON = string(b)
+	}
 	res, err := r.store.DB().Exec(
-		`UPDATE access_requests SET status=?, resolved_at=?
+		`UPDATE access_requests SET status=?, resolved_at=?, edits=?
 		 WHERE id = (SELECT id FROM access_requests
 		             WHERE agent_id=? AND upstream_id=? AND status=?
 		             ORDER BY created_at DESC LIMIT 1)`,
-		StatusGranted, time.Now().UTC().Format(time.RFC3339Nano),
+		StatusGranted, time.Now().UTC().Format(time.RFC3339Nano), editsJSON,
 		agentID, upstreamID, StatusPending,
 	)
 	if err != nil {

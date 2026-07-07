@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS access_requests (
 	purpose     TEXT NOT NULL DEFAULT '',
 	status      TEXT NOT NULL DEFAULT 'pending',   -- pending | granted | denied | dismissed
 	reason      TEXT NOT NULL DEFAULT '',          -- operator's deny reason, surfaced to the agent
+	edits       TEXT NOT NULL DEFAULT '',          -- operator's preset slot edits on grant (JSON), surfaced to the agent
 	created_at  TEXT NOT NULL,
 	resolved_at TEXT NOT NULL DEFAULT ''
 );
@@ -151,6 +152,12 @@ var migrations = []migration{
 	{"agent_last_seen", func(tx *sql.Tx) error {
 		if _, err := tx.Exec(`ALTER TABLE agents ADD COLUMN last_seen_at TEXT`); err != nil {
 			return fmt.Errorf("agent_last_seen: %w", err)
+		}
+		return nil
+	}},
+	{"access_request_edits", func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`ALTER TABLE access_requests ADD COLUMN edits TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("access_request_edits: %w", err)
 		}
 		return nil
 	}},
