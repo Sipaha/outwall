@@ -11,6 +11,7 @@ import { FormField, fieldControlClass } from '../../components/FormField'
 import { Select } from '../../components/Select'
 import { RelTime } from '../../components/RelTime'
 import { ScopeBadge } from './scope'
+import { DurationSelect, DEFAULT_TTL_SECONDS } from './DurationSelect'
 
 export function shortId(id: string): string {
   return id.length > 8 ? id.slice(0, 8) : id
@@ -229,11 +230,12 @@ function OperationCard({ approval, onResolve }: CardProps) {
   const vars = approval.op_variables ?? []
   const textVars = vars.filter((v) => v.type === 'text')
   const [trust, setTrust] = useState<Record<string, boolean>>({})
+  const [ttl, setTtl] = useState(DEFAULT_TTL_SECONDS)
   const anyTrusted = Object.values(trust).some(Boolean)
 
   function approve() {
     const trust_any = textVars.filter((v) => trust[v.name]).map((v) => v.name)
-    onResolve(approval.id, true, trust_any.length > 0 ? { trust_any } : { trust_any: [] })
+    onResolve(approval.id, true, trust_any.length > 0 ? { trust_any, ttl_seconds: ttl } : { trust_any: [], ttl_seconds: ttl })
   }
 
   return (
@@ -245,6 +247,7 @@ function OperationCard({ approval, onResolve }: CardProps) {
         createdAt={approval.created_at}
         actions={
           <>
+            <DurationSelect value={ttl} onChange={setTtl} />
             <button onClick={approve} className={approveBtn}>
               Approve
             </button>
@@ -399,6 +402,7 @@ function PresetCard({ approval, onResolve }: CardProps) {
   const preset = approval.preset
   const [bindings, setBindings] = useState<Record<string, string>>(approval.bindings ?? {})
   const [preview, setPreview] = useState<string[]>([])
+  const [ttl, setTtl] = useState(DEFAULT_TTL_SECONDS)
 
   useEffect(() => {
     let live = true
@@ -429,7 +433,11 @@ function PresetCard({ approval, onResolve }: CardProps) {
         createdAt={approval.created_at}
         actions={
           <>
-            <button onClick={() => onResolve(approval.id, true, { bindings })} className={approveBtn}>
+            <DurationSelect value={ttl} onChange={setTtl} />
+            <button
+              onClick={() => onResolve(approval.id, true, { bindings, ttl_seconds: ttl })}
+              className={approveBtn}
+            >
               Approve
             </button>
             <button onClick={() => onResolve(approval.id, false)} className={denyBtn}>

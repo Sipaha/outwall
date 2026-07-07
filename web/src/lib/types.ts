@@ -119,6 +119,7 @@ export interface Rule {
   browse_methods?: string // http methods allowed for browse access (e.g. "GET,HEAD")
   browse_path?: string // path glob for browse access (e.g. "/**")
   expires_at?: string // RFC3339Nano or '' (never)
+  ttl_seconds?: number // write-only: operator's chosen grant duration on create (0 = never expires)
 }
 
 export interface ProfileField { key: string; label: string; type: string; options?: string[] }

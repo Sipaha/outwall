@@ -5,6 +5,7 @@ import { Modal } from '../../components/Modal'
 import { FormField, fieldControlClass } from '../../components/FormField'
 import { Select } from '../../components/Select'
 import { useToastStore } from '../../lib/toast'
+import { DurationSelect, DEFAULT_TTL_SECONDS } from './DurationSelect'
 
 interface DraftRule {
   subject_agent_id: string
@@ -80,6 +81,7 @@ export function ManualRuleModal({ open, onClose, onCreated }: ManualRuleModalPro
   const [agents, setAgents] = useState<Agent[]>([])
   const [draft, setDraft] = useState<DraftRule>(emptyDraft)
   const [busy, setBusy] = useState(false)
+  const [ttl, setTtl] = useState(DEFAULT_TTL_SECONDS)
   const push = useToastStore((s) => s.push)
 
   useEffect(() => {
@@ -122,6 +124,7 @@ export function ManualRuleModal({ open, onClose, onCreated }: ManualRuleModalPro
           namespace: draft.namespace,
           resource: draft.resource,
           verb: draft.verb,
+          ttl_seconds: ttl,
         }
       } else if (draftProfile === 'citeck') {
         payload = {
@@ -131,6 +134,7 @@ export function ManualRuleModal({ open, onClose, onCreated }: ManualRuleModalPro
           rate_limit_per_min: draft.rate_limit_per_min,
           profile: 'citeck',
           profile_params: { op: draft.rec_op, source_id: draft.source_id, workspace: draft.workspace },
+          ttl_seconds: ttl,
         }
       } else {
         payload = {
@@ -141,6 +145,7 @@ export function ManualRuleModal({ open, onClose, onCreated }: ManualRuleModalPro
           op_value_policies: parseOpValues(draft.op_values),
           outcome: draft.outcome,
           rate_limit_per_min: draft.rate_limit_per_min,
+          ttl_seconds: ttl,
         }
       }
       await createRule(payload)
@@ -307,6 +312,9 @@ export function ManualRuleModal({ open, onClose, onCreated }: ManualRuleModalPro
           onChange={(e) => setDraft({ ...draft, rate_limit_per_min: Number(e.target.value) || 0 })}
           aria-label="Rate limit"
         />
+      </FormField>
+      <FormField label="Grant duration">
+        <DurationSelect value={ttl} onChange={setTtl} />
       </FormField>
     </Modal>
   )

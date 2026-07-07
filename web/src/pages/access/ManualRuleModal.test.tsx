@@ -18,4 +18,16 @@ describe('<ManualRuleModal>', () => {
     await waitFor(() => expect(spy).toHaveBeenCalled())
     await waitFor(() => expect(onCreated).toHaveBeenCalled())
   })
+
+  it('includes ttl_seconds in the created rule', async () => {
+    vi.spyOn(api, 'listUpstreams').mockResolvedValue([{ id: 'up1', name: 'gitlab', base_url: '', auth_type: '', kind: 'http' }])
+    vi.spyOn(api, 'listAgents').mockResolvedValue([])
+    const spy = vi.spyOn(api, 'createRule').mockResolvedValue({ id: 'r1' })
+    render(<ManualRuleModal open onClose={() => {}} onCreated={() => {}} />)
+    await screen.findByLabelText('Operation path-template')
+    fireEvent.change(screen.getByLabelText('Operation path-template'), { target: { value: '/x' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'grant duration' }), { target: { value: '604800' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+    await waitFor(() => expect(spy).toHaveBeenCalledWith(expect.objectContaining({ ttl_seconds: 604800 })))
+  })
 })
