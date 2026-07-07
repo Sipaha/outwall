@@ -5,13 +5,8 @@ import { deleteAgent, ApiError } from '../../lib/api'
 import type { Agent, Upstream } from '../../lib/types'
 import type { Grant } from '../../lib/grants'
 import { UpstreamGrantCard } from './UpstreamGrantCard'
+import { RelTime } from '../../components/RelTime'
 import { useToastStore } from '../../lib/toast'
-
-function fmtTime(iso: string): string {
-  if (!iso) return 'Never'
-  const d = new Date(iso)
-  return isNaN(d.getTime()) ? iso : d.toLocaleString()
-}
 
 /** AgentCard renders one agent's collapsible group in the Access page's granted-rights section:
  *  a header (chevron, avatar, name, short id, status dot, rule/resource counter, last-active meta,
@@ -68,7 +63,7 @@ export function AgentCard({
           <b className="font-semibold text-foreground">{grants.length}</b> ресурсов
         </span>
         <div className="ml-auto flex items-center gap-3 text-[11px] text-muted-foreground">
-          <span>активн. <b className="font-medium text-foreground">{fmtTime(agent.last_seen_at)}</b></span>
+          <span>активн. <b className="font-medium text-foreground"><RelTime iso={agent.last_seen_at} /></b></span>
           <div className="flex items-center gap-1">
             <button
               onClick={(e) => { e.stopPropagation(); void remove() }}

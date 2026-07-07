@@ -9,6 +9,7 @@ import type { Approval, ResolveOptions, UpstreamAuthConfig } from '../../lib/typ
 import { StatusBadge } from '../../components/StatusBadge'
 import { FormField, fieldControlClass } from '../../components/FormField'
 import { Select } from '../../components/Select'
+import { RelTime } from '../../components/RelTime'
 import { ScopeBadge } from './scope'
 
 export function shortId(id: string): string {
@@ -62,11 +63,6 @@ function Segments({ template }: { template: string }) {
   )
 }
 
-function fmtTime(iso: string): string {
-  const d = new Date(iso)
-  return isNaN(d.getTime()) ? iso : d.toLocaleString()
-}
-
 const cardClass = 'rounded-lg border border-border bg-card p-3 space-y-2'
 const approveBtn =
   'rounded bg-success/15 px-2.5 py-1 text-[11px] font-medium text-success hover:bg-success/25'
@@ -106,7 +102,7 @@ function CardHeader({
         <span className="truncate font-mono text-muted-foreground">{upstream}</span>
         <StatusBadge status={tag} />
       </div>
-      <span className="shrink-0 text-[11px] text-muted-foreground">{fmtTime(createdAt)}</span>
+      <span className="shrink-0 text-[11px] text-muted-foreground"><RelTime iso={createdAt} empty="" /></span>
       <div className="flex shrink-0 gap-1.5">{actions}</div>
     </div>
   )

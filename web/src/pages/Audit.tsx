@@ -8,6 +8,7 @@ import { StatusBadge } from '../components/StatusBadge'
 import { Tabs } from '../components/Tabs'
 import { Modal } from '../components/Modal'
 import { JsonView } from '../components/JsonView'
+import { RelTime } from '../components/RelTime'
 import { useToastStore } from '../lib/toast'
 
 type Tab = 'traffic' | 'requests'
@@ -16,11 +17,6 @@ const AUDIT_TABS = [
   { id: 'traffic', label: 'Трафик' },
   { id: 'requests', label: 'Запросы прав' },
 ]
-
-function fmtTime(iso: string): string {
-  const d = new Date(iso)
-  return isNaN(d.getTime()) ? iso : d.toLocaleString()
-}
 
 function statusClass(code: number): string {
   if (code >= 500) return 'text-destructive'
@@ -81,10 +77,10 @@ function AccessRequestsPanel({ agentFilter }: { agentFilter: string | null }) {
               </div>
             ),
           },
-          { header: 'Requested', cell: (r) => fmtTime(r.created_at), className: 'text-muted-foreground whitespace-nowrap' },
+          { header: 'Requested', cell: (r) => <RelTime iso={r.created_at} />, className: 'text-muted-foreground whitespace-nowrap' },
           {
             header: 'Resolved',
-            cell: (r) => (r.resolved_at ? fmtTime(r.resolved_at) : '—'),
+            cell: (r) => <RelTime iso={r.resolved_at} empty="—" />,
             className: 'text-muted-foreground whitespace-nowrap',
           },
         ]}
@@ -138,7 +134,7 @@ export function Audit() {
             rowKey={(e) => e.id}
             empty="No audit entries yet"
             columns={[
-              { header: 'When', cell: (e) => fmtTime(e.ts), className: 'text-muted-foreground whitespace-nowrap' },
+              { header: 'When', cell: (e) => <RelTime iso={e.ts} />, className: 'text-muted-foreground whitespace-nowrap' },
               { header: 'Agent', cell: (e) => e.agent_name || e.agent_id },
               { header: 'Upstream', cell: (e) => e.upstream_name || e.upstream_id },
               { header: 'Method', cell: (e) => e.method, className: 'font-mono' },
