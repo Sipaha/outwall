@@ -27,3 +27,6 @@ token file — this identifies *which project* is acting, it does not gate *who*
 - `LoadOrRegister(cwd string, register func(name string) (id, token string, err error)) (string, error)`
   — returns the per-project token, minting it once (`register` receives the basename of the
   project key as the agent name).
+- `Invalidate(cwd string) error` — removes the persisted token so the next `LoadOrRegister` mints a
+  fresh one. The CLI (`doAgent`) calls this to self-heal when the daemon rejects a stale token (its
+  registry can outlive-or-predate the token file, e.g. after a DB reset). Missing file ⇒ no error.

@@ -35,6 +35,43 @@ func agentToken(gf *globalFlags) (string, error) {
 	})
 }
 
+// isStaleAgentToken reports whether err is the daemon rejecting our bearer token as unknown/invalid.
+// The daemon returns {"error":"missing or invalid agent token"} (401), surfaced by client.DoAuth as
+// "daemon: missing or invalid agent token", so a substring match is the stable contract (same style
+// as isSessionRequired).
+func isStaleAgentToken(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "missing or invalid agent token")
+}
+
+// doAgent runs an authenticated agent-plane call, transparently self-healing a stale per-project
+// token (sudo-style, mirroring doPrivileged). The persisted token can outlive the daemon's agent
+// registry — e.g. after a daemon DB reset — leaving every command failing with the stale-token gate
+// and no obvious recovery. On that error we drop the cached token, re-register once (minting a fresh
+// token), and retry the call exactly once. A call that succeeds with the cached token never
+// re-registers.
+func doAgent(gf *globalFlags, method, path string, body, out any) error {
+	token, err := agentToken(gf)
+	if err != nil {
+		return err
+	}
+	err = agentClient(gf).DoAuth(token, method, path, body, out)
+	if err == nil || !isStaleAgentToken(err) {
+		return err
+	}
+	cwd, werr := os.Getwd()
+	if werr != nil {
+		return fmt.Errorf("getwd: %w", werr)
+	}
+	if ierr := agentid.Invalidate(cwd); ierr != nil {
+		return ierr
+	}
+	token, err = agentToken(gf) // token file was invalidated → this re-registers
+	if err != nil {
+		return err
+	}
+	return agentClient(gf).DoAuth(token, method, path, body, out)
+}
+
 // printJSON writes v as indented JSON to the command's stdout (agent-friendly output).
 func printJSON(c *cobra.Command, v any) error {
 	b, err := json.MarshalIndent(v, "", "  ")
@@ -50,12 +87,8 @@ func newListUpstreamsCmd(gf *globalFlags) *cobra.Command {
 		Use:   "list-upstreams",
 		Short: "List upstreams outwall knows about and your access status for each",
 		RunE: func(c *cobra.Command, _ []string) error {
-			token, err := agentToken(gf)
-			if err != nil {
-				return err
-			}
 			var out any
-			if err := agentClient(gf).DoAuth(token, "GET", "/upstreams", nil, &out); err != nil {
+			if err := doAgent(gf, "GET", "/upstreams", nil, &out); err != nil {
 				return err
 			}
 			return printJSON(c, out)
@@ -68,12 +101,8 @@ func newWhoamiCmd(gf *globalFlags) *cobra.Command {
 		Use:   "whoami",
 		Short: "Print your agent identity, data-plane bearer token, and current accesses",
 		RunE: func(c *cobra.Command, _ []string) error {
-			token, err := agentToken(gf)
-			if err != nil {
-				return err
-			}
 			var out any
-			if err := agentClient(gf).DoAuth(token, "GET", "/whoami", nil, &out); err != nil {
+			if err := doAgent(gf, "GET", "/whoami", nil, &out); err != nil {
 				return err
 			}
 			return printJSON(c, out)
@@ -88,13 +117,9 @@ func newRequestHostAccessCmd(gf *globalFlags) *cobra.Command {
 		Short: "Request access to a host, stating your purpose",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			token, err := agentToken(gf)
-			if err != nil {
-				return err
-			}
 			var out any
 			body := map[string]string{"host": args[0], "purpose": purpose}
-			if err := agentClient(gf).DoAuth(token, "POST", "/access/host", body, &out); err != nil {
+			if err := doAgent(gf, "POST", "/access/host", body, &out); err != nil {
 				return err
 			}
 			return printJSON(c, out)
@@ -115,10 +140,6 @@ func newRequestAccessCmd(gf *globalFlags) *cobra.Command {
 		Short: "Request access to an operation on an already-approved host",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			token, err := agentToken(gf)
-			if err != nil {
-				return err
-			}
 			vars := make([]map[string]string, 0, len(varSpecs))
 			for _, g := range varSpecs {
 				parts := strings.SplitN(g, ":", 2)
@@ -132,7 +153,7 @@ func newRequestAccessCmd(gf *globalFlags) *cobra.Command {
 				"query_template": query, "variables": vars, "values": values, "purpose": purpose,
 			}
 			var out any
-			if err := agentClient(gf).DoAuth(token, "POST", "/access/op", body, &out); err != nil {
+			if err := doAgent(gf, "POST", "/access/op", body, &out); err != nil {
 				return err
 			}
 			return printJSON(c, out)
@@ -157,13 +178,9 @@ func newRequestPresetCmd(gf *globalFlags) *cobra.Command {
 		Short: "Request a named preset (a bundle of rights) on an upstream",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			token, err := agentToken(gf)
-			if err != nil {
-				return err
-			}
 			body := map[string]any{"upstream": args[0], "preset": preset, "vars": vars, "purpose": purpose}
 			var out any
-			if err := agentClient(gf).DoAuth(token, "POST", "/access/preset", body, &out); err != nil {
+			if err := doAgent(gf, "POST", "/access/preset", body, &out); err != nil {
 				return err
 			}
 			return printJSON(c, out)
@@ -185,10 +202,6 @@ func newRequestK8sAccessCmd(gf *globalFlags) *cobra.Command {
 		Short: "Request k8s access on a registered cluster for one namespace",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			token, err := agentToken(gf)
-			if err != nil {
-				return err
-			}
 			grants := make([]map[string]any, 0, len(grantSpecs))
 			for _, g := range grantSpecs {
 				parts := strings.SplitN(g, "=", 2)
@@ -201,7 +214,7 @@ func newRequestK8sAccessCmd(gf *globalFlags) *cobra.Command {
 			}
 			body := map[string]any{"cluster": args[0], "namespace": namespace, "grants": grants, "purpose": purpose}
 			var out any
-			if err := agentClient(gf).DoAuth(token, "POST", "/access/k8s", body, &out); err != nil {
+			if err := doAgent(gf, "POST", "/access/k8s", body, &out); err != nil {
 				return err
 			}
 			return printJSON(c, out)
@@ -219,12 +232,8 @@ func newGetAccessCmd(gf *globalFlags) *cobra.Command {
 		Short: "Report your current access status for an upstream (waits for a pending decision)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			token, err := agentToken(gf)
-			if err != nil {
-				return err
-			}
 			var out any
-			if err := agentClient(gf).DoAuth(token, "GET", "/access/"+url.PathEscape(args[0]), nil, &out); err != nil {
+			if err := doAgent(gf, "GET", "/access/"+url.PathEscape(args[0]), nil, &out); err != nil {
 				return err
 			}
 			return printJSON(c, out)
@@ -238,14 +247,10 @@ func newGetKubeconfigCmd(gf *globalFlags) *cobra.Command {
 		Short: "Print a kubeconfig for a registered k8s cluster using your own outwall token",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			token, err := agentToken(gf)
-			if err != nil {
-				return err
-			}
 			var out struct {
 				Kubeconfig string `json:"kubeconfig"`
 			}
-			if err := agentClient(gf).DoAuth(token, "GET", "/kubeconfig/"+url.PathEscape(args[0]), nil, &out); err != nil {
+			if err := doAgent(gf, "GET", "/kubeconfig/"+url.PathEscape(args[0]), nil, &out); err != nil {
 				return err
 			}
 			fmt.Fprint(c.OutOrStdout(), out.Kubeconfig)

@@ -67,7 +67,8 @@ func classify(r serverprofile.Request) (serverprofile.Operation, bool, error) {
 				EcosType   string   `json:"ecosType"`
 				Workspaces []string `json:"workspaces"`
 			} `json:"query"`
-			Records []string `json:"records"` // get-atts mode
+			Records []string `json:"records"` // get-atts mode (multiple records)
+			Record  string   `json:"record"`  // get-atts mode (single record; attributes is an object)
 		}
 		if err := json.Unmarshal(nonNil(r.Body), &body); err != nil {
 			return serverprofile.Operation{}, false, nil // malformed → not handled (never grants)
@@ -89,8 +90,14 @@ func classify(r serverprofile.Request) (serverprofile.Operation, bool, error) {
 				}
 			}
 		} else {
-			// get-atts: read specific records by ref; workspace not derivable.
-			for _, ref := range body.Records {
+			// get-atts: read specific records by ref; workspace not derivable. The API accepts either
+			// "records": [ref, ...] (attributes is a list) or the single-record "record": ref form
+			// (attributes is an object) — both are reads and must be gated identically.
+			refs := body.Records
+			if body.Record != "" {
+				refs = append(refs, body.Record)
+			}
+			for _, ref := range refs {
 				src, _ := refSource(ref)
 				out.Resources = append(out.Resources, serverprofile.ResourceScope{Resource: src, Scope: scopeUnknown})
 			}

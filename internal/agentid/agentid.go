@@ -56,6 +56,21 @@ func TokenPath(cwd string) (string, error) {
 	return tokenPathForKey(key), nil
 }
 
+// Invalidate removes the persisted token for the project containing cwd so the next LoadOrRegister
+// mints a fresh one. The CLI calls this to self-heal when the daemon rejects a stale token (its
+// registry can outlive-or-predate the token file, e.g. after a daemon DB reset). A missing token
+// file is not an error.
+func Invalidate(cwd string) error {
+	path, err := TokenPath(cwd)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove stale token: %w", err)
+	}
+	return nil
+}
+
 // LoadOrRegister returns the per-project agent token, minting it once on first use. It serializes
 // concurrent first-calls with an exclusive flock on <tokenpath>.lock so exactly one agent is
 // registered: the winner calls register and writes the token atomically; losers block on the flock

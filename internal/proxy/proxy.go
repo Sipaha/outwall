@@ -57,6 +57,20 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
+// denyReason turns a Deny decision into an agent-actionable 403 message. A bare "access denied" left
+// the agent unable to tell "I have no grant yet" from "an operator rule forbids this" — the first is
+// fixable by requesting access, the second is not. The "access denied" prefix is kept as the stable
+// contract other code/docs match on.
+func denyReason(dec policy.Decision) string {
+	if dec.Rule == nil {
+		// default-deny: nothing grants the request. Point the agent at the request-access flow.
+		return "access denied: no grant covers this request — request access with the outwall CLI " +
+			"(request-preset / request-access / request-host-access) and have the operator approve"
+	}
+	// An explicit deny rule matched — requesting access will not help.
+	return "access denied by an operator rule"
+}
+
 // tokenCookieName is the cookie a browser-driven agent (e.g. Playwright) may carry its outwall
 // token in, as an alternative to the Authorization bearer header. It is consumed for agent auth and
 // stripped before the request is forwarded upstream.
@@ -269,8 +283,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch dec.Outcome {
 	case policy.Deny:
-		h.recordOutcome(r, ag, up, relPath, http.StatusForbidden, "deny", dec.Rule, "access denied")
-		writeErr(w, http.StatusForbidden, "access denied")
+		reason := denyReason(dec)
+		h.recordOutcome(r, ag, up, relPath, http.StatusForbidden, "deny", dec.Rule, reason)
+		writeErr(w, http.StatusForbidden, reason)
 		return
 	case policy.RequireApproval:
 		verdict, err := h.Approvals.Submit(r.Context(), pending)

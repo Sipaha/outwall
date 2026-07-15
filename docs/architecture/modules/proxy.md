@@ -8,7 +8,9 @@ before forwarding, ADR-0033) — resolves the upstream by name (404), then evalu
 on the upstream-relative path
 (`/<rest>`):
 
-- `deny` → 403 `access denied`.
+- `deny` → 403 `access denied…` (`denyReason`): default-deny (no matching rule) returns an
+  actionable message pointing at the CLI request-access flow; an explicit deny-rule returns
+  `access denied by an operator rule`. The `access denied` prefix is the stable contract.
 - `require-approval` → blocks on `approval.Submit`; approved ⇒ continue, denied/timeout ⇒ 403, ctx-canceled ⇒ 504.
 - `allow` → continue.
 

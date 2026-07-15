@@ -28,6 +28,12 @@ name:type ... --value ... --purpose` (`--var` declares a typed operation variabl
 decision), `get-kubeconfig <cluster>`. Each resolves (and mints once, via `internal/agentid`) the
 calling project's bearer token before calling the agent socket.
 
+**Stale-token self-heal (`doAgent`).** All agent commands route through `doAgent`, which mirrors the
+operator-side `doPrivileged`: it runs the authenticated call and, if the daemon rejects the persisted
+token with the stale-token gate (`missing or invalid agent token`, e.g. after a daemon DB reset),
+drops the cached token (`agentid.Invalidate`), re-registers once (minting a fresh token), and retries
+exactly once. A call that succeeds with the cached token never re-registers.
+
 ## Public API
 
 - `NewRootCmd() *cobra.Command` — builds the root command with all subcommands registered.

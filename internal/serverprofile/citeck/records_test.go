@@ -54,6 +54,18 @@ func TestClassifyQueryEcosTypeAlsoExtracted(t *testing.T) {
 	require.Equal(t, []serverprofile.ResourceScope{{Resource: "emodel/type", Scope: scopeAll}}, op.Resources)
 }
 
+func TestClassifyQuerySingleRecordGetAtts(t *testing.T) {
+	// The single-record get-atts form ({"record": ref, "attributes": {...}}) must gate the same as
+	// {"records":[ref]}: a read scoped to the ref's source (workspace not derivable). Without this the
+	// classifier derived no resources and the request was denied 403 despite a valid read grant.
+	op, ok, err := classify(req("/api/records/query",
+		`{"record":"eapps/artifact@ui/form$bpmn-type-bpmn:SendTask","attributes":{"id":"?id"}}`))
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "read", op.Kind)
+	require.Equal(t, []serverprofile.ResourceScope{{Resource: "eapps/artifact", Scope: scopeUnknown}}, op.Resources)
+}
+
 func TestClassifyMutateCreateUsesWorkspaceAttr(t *testing.T) {
 	op, ok, _ := classify(req("/api/records/mutate",
 		`{"records":[{"id":"emodel/type@","attributes":{"_workspace":"w2","name":"x"}}]}`))
