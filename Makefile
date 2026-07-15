@@ -14,18 +14,26 @@ GO_LDFLAGS := -X github.com/Sipaha/outwall/internal/version.version=$(shell git 
 # binary stays CGO-free.
 DESKTOP_TAGS ?= desktop
 
+# SERVER_TAGS gates the embedded web UI (internal/daemon/webui_{dev,prod}.go). Empty (default) =
+# embed the tracked webseed/ placeholder — no web build needed, so bare/`build-fast`/`install`/
+# `check` compile offline. Release targets set it to `prod` (below) to embed the real webdist/
+# bundle after build-web. This split keeps the web build from ever dirtying a tracked file.
+SERVER_TAGS ?=
+
 .PHONY: build build-fast build-web build-desktop build-desktop-fast run run-server test fmt vet tidy \
         check lint lint-go lint-web test-web fmt-check web-deps install uninstall
 
-# Full build: rebuild the web UI first (its output lands in internal/daemon/webdist,
-# which the Go binary embeds via //go:embed), then compile the binary.
+# Full build: rebuild the web UI first (its output lands in the gitignored internal/daemon/webdist),
+# then compile the binary with -tags prod so it embeds that real bundle (webui_prod.go).
+build: SERVER_TAGS = prod
 build: build-web build-fast
 
-# build-fast skips the web rebuild and just compiles the Go binary against whatever
-# webdist currently holds (the committed placeholder, or a prior `make build-web`).
+# build-fast skips the web rebuild and just compiles the Go binary. With the default empty
+# SERVER_TAGS it embeds the tracked webseed/ placeholder (no web build required); `build` sets
+# SERVER_TAGS=prod to embed the real webdist/ bundle instead.
 build-fast:
 	@mkdir -p $(BINDIR)
-	CGO_ENABLED=0 go build -ldflags "$(GO_LDFLAGS)" -o $(BIN) ./cmd/outwall
+	CGO_ENABLED=0 go build -tags "$(SERVER_TAGS)" -ldflags "$(GO_LDFLAGS)" -o $(BIN) ./cmd/outwall
 
 # build-web installs web deps and produces the production bundle into
 # internal/daemon/webdist (vite build.outDir, emptyOutDir).
@@ -34,15 +42,15 @@ build-web:
 	pnpm -C web build
 
 # build-desktop compiles the Wails v3 GUI shell (CGO + GTK/WebKit). It rebuilds
-# the web UI first (build-web) so the embedded webdist is the REAL bundle, not
-# the committed "UI not built" placeholder — a shipped desktop app must contain a
-# working UI. Use build-desktop-fast to skip the web rebuild against an existing
-# webdist (e.g. CI that built the web in a prior step / has no pnpm).
+# the web UI first (build-web) so the embedded bundle is the REAL one (via -tags prod),
+# not the webseed/ placeholder — a shipped desktop app must contain a working UI. Use
+# build-desktop-fast to skip the web rebuild against an existing webdist (e.g. CI that
+# built the web in a prior step / has no pnpm); it also embeds the real bundle (prod).
 build-desktop: build-web build-desktop-fast
 
 build-desktop-fast:
 	@mkdir -p $(BINDIR)
-	CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS)" -ldflags "$(GO_LDFLAGS)" -o $(DESKTOP) ./cmd/outwall-desktop
+	CGO_ENABLED=1 go build -tags "$(DESKTOP_TAGS) prod" -ldflags "$(GO_LDFLAGS)" -o $(DESKTOP) ./cmd/outwall-desktop
 
 # run rebuilds everything (web bundle + Wails desktop binary) so all code changes are
 # picked up, then launches the desktop app.

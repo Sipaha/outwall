@@ -20,11 +20,13 @@ pattern source — **no citeck strings or branding** may appear in outwall) with
 
 **Vite → `webdist` `go:embed`.** `web/` is a Vite + React 19 + TypeScript + Tailwind 4 + Zustand
 + react-router app. Its `build.outDir` is `../internal/daemon/webdist` with `emptyOutDir: true`,
-so `pnpm build` writes the production bundle straight into the Go embed location;
-`internal/daemon/webui.go` embeds it with `//go:embed all:webdist`. A committed placeholder
-`webdist/index.html` (the only tracked file there; `webdist/assets/` is gitignored) lets
-`go build`/`go test` compile before any web build. `make build` runs `build-web` (`pnpm -C web
-install && pnpm -C web build`) first, then the Go build; `make build-fast` skips the web rebuild.
+so `pnpm build` writes the production bundle straight into the Go embed location. The embed is
+split by build tag so the web build never dirties a tracked file (updated 2026-07-15): the default
+build (`webui_dev.go`, `//go:embed all:webseed`) embeds the tracked `internal/daemon/webseed/`
+placeholder so `go build`/`go vet`/`go test`/`make build-fast`/`install` compile offline; the
+release build (`webui_prod.go`, `-tags prod`, `//go:embed all:webdist`) embeds the real bundle.
+`webdist/` is **entirely gitignored** (Vite output); `webseed/` is tracked and Vite never touches
+it. `make build`/`run-server`/`build-desktop` run `build-web` then build with `-tags prod`.
 
 **`/api` prefix + SPA static serve on `UIListen`.** `UIHandler()` is now a small mux:
 `/api/**` → `StripPrefix("/api")` → `csrfMiddleware` → the shared `apiMux()` (admin routes +

@@ -45,9 +45,10 @@ export default defineConfig({
     },
   },
   build: {
-    // Build straight into the Go embed location: internal/daemon/webui.go has
-    // `//go:embed all:webdist`. emptyOutDir is required because the target is
-    // outside the Vite root (web/). This removes a separate web/dist + copy step.
+    // Build straight into the Go release embed location (internal/daemon/webui_prod.go,
+    // `-tags prod` → `//go:embed all:webdist`). webdist/ is entirely gitignored, so this output
+    // is never tracked; the committed dev placeholder lives in ../internal/daemon/webseed/ and is
+    // never written here. emptyOutDir is required because the target is outside the Vite root.
     outDir: '../internal/daemon/webdist',
     emptyOutDir: true,
   },

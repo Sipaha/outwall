@@ -11,14 +11,12 @@
       code { color: #4f8cff; }
     </style>
     <!--
-      INERT BUILD SEED — not the real bundle. `//go:embed all:webdist` needs a committed
-      index.html so `go build` succeeds before the web bundle exists. `make build`/`make run`
-      run `build-web`, which OVERWRITES this file (and webdist/assets/, gitignored) with the
-      real Vite output — hashed asset links, strict CSP, anti-FOUC. Never commit that generated
-      output over this seed: a stale hashed <script>/<link> here ships a broken bundle whose
-      missing /assets/* 404s fall back to index.html (text/html), breaking with a confusing
-      "not a valid JavaScript/CSS MIME type" error. If you see build churn on this file, reset
-      it back to this inert seed, not forward to a hashed bundle.
+      DEV UI PLACEHOLDER. This is the embed target for non-prod builds (webui_dev.go,
+      //go:embed all:webseed) so `go build`/`go vet`/`go test` and `make build-fast`/install
+      compile a working binary WITHOUT a web build. Vite NEVER writes here (it outputs to the
+      gitignored internal/daemon/webdist/), so this file has no build churn and is safe to
+      track. Release builds (`make build`/`run-server`/`build-desktop`, -tags prod → webui_prod.go)
+      embed the real hashed bundle from webdist/ instead. See internal/daemon/webui.go.
     -->
   </head>
   <body>
