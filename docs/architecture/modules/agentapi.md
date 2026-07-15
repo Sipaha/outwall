@@ -20,6 +20,10 @@ agent-process restarts don't invalidate identity (the token is minted once per p
 - `GET /upstreams` — `ListUpstreams`.
 - `GET /whoami` — `WhoAmI` plus the presented bearer token (the registry stores only its hash,
   so this is the only way an agent recovers it, mirroring the retired `whoami` MCP tool).
+- `GET /instructions` — the caller's identity (`WhoAmI`) plus `Deps.Info` (`EnvInfo`): the live
+  data-plane URL/port, browser origin domain + cookie name, and CA path. Generated from the running
+  daemon so the mechanical usage facts (ports, origin pattern, cookie) never drift; the CLI
+  (`outwall instructions`) renders it into a Markdown agent playbook.
 - `POST /access/host` — `RequestHostAccess {host, purpose}`.
 - `POST /access/op` — `RequestAccess {host, method, path_template, query_template, body_template,
   variables, values, purpose}`.

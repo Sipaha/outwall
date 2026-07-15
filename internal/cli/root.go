@@ -58,6 +58,7 @@ func NewRootCmd() *cobra.Command {
 		newAuditCmd(gf),
 		newListUpstreamsCmd(gf),
 		newWhoamiCmd(gf),
+		newInstructionsCmd(gf),
 		newRequestHostAccessCmd(gf),
 		newRequestAccessCmd(gf),
 		newRequestPresetCmd(gf),

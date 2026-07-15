@@ -21,6 +21,7 @@ import (
 	"github.com/Sipaha/outwall/internal/approval"
 	"github.com/Sipaha/outwall/internal/audit"
 	"github.com/Sipaha/outwall/internal/authn"
+	"github.com/Sipaha/outwall/internal/config"
 	"github.com/Sipaha/outwall/internal/events"
 	"github.com/Sipaha/outwall/internal/k8s"
 	"github.com/Sipaha/outwall/internal/mcpsvc"
@@ -162,7 +163,15 @@ func New(cfg Config) (*Daemon, error) {
 	svc.SetApprovals(appr)
 	svc.SetKubeconfigParams("https://"+cfg.Listen, string(ca.CAPEM()))
 	svc.SetBrowseDomain(cfg.BrowseDomain)
-	agentPlane := agentapi.NewHandler(agentapi.Deps{Svc: svc, Agents: ag, Locked: v.Locked})
+	_, browsePort, _ := net.SplitHostPort(cfg.Listen)
+	agentPlane := agentapi.NewHandler(agentapi.Deps{Svc: svc, Agents: ag, Locked: v.Locked,
+		Info: agentapi.EnvInfo{
+			DataPlaneURL: "https://" + cfg.Listen,
+			BrowseDomain: cfg.BrowseDomain,
+			BrowsePort:   browsePort,
+			CookieName:   proxy.TokenCookieName,
+			CACertPath:   config.CACertPath(),
+		}})
 	authMgr := authn.NewManager(nil)
 	d := &Daemon{
 		cfg: cfg, store: s, vault: v, agents: ag, upstreams: up, policy: pol, access: acc,

@@ -28,6 +28,12 @@ name:type ... --value ... --purpose` (`--var` declares a typed operation variabl
 decision), `get-kubeconfig <cluster>`. Each resolves (and mints once, via `internal/agentid`) the
 calling project's bearer token before calling the agent socket.
 
+`instructions` (`--json`) prints the always-current agent playbook for this daemon — the resolved
+data-plane URL/port, the browser origin + `outwall_token` cookie, the CA path and the loopback
+NO_PROXY gotcha, and the caller's own per-project identity — rendered from `GET /instructions`. It
+lets `~/.claude/CLAUDE.md` (and other agent docs) shrink to a bootstrap reference instead of
+hand-copied facts that drift.
+
 **Stale-token self-heal (`doAgent`).** All agent commands route through `doAgent`, which mirrors the
 operator-side `doPrivileged`: it runs the authenticated call and, if the daemon rejects the persisted
 token with the stale-token gate (`missing or invalid agent token`, e.g. after a daemon DB reset),

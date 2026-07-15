@@ -437,7 +437,7 @@ func TestProxyHostRoutesToUpstream(t *testing.T) {
 // outwall_token cookie (browser context), so viaCookie=true reaches the profile's Authorize.
 func postJSONViaCookie(h http.Handler, path, token string, body []byte) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
-	r.AddCookie(&http.Cookie{Name: tokenCookieName, Value: token})
+	r.AddCookie(&http.Cookie{Name: TokenCookieName, Value: token})
 	r.Header.Set("Content-Type", "application/json")
 	// No Sec-Fetch-Site header → CSRF guard passes (absent = same-origin).
 	w := httptest.NewRecorder()

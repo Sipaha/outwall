@@ -15,12 +15,25 @@ import (
 	"github.com/Sipaha/outwall/internal/mcpsvc"
 )
 
+// EnvInfo are the live data-plane facts the daemon knows and the CLI renders into agent
+// instructions. Sourcing them from the running daemon (instead of hand-written docs) keeps the
+// mechanical details that drift the most — ports, origin pattern, cookie name — always correct.
+type EnvInfo struct {
+	DataPlaneURL string `json:"data_plane_url"` // e.g. https://127.0.0.1:8099
+	BrowseDomain string `json:"browse_domain"`  // e.g. outwall.localhost ("" if browsing disabled)
+	BrowsePort   string `json:"browse_port"`    // data-plane port, for the per-upstream browser origin
+	CookieName   string `json:"cookie_name"`    // browser auth cookie name (outwall_token)
+	CACertPath   string `json:"ca_cert_path"`   // local CA the data-plane TLS is signed by
+}
+
 // Deps are the collaborators the agent adapter needs.
 type Deps struct {
 	Svc    *mcpsvc.Service
 	Agents *agent.Registry
 	// Locked reports whether the vault is locked. When nil, the vault is treated as unlocked.
 	Locked func() bool
+	// Info are the live data-plane facts surfaced by GET /instructions.
+	Info EnvInfo
 }
 
 type server struct {
@@ -34,6 +47,7 @@ func NewHandler(deps Deps) http.Handler {
 	mux.HandleFunc("POST /register", s.hRegister)
 	mux.HandleFunc("GET /upstreams", s.hListUpstreams)
 	mux.HandleFunc("GET /whoami", s.hWhoAmI)
+	mux.HandleFunc("GET /instructions", s.hInstructions)
 	mux.HandleFunc("POST /access/host", s.hRequestHostAccess)
 	mux.HandleFunc("POST /access/op", s.hRequestAccess)
 	mux.HandleFunc("POST /access/k8s", s.hRequestK8sAccess)
@@ -125,6 +139,30 @@ func (s *server) hWhoAmI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, whoamiOut{Identity: ident, Token: token})
+}
+
+// instructionsOut is the payload for GET /instructions: the live data-plane facts plus the calling
+// agent's own identity. The CLI renders these into a Markdown playbook (or emits the JSON as-is).
+type instructionsOut struct {
+	Info     EnvInfo         `json:"info"`
+	Identity mcpsvc.Identity `json:"identity"`
+}
+
+// hInstructions returns the always-current agent usage facts for this daemon: the resolved
+// data-plane URL/port, the browser origin pattern + cookie name, the CA path, and the caller's own
+// identity. It is authenticated so the identity (and thus the per-project agent) is the caller's.
+func (s *server) hInstructions(w http.ResponseWriter, r *http.Request) {
+	agentID, _, err := s.agentID(r)
+	if err != nil {
+		httpErr(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	ident, err := s.deps.Svc.WhoAmI(agentID)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, instructionsOut{Info: s.deps.Info, Identity: ident})
 }
 
 func (s *server) hListUpstreams(w http.ResponseWriter, r *http.Request) {

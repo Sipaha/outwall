@@ -50,8 +50,9 @@ make check      # FULL pre-release gate — gofmt-check + vet + golangci-lint + 
 ## Architecture (one-liner per plane)
 
 - **Control plane** — a plain HTTP/JSON handler on a `0600` unix socket (`agent.sock`), driven by the
-  `outwall` CLI (`list-upstreams`, `request-host-access`/`request-access`/`request-preset`,
-  `get-access`, `whoami`, `get-kubeconfig`); agents self-register (per-project token). Operator
+  `outwall` CLI (`instructions`, `list-upstreams`, `request-host-access`/`request-access`/`request-preset`,
+  `get-access`, `whoami`, `get-kubeconfig`); agents self-register (per-project token, with stale-token
+  self-heal). `outwall instructions` self-describes current usage from the running daemon. Operator
   mutations are gated by a master-password session. MCP + go-sdk were removed (ADR-0040/0041).
 - **Data plane** — reverse proxy `http://localhost:PORT/<upstream>/...` + agent bearer
   token. TLS terminated at outwall (no MITM). Secrets never leave outwall.

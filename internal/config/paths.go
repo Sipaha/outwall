@@ -15,3 +15,9 @@ func DataDir() string {
 	}
 	return filepath.Join(home, ".spk", "outwall")
 }
+
+// CACertPath returns the path to the local CA certificate (DataDir/ca.crt). An HTTP client or
+// browser talking to the data plane must trust this cert (it is not in the system trust store).
+func CACertPath() string {
+	return filepath.Join(DataDir(), "ca.crt")
+}

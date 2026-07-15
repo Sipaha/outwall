@@ -71,10 +71,10 @@ func denyReason(dec policy.Decision) string {
 	return "access denied by an operator rule"
 }
 
-// tokenCookieName is the cookie a browser-driven agent (e.g. Playwright) may carry its outwall
+// TokenCookieName is the cookie a browser-driven agent (e.g. Playwright) may carry its outwall
 // token in, as an alternative to the Authorization bearer header. It is consumed for agent auth and
 // stripped before the request is forwarded upstream.
-const tokenCookieName = "outwall_token"
+const TokenCookieName = "outwall_token"
 
 // agentToken extracts the agent's outwall token from the Authorization bearer header, falling back
 // to the outwall_token cookie. The bool reports whether it came from the cookie (which gets the
@@ -83,7 +83,7 @@ func agentToken(r *http.Request) (string, bool) {
 	if authz := r.Header.Get("Authorization"); strings.HasPrefix(authz, "Bearer ") {
 		return strings.TrimPrefix(authz, "Bearer "), false
 	}
-	if c, err := r.Cookie(tokenCookieName); err == nil {
+	if c, err := r.Cookie(TokenCookieName); err == nil {
 		return c.Value, true
 	}
 	return "", false
@@ -405,7 +405,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			pr.Out.URL.Path = singleJoin(base.Path, rest)
 			pr.Out.URL.RawQuery = r.URL.RawQuery
 			pr.Out.Header.Del("Authorization") // never forward the agent's token
-			stripCookie(pr.Out, tokenCookieName)
+			stripCookie(pr.Out, TokenCookieName)
 			if err := auth.Apply(pr.Out); err != nil {
 				h.Logger.Error("apply upstream auth", "upstream", up.Name, "err", err)
 			}
